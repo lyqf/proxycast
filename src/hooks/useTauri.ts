@@ -1,0 +1,147 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export interface ServerStatus {
+  running: boolean;
+  host: string;
+  port: number;
+  requests: number;
+  uptime_secs: number;
+}
+
+export interface Config {
+  server: {
+    host: string;
+    port: number;
+    api_key: string;
+  };
+  providers: {
+    kiro: {
+      enabled: boolean;
+      credentials_path: string | null;
+      region: string | null;
+    };
+    gemini: {
+      enabled: boolean;
+      credentials_path: string | null;
+    };
+    qwen: {
+      enabled: boolean;
+      credentials_path: string | null;
+    };
+    openai: {
+      enabled: boolean;
+      api_key: string | null;
+      base_url: string | null;
+    };
+    claude: {
+      enabled: boolean;
+      api_key: string | null;
+      base_url: string | null;
+    };
+  };
+  default_provider: string;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+}
+
+export async function startServer(): Promise<string> {
+  return invoke("start_server");
+}
+
+export async function stopServer(): Promise<string> {
+  return invoke("stop_server");
+}
+
+export async function getServerStatus(): Promise<ServerStatus> {
+  return invoke("get_server_status");
+}
+
+export async function getConfig(): Promise<Config> {
+  return invoke("get_config");
+}
+
+export async function saveConfig(config: Config): Promise<void> {
+  return invoke("save_config", { config });
+}
+
+export async function refreshKiroToken(): Promise<string> {
+  return invoke("refresh_kiro_token");
+}
+
+export async function reloadCredentials(): Promise<string> {
+  return invoke("reload_credentials");
+}
+
+export async function getLogs(): Promise<LogEntry[]> {
+  try {
+    return await invoke("get_logs");
+  } catch {
+    return [];
+  }
+}
+
+export async function clearLogs(): Promise<void> {
+  try {
+    await invoke("clear_logs");
+  } catch {
+    // ignore
+  }
+}
+
+export interface TestResult {
+  success: boolean;
+  status: number;
+  body: string;
+  time_ms: number;
+}
+
+export async function testApi(
+  method: string,
+  path: string,
+  body: string | null,
+  auth: boolean
+): Promise<TestResult> {
+  return invoke("test_api", { method, path, body, auth });
+}
+
+export interface KiroCredentialStatus {
+  loaded: boolean;
+  has_access_token: boolean;
+  has_refresh_token: boolean;
+  region: string | null;
+  auth_method: string | null;
+  expires_at: string | null;
+  creds_path: string;
+}
+
+export async function getKiroCredentials(): Promise<KiroCredentialStatus> {
+  return invoke("get_kiro_credentials");
+}
+
+export interface EnvVariable {
+  key: string;
+  value: string;
+  masked: string;
+}
+
+export async function getEnvVariables(): Promise<EnvVariable[]> {
+  return invoke("get_env_variables");
+}
+
+export async function getTokenFileHash(): Promise<string> {
+  return invoke("get_token_file_hash");
+}
+
+export interface CheckResult {
+  changed: boolean;
+  new_hash: string;
+  reloaded: boolean;
+}
+
+export async function checkAndReloadCredentials(lastHash: string): Promise<CheckResult> {
+  return invoke("check_and_reload_credentials", { last_hash: lastHash });
+}

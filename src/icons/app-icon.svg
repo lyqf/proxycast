@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <!-- 主渐变：科技蓝紫色 -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+    <!-- 高光渐变 -->
+    <linearGradient id="highlightGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:rgba(255,255,255,0.2)"/>
+      <stop offset="100%" style="stop-color:rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- 圆角矩形背景 -->
+  <rect x="8" y="8" width="112" height="112" rx="24" ry="24" fill="url(#bgGradient)"/>
+  
+  <!-- 高光层 -->
+  <rect x="8" y="8" width="112" height="56" rx="24" ry="24" fill="url(#highlightGradient)"/>
+  
+  <!-- 代理/转换符号：双向箭头穿过中心节点 -->
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 左侧输入箭头 -->
+    <path d="M28 64 L48 64"/>
+    <path d="M28 64 L36 56"/>
+    <path d="M28 64 L36 72"/>
+    
+    <!-- 中心六边形节点（代表代理服务器） -->
+    <polygon points="64,42 82,53 82,75 64,86 46,75 46,53" fill="rgba(255,255,255,0.15)" stroke="#ffffff" stroke-width="2.5"/>
+    
+    <!-- 中心 P 字母 -->
+    <text x="64" y="70" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle">P</text>
+    
+    <!-- 右侧输出箭头 -->
+    <path d="M80 64 L100 64"/>
+    <path d="M100 64 L92 56"/>
+    <path d="M100 64 L92 72"/>
+  </g>
+  
+  <!-- 装饰点：表示多个 Provider -->
+  <circle cx="32" cy="44" r="3" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="32" cy="84" r="3" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="96" cy="44" r="3" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="96" cy="84" r="3" fill="rgba(255,255,255,0.6)"/>
+</svg>

@@ -1,0 +1,35 @@
+[package]
+name = "proxycast"
+version = "0.1.0"
+description = "AI API Proxy Desktop App"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "proxycast_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+futures = "0.3"
+async-stream = "0.3"
+regex = "1"
+md5 = "0.7"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

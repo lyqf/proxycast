@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- 圆角矩形背景 -->
+  <rect x="8" y="8" width="112" height="112" rx="24" ry="24" fill="url(#bg)"/>
+  
+  <!-- 简化的代理符号 -->
+  <g fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 左箭头 -->
+    <path d="M30 64 L50 64 M30 64 L38 56 M30 64 L38 72"/>
+    <!-- 中心圆 -->
+    <circle cx="64" cy="64" r="14" fill="rgba(255,255,255,0.2)" stroke="#ffffff" stroke-width="3"/>
+    <!-- 右箭头 -->
+    <path d="M78 64 L98 64 M98 64 L90 56 M98 64 L90 72"/>
+  </g>
+  
+  <!-- 中心 P -->
+  <text x="64" y="71" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#ffffff" text-anchor="middle">P</text>
+</svg>

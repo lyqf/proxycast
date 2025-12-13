@@ -1,0 +1,339 @@
+mod config;
+mod server;
+mod providers;
+mod models;
+mod converter;
+mod logger;
+
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+pub type AppState = Arc<RwLock<server::ServerState>>;
+pub type LogState = Arc<RwLock<logger::LogStore>>;
+
+#[tauri::command]
+async fn start_server(state: tauri::State<'_, AppState>, logs: tauri::State<'_, LogState>) -> Result<String, String> {
+    let mut s = state.write().await;
+    logs.write().await.add("info", "Starting server...");
+    s.start(logs.inner().clone()).await.map_err(|e| e.to_string())?;
+    logs.write().await.add("info", &format!("Server started on {}:{}", s.config.server.host, s.config.server.port));
+    Ok("Server started".to_string())
+}
+
+#[tauri::command]
+async fn stop_server(state: tauri::State<'_, AppState>, logs: tauri::State<'_, LogState>) -> Result<String, String> {
+    let mut s = state.write().await;
+    s.stop().await;
+    logs.write().await.add("info", "Server stopped");
+    Ok("Server stopped".to_string())
+}
+
+#[tauri::command]
+async fn get_server_status(state: tauri::State<'_, AppState>) -> Result<server::ServerStatus, String> {
+    let s = state.read().await;
+    Ok(s.status())
+}
+
+#[tauri::command]
+async fn get_config(state: tauri::State<'_, AppState>) -> Result<config::Config, String> {
+    let s = state.read().await;
+    Ok(s.config.clone())
+}
+
+#[tauri::command]
+async fn save_config(state: tauri::State<'_, AppState>, config: config::Config) -> Result<(), String> {
+    let mut s = state.write().await;
+    s.config = config.clone();
+    config::save_config(&config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn refresh_kiro_token(state: tauri::State<'_, AppState>, logs: tauri::State<'_, LogState>) -> Result<String, String> {
+    let mut s = state.write().await;
+    logs.write().await.add("info", "Refreshing Kiro token...");
+    let result = s.kiro_provider.refresh_token().await.map_err(|e| e.to_string());
+    match &result {
+        Ok(_) => logs.write().await.add("info", "Token refreshed successfully"),
+        Err(e) => logs.write().await.add("error", &format!("Token refresh failed: {}", e)),
+    }
+    result
+}
+
+#[tauri::command]
+async fn reload_credentials(state: tauri::State<'_, AppState>, logs: tauri::State<'_, LogState>) -> Result<String, String> {
+    let mut s = state.write().await;
+    logs.write().await.add("info", "Reloading credentials...");
+    s.kiro_provider.load_credentials().map_err(|e| e.to_string())?;
+    logs.write().await.add("info", "Credentials reloaded");
+    Ok("Credentials reloaded".to_string())
+}
+
+#[derive(serde::Serialize)]
+struct KiroCredentialStatus {
+    loaded: bool,
+    has_access_token: bool,
+    has_refresh_token: bool,
+    region: Option<String>,
+    auth_method: Option<String>,
+    expires_at: Option<String>,
+    creds_path: String,
+}
+
+#[tauri::command]
+async fn get_kiro_credentials(state: tauri::State<'_, AppState>) -> Result<KiroCredentialStatus, String> {
+    let s = state.read().await;
+    let creds = &s.kiro_provider.credentials;
+    let path = providers::kiro::KiroProvider::default_creds_path();
+    
+    Ok(KiroCredentialStatus {
+        loaded: creds.access_token.is_some() || creds.refresh_token.is_some(),
+        has_access_token: creds.access_token.is_some(),
+        has_refresh_token: creds.refresh_token.is_some(),
+        region: creds.region.clone(),
+        auth_method: creds.auth_method.clone(),
+        expires_at: creds.expires_at.clone(),
+        creds_path: path.to_string_lossy().to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
+struct EnvVariable {
+    key: String,
+    value: String,
+    masked: String,
+}
+
+#[tauri::command]
+async fn get_env_variables(state: tauri::State<'_, AppState>) -> Result<Vec<EnvVariable>, String> {
+    let s = state.read().await;
+    let creds = &s.kiro_provider.credentials;
+    let mut vars = Vec::new();
+    
+    if let Some(token) = &creds.access_token {
+        vars.push(EnvVariable {
+            key: "KIRO_ACCESS_TOKEN".to_string(),
+            value: token.clone(),
+            masked: mask_token(token),
+        });
+    }
+    if let Some(token) = &creds.refresh_token {
+        vars.push(EnvVariable {
+            key: "KIRO_REFRESH_TOKEN".to_string(),
+            value: token.clone(),
+            masked: mask_token(token),
+        });
+    }
+    if let Some(id) = &creds.client_id {
+        vars.push(EnvVariable {
+            key: "KIRO_CLIENT_ID".to_string(),
+            value: id.clone(),
+            masked: mask_token(id),
+        });
+    }
+    if let Some(secret) = &creds.client_secret {
+        vars.push(EnvVariable {
+            key: "KIRO_CLIENT_SECRET".to_string(),
+            value: secret.clone(),
+            masked: mask_token(secret),
+        });
+    }
+    if let Some(arn) = &creds.profile_arn {
+        vars.push(EnvVariable {
+            key: "KIRO_PROFILE_ARN".to_string(),
+            value: arn.clone(),
+            masked: arn.clone(),
+        });
+    }
+    if let Some(region) = &creds.region {
+        vars.push(EnvVariable {
+            key: "KIRO_REGION".to_string(),
+            value: region.clone(),
+            masked: region.clone(),
+        });
+    }
+    if let Some(method) = &creds.auth_method {
+        vars.push(EnvVariable {
+            key: "KIRO_AUTH_METHOD".to_string(),
+            value: method.clone(),
+            masked: method.clone(),
+        });
+    }
+    
+    Ok(vars)
+}
+
+fn mask_token(token: &str) -> String {
+    if token.len() <= 12 {
+        "****".to_string()
+    } else {
+        format!("{}****{}", &token[..6], &token[token.len()-4..])
+    }
+}
+
+#[tauri::command]
+async fn get_token_file_hash() -> Result<String, String> {
+    let path = providers::kiro::KiroProvider::default_creds_path();
+    if !path.exists() {
+        return Ok("".to_string());
+    }
+    
+    let content = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let hash = format!("{:x}", md5::compute(&content));
+    Ok(hash)
+}
+
+/// 检查凭证文件变化并自动重新加载（带日志记录）
+#[tauri::command]
+async fn check_and_reload_credentials(
+    state: tauri::State<'_, AppState>,
+    logs: tauri::State<'_, LogState>,
+    last_hash: String,
+) -> Result<CheckResult, String> {
+    let path = providers::kiro::KiroProvider::default_creds_path();
+    
+    if !path.exists() {
+        return Ok(CheckResult {
+            changed: false,
+            new_hash: "".to_string(),
+            reloaded: false,
+        });
+    }
+    
+    let content = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let new_hash = format!("{:x}", md5::compute(&content));
+    
+    if !last_hash.is_empty() && new_hash != last_hash {
+        logs.write().await.add("info", "[自动检测] 凭证文件已变化，正在重新加载...");
+        
+        let mut s = state.write().await;
+        match s.kiro_provider.load_credentials() {
+            Ok(_) => {
+                logs.write().await.add("info", "[自动检测] 凭证重新加载成功");
+                Ok(CheckResult {
+                    changed: true,
+                    new_hash,
+                    reloaded: true,
+                })
+            }
+            Err(e) => {
+                logs.write().await.add("error", &format!("[自动检测] 凭证重新加载失败: {}", e));
+                Ok(CheckResult {
+                    changed: true,
+                    new_hash,
+                    reloaded: false,
+                })
+            }
+        }
+    } else {
+        Ok(CheckResult {
+            changed: false,
+            new_hash,
+            reloaded: false,
+        })
+    }
+}
+
+#[derive(serde::Serialize)]
+struct CheckResult {
+    changed: bool,
+    new_hash: String,
+    reloaded: bool,
+}
+
+#[tauri::command]
+async fn get_logs(logs: tauri::State<'_, LogState>) -> Result<Vec<logger::LogEntry>, String> {
+    Ok(logs.read().await.get_logs())
+}
+
+#[tauri::command]
+async fn clear_logs(logs: tauri::State<'_, LogState>) -> Result<(), String> {
+    logs.write().await.clear();
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct TestResult {
+    success: bool,
+    status: u16,
+    body: String,
+    time_ms: u64,
+}
+
+#[tauri::command]
+async fn test_api(
+    state: tauri::State<'_, AppState>,
+    method: String,
+    path: String,
+    body: Option<String>,
+    auth: bool,
+) -> Result<TestResult, String> {
+    let s = state.read().await;
+    let base_url = format!("http://{}:{}", s.config.server.host, s.config.server.port);
+    let api_key = &s.config.server.api_key;
+    
+    let client = reqwest::Client::new();
+    let url = format!("{}{}", base_url, path);
+    
+    let start = std::time::Instant::now();
+    
+    let mut req = match method.as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        _ => return Err("Unsupported method".to_string()),
+    };
+    
+    req = req.header("Content-Type", "application/json");
+    
+    if auth {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+    
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+    
+    match req.send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            let time_ms = start.elapsed().as_millis() as u64;
+            
+            Ok(TestResult {
+                success: status >= 200 && status < 300,
+                status,
+                body,
+                time_ms,
+            })
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let config = config::load_config().unwrap_or_default();
+    let state: AppState = Arc::new(RwLock::new(server::ServerState::new(config)));
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .manage(state)
+        .manage(Arc::new(RwLock::new(logger::LogStore::new())))
+        .invoke_handler(tauri::generate_handler![
+            start_server,
+            stop_server,
+            get_server_status,
+            get_config,
+            save_config,
+            refresh_kiro_token,
+            reload_credentials,
+            get_kiro_credentials,
+            get_env_variables,
+            get_token_file_hash,
+            check_and_reload_credentials,
+            get_logs,
+            clear_logs,
+            test_api,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
