@@ -877,6 +877,50 @@ async fn verify_api_key(
     Ok(())
 }
 
+/// Anthropic 格式的 API key 验证
+/// 返回 Anthropic 标准错误格式：{"type": "error", "error": {"type": "...", "message": "..."}}
+async fn verify_api_key_anthropic(
+    headers: &HeaderMap,
+    expected_key: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let auth = headers
+        .get("x-api-key")
+        .or_else(|| headers.get("authorization"))
+        .and_then(|v| v.to_str().ok());
+
+    let key = match auth {
+        Some(s) if s.starts_with("Bearer ") => &s[7..],
+        Some(s) => s,
+        None => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "type": "error",
+                    "error": {
+                        "type": "authentication_error",
+                        "message": "No API key provided. Please set the x-api-key header."
+                    }
+                })),
+            ))
+        }
+    };
+
+    if key != expected_key {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key"
+                }
+            })),
+        ));
+    }
+
+    Ok(())
+}
+
 async fn chat_completions(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1293,7 +1337,8 @@ async fn anthropic_messages(
     headers: HeaderMap,
     Json(mut request): Json<AnthropicMessagesRequest>,
 ) -> Response {
-    if let Err(e) = verify_api_key(&headers, &state.api_key).await {
+    // 使用 Anthropic 格式的认证验证（优先检查 x-api-key）
+    if let Err(e) = verify_api_key_anthropic(&headers, &state.api_key).await {
         state
             .logs
             .write()
@@ -2276,7 +2321,8 @@ async fn anthropic_messages_with_selector(
     headers: HeaderMap,
     Json(request): Json<AnthropicMessagesRequest>,
 ) -> Response {
-    if let Err(e) = verify_api_key(&headers, &state.api_key).await {
+    // 使用 Anthropic 格式的认证验证
+    if let Err(e) = verify_api_key_anthropic(&headers, &state.api_key).await {
         state.logs.write().await.add(
             "warn",
             &format!("Unauthorized request to /{}/v1/messages", selector),
@@ -2523,7 +2569,8 @@ async fn amp_messages(
     headers: HeaderMap,
     Json(mut request): Json<AnthropicMessagesRequest>,
 ) -> Response {
-    if let Err(e) = verify_api_key(&headers, &state.api_key).await {
+    // 使用 Anthropic 格式的认证验证
+    if let Err(e) = verify_api_key_anthropic(&headers, &state.api_key).await {
         state.logs.write().await.add(
             "warn",
             &format!(
