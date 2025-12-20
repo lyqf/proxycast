@@ -188,6 +188,9 @@ export function ApiServerPage() {
 
   useEffect(() => {
     loadPoolOverview();
+    // 定时刷新凭证池数据，以便使用次数能够更新
+    const poolInterval = setInterval(loadPoolOverview, 5000);
+    return () => clearInterval(poolInterval);
   }, []);
 
   // 自动清除 provider 切换提示
@@ -627,22 +630,12 @@ export function ApiServerPage() {
                     {credentials.map((cred) => (
                       <div
                         key={cred.uuid}
-                        className={`flex items-center justify-between rounded-lg border px-3 py-2 text-sm ${
-                          cred.is_healthy
-                            ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950"
-                            : cred.is_disabled
-                              ? "border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"
-                              : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950"
-                        }`}
+                        className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm"
                       >
                         <div className="flex items-center gap-2">
                           <span
                             className={`h-2 w-2 rounded-full ${
-                              cred.is_healthy
-                                ? "bg-green-500"
-                                : cred.is_disabled
-                                  ? "bg-gray-400"
-                                  : "bg-red-500"
+                              cred.is_healthy ? "bg-green-500" : "bg-yellow-500"
                             }`}
                           />
                           <span>{cred.name || cred.uuid.slice(0, 8)}</span>
