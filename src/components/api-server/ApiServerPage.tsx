@@ -311,6 +311,11 @@ export function ApiServerPage() {
           httpStatus: result.status,
         },
       }));
+
+      // 测试成功后立即刷新凭证池数据，更新使用次数
+      if (result.success) {
+        await loadPoolOverview();
+      }
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e);
       setTestResults((prev) => ({
