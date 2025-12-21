@@ -1,6 +1,17 @@
 //! API 端点处理器
 //!
 //! 处理 OpenAI 和 Anthropic 格式的 API 请求
+//!
+//! # 流式传输支持
+//!
+//! 本模块支持真正的端到端流式传输：
+//! - 对于流式请求，使用 StreamManager 处理响应
+//! - 集成 Flow Monitor 实时捕获流式内容
+//!
+//! # 需求覆盖
+//!
+//! - 需求 5.1: 在收到 chunk 后立即转发给客户端
+//! - 需求 5.3: 流中发生错误时发送错误事件并优雅关闭流
 
 use axum::{
     body::Body,
@@ -9,25 +20,314 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use futures::stream;
+use chrono::Utc;
+use std::collections::HashMap;
 
 use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
-use crate::converter::openai_to_antigravity::{
-    convert_antigravity_to_openai_response, convert_openai_to_antigravity_with_context,
+use crate::flow_monitor::{
+    ClientInfo, FlowError, FlowErrorType, FlowMetadata, LLMRequest, LLMResponse, Message,
+    MessageContent, MessageRole, RequestParameters, RoutingInfo, TokenUsage,
 };
 use crate::models::anthropic::AnthropicMessagesRequest;
 use crate::models::openai::ChatCompletionRequest;
 use crate::processor::RequestContext;
-use crate::providers::{AntigravityProvider, GeminiProvider, KiroProvider, QwenProvider};
 use crate::server::{record_request_telemetry, record_token_usage, AppState};
 use crate::server_utils::{
     build_anthropic_response, build_anthropic_stream_response, message_content_len,
     parse_cw_response, safe_truncate,
 };
-use crate::telemetry::RequestStatus;
+use crate::streaming::StreamFormat as StreamingFormat;
 use crate::ProviderType;
 
 use super::{call_provider_anthropic, call_provider_openai};
+
+// ============================================================================
+// Flow 捕获辅助函数
+// ============================================================================
+
+/// 从 OpenAI 格式请求构建 LLMRequest
+fn build_llm_request_from_openai(
+    request: &ChatCompletionRequest,
+    path: &str,
+    headers: &HeaderMap,
+) -> LLMRequest {
+    // 转换消息
+    let messages: Vec<Message> = request
+        .messages
+        .iter()
+        .map(|m| {
+            let role = match m.role.as_str() {
+                "system" => MessageRole::System,
+                "user" => MessageRole::User,
+                "assistant" => MessageRole::Assistant,
+                "tool" => MessageRole::Tool,
+                "function" => MessageRole::Function,
+                _ => MessageRole::User,
+            };
+
+            let content = match &m.content {
+                Some(c) => match c {
+                    crate::models::openai::MessageContent::Text(s) => {
+                        MessageContent::Text(s.clone())
+                    }
+                    crate::models::openai::MessageContent::Parts(parts) => {
+                        let flow_parts: Vec<crate::flow_monitor::ContentPart> = parts
+                            .iter()
+                            .map(|p| match p {
+                                crate::models::openai::ContentPart::Text { text } => {
+                                    crate::flow_monitor::ContentPart::Text { text: text.clone() }
+                                }
+                                crate::models::openai::ContentPart::ImageUrl { image_url } => {
+                                    crate::flow_monitor::ContentPart::ImageUrl {
+                                        image_url: crate::flow_monitor::models::ImageUrl {
+                                            url: image_url.url.clone(),
+                                            detail: image_url.detail.clone(),
+                                        },
+                                    }
+                                }
+                            })
+                            .collect();
+                        MessageContent::MultiModal(flow_parts)
+                    }
+                },
+                None => MessageContent::Text(String::new()),
+            };
+
+            Message {
+                role,
+                content,
+                tool_calls: None,
+                tool_result: None,
+                name: None,
+            }
+        })
+        .collect();
+
+    // 提取系统提示词
+    let system_prompt = messages
+        .iter()
+        .find(|m| m.role == MessageRole::System)
+        .map(|m| m.content.get_all_text());
+
+    // 构建请求参数
+    let parameters = RequestParameters {
+        temperature: request.temperature,
+        top_p: None,
+        max_tokens: request.max_tokens,
+        stop: None,
+        stream: request.stream,
+        extra: HashMap::new(),
+    };
+
+    // 提取请求头
+    let mut header_map = HashMap::new();
+    for (name, value) in headers.iter() {
+        if let Ok(v) = value.to_str() {
+            // 排除敏感头
+            let name_lower = name.as_str().to_lowercase();
+            if !name_lower.contains("authorization") && !name_lower.contains("api-key") {
+                header_map.insert(name.as_str().to_string(), v.to_string());
+            }
+        }
+    }
+
+    LLMRequest {
+        method: "POST".to_string(),
+        path: path.to_string(),
+        headers: header_map,
+        body: serde_json::to_value(request).unwrap_or_default(),
+        messages,
+        system_prompt,
+        tools: None, // TODO: 转换工具定义
+        model: request.model.clone(),
+        original_model: None,
+        parameters,
+        size_bytes: 0,
+        timestamp: Utc::now(),
+    }
+}
+
+/// 从 Anthropic 格式请求构建 LLMRequest
+fn build_llm_request_from_anthropic(
+    request: &AnthropicMessagesRequest,
+    path: &str,
+    headers: &HeaderMap,
+) -> LLMRequest {
+    // 转换消息
+    let messages: Vec<Message> = request
+        .messages
+        .iter()
+        .map(|m| {
+            let role = match m.role.as_str() {
+                "user" => MessageRole::User,
+                "assistant" => MessageRole::Assistant,
+                _ => MessageRole::User,
+            };
+
+            let content = match &m.content {
+                serde_json::Value::String(s) => MessageContent::Text(s.clone()),
+                serde_json::Value::Array(arr) => {
+                    let flow_parts: Vec<crate::flow_monitor::ContentPart> = arr
+                        .iter()
+                        .filter_map(|p| {
+                            let part_type = p.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            match part_type {
+                                "text" => p.get("text").and_then(|t| t.as_str()).map(|text| {
+                                    crate::flow_monitor::ContentPart::Text {
+                                        text: text.to_string(),
+                                    }
+                                }),
+                                "image" => {
+                                    let source = p.get("source")?;
+                                    let media_type = source
+                                        .get("media_type")
+                                        .and_then(|m| m.as_str())
+                                        .map(|s| s.to_string());
+                                    let data = source
+                                        .get("data")
+                                        .and_then(|d| d.as_str())
+                                        .map(|s| s.to_string());
+                                    Some(crate::flow_monitor::ContentPart::Image {
+                                        media_type,
+                                        data,
+                                        url: None,
+                                    })
+                                }
+                                _ => None,
+                            }
+                        })
+                        .collect();
+                    MessageContent::MultiModal(flow_parts)
+                }
+                _ => MessageContent::Text(String::new()),
+            };
+
+            Message {
+                role,
+                content,
+                tool_calls: None,
+                tool_result: None,
+                name: None,
+            }
+        })
+        .collect();
+
+    // 提取系统提示词
+    let system_prompt = request.system.as_ref().map(|s| match s {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    });
+
+    // 构建请求参数
+    let parameters = RequestParameters {
+        temperature: request.temperature,
+        top_p: None,
+        max_tokens: request.max_tokens,
+        stop: None,
+        stream: request.stream,
+        extra: HashMap::new(),
+    };
+
+    // 提取请求头
+    let mut header_map = HashMap::new();
+    for (name, value) in headers.iter() {
+        if let Ok(v) = value.to_str() {
+            let name_lower = name.as_str().to_lowercase();
+            if !name_lower.contains("authorization") && !name_lower.contains("api-key") {
+                header_map.insert(name.as_str().to_string(), v.to_string());
+            }
+        }
+    }
+
+    LLMRequest {
+        method: "POST".to_string(),
+        path: path.to_string(),
+        headers: header_map,
+        body: serde_json::to_value(request).unwrap_or_default(),
+        messages,
+        system_prompt,
+        tools: None, // TODO: 转换工具定义
+        model: request.model.clone(),
+        original_model: None,
+        parameters,
+        size_bytes: 0,
+        timestamp: Utc::now(),
+    }
+}
+
+/// 构建 FlowMetadata
+fn build_flow_metadata(
+    provider: ProviderType,
+    credential_id: Option<&str>,
+    credential_name: Option<&str>,
+    headers: &HeaderMap,
+    request_id: &str,
+) -> FlowMetadata {
+    // 提取客户端信息
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or("").trim().to_string());
+
+    let user_agent = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    FlowMetadata {
+        provider,
+        credential_id: credential_id.map(|s| s.to_string()),
+        credential_name: credential_name.map(|s| s.to_string()),
+        retry_count: 0,
+        client_info: ClientInfo {
+            ip: client_ip,
+            user_agent,
+            request_id: Some(request_id.to_string()),
+        },
+        routing_info: RoutingInfo::default(),
+        injected_params: None,
+        context_usage_percentage: None,
+    }
+}
+
+/// 从响应构建 LLMResponse
+fn build_llm_response(status_code: u16, content: &str, usage: Option<(u32, u32)>) -> LLMResponse {
+    let now = Utc::now();
+    let (input_tokens, output_tokens) = usage.unwrap_or((0, 0));
+
+    LLMResponse {
+        status_code,
+        status_text: if status_code == 200 { "OK" } else { "Error" }.to_string(),
+        headers: HashMap::new(),
+        body: serde_json::Value::Null,
+        content: content.to_string(),
+        thinking: None,
+        tool_calls: Vec::new(),
+        usage: TokenUsage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            thinking_tokens: None,
+            total_tokens: input_tokens + output_tokens,
+        },
+        stop_reason: None,
+        size_bytes: content.len(),
+        timestamp_start: now,
+        timestamp_end: now,
+        stream_info: None,
+    }
+}
+
+// ============================================================================
+// API Key 验证
+// ============================================================================
 
 /// OpenAI 格式的 API key 验证
 pub async fn verify_api_key(
@@ -197,7 +497,22 @@ pub async fn chat_completions(
                 &cred.uuid[..8]
             ),
         );
-        let response = call_provider_openai(&state, &cred, &request).await;
+
+        // 启动 Flow 捕获
+        let llm_request = build_llm_request_from_openai(&request, "/v1/chat/completions", &headers);
+        let flow_metadata = build_flow_metadata(
+            provider,
+            Some(&cred.uuid),
+            cred.name.as_deref(),
+            &headers,
+            &ctx.request_id,
+        );
+        let flow_id = state
+            .flow_monitor
+            .start_flow(llm_request, flow_metadata)
+            .await;
+
+        let response = call_provider_openai(&state, &cred, &request, flow_id.as_deref()).await;
 
         // 记录请求统计
         let is_success = response.status().is_success();
@@ -209,26 +524,48 @@ pub async fn chat_completions(
         record_request_telemetry(&state, &ctx, status, None);
 
         // 如果成功，记录估算的 Token 使用量
+        let estimated_input_tokens = request
+            .messages
+            .iter()
+            .map(|m| {
+                let content_len = match &m.content {
+                    Some(c) => message_content_len(c),
+                    None => 0,
+                };
+                content_len / 4
+            })
+            .sum::<usize>() as u32;
+        let estimated_output_tokens = if is_success { 100u32 } else { 0u32 };
+
         if is_success {
-            let estimated_input_tokens = request
-                .messages
-                .iter()
-                .map(|m| {
-                    let content_len = match &m.content {
-                        Some(c) => message_content_len(c),
-                        None => 0,
-                    };
-                    content_len / 4
-                })
-                .sum::<usize>() as u32;
-            // 输出 Token 使用估算值（假设平均响应长度）
-            let estimated_output_tokens = 100u32;
             record_token_usage(
                 &state,
                 &ctx,
                 Some(estimated_input_tokens),
                 Some(estimated_output_tokens),
             );
+        }
+
+        // 完成 Flow 捕获
+        if let Some(fid) = flow_id {
+            if is_success {
+                let llm_response = build_llm_response(
+                    200,
+                    "", // 内容在 provider_calls 中处理
+                    Some((estimated_input_tokens, estimated_output_tokens)),
+                );
+                state
+                    .flow_monitor
+                    .complete_flow(&fid, Some(llm_response))
+                    .await;
+            } else {
+                let error = FlowError::new(
+                    FlowErrorType::from_status_code(response.status().as_u16()),
+                    "Request failed",
+                )
+                .with_status_code(response.status().as_u16());
+                state.flow_monitor.fail_flow(&fid, error).await;
+            }
         }
 
         return response;
@@ -243,6 +580,14 @@ pub async fn chat_completions(
         ),
     );
 
+    // 启动 Flow 捕获（legacy mode）
+    let llm_request = build_llm_request_from_openai(&request, "/v1/chat/completions", &headers);
+    let flow_metadata = build_flow_metadata(provider, None, None, &headers, &ctx.request_id);
+    let flow_id = state
+        .flow_monitor
+        .start_flow(llm_request, flow_metadata)
+        .await;
+
     // 检查是否需要刷新 token（无 token 或即将过期）
     {
         let _guard = state.kiro_refresh_lock.lock().await;
@@ -256,6 +601,14 @@ pub async fn chat_completions(
                     .write()
                     .await
                     .add("error", &format!("Token refresh failed: {e}"));
+                // 标记 Flow 失败
+                if let Some(fid) = &flow_id {
+                    let error = FlowError::new(
+                        FlowErrorType::Authentication,
+                        &format!("Token refresh failed: {e}"),
+                    );
+                    state.flow_monitor.fail_flow(fid, error).await;
+                }
                 return (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": {"message": format!("Token refresh failed: {e}")}})),
@@ -356,6 +709,18 @@ pub async fn chat_completions(
                             Some(estimated_input_tokens),
                             Some(estimated_output_tokens),
                         );
+                        // 完成 Flow 捕获
+                        if let Some(fid) = &flow_id {
+                            let llm_response = build_llm_response(
+                                200,
+                                &parsed.content,
+                                Some((estimated_input_tokens, estimated_output_tokens)),
+                            );
+                            state
+                                .flow_monitor
+                                .complete_flow(fid, Some(llm_response))
+                                .await;
+                        }
                         Json(response).into_response()
                     }
                     Err(e) => {
@@ -366,6 +731,11 @@ pub async fn chat_completions(
                             crate::telemetry::RequestStatus::Failed,
                             Some(e.to_string()),
                         );
+                        // 标记 Flow 失败
+                        if let Some(fid) = &flow_id {
+                            let error = FlowError::new(FlowErrorType::Network, &e.to_string());
+                            state.flow_monitor.fail_flow(fid, error).await;
+                        }
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(serde_json::json!({"error": {"message": e.to_string()}})),
@@ -453,25 +823,60 @@ pub async fn chat_completions(
                                                     "total_tokens": 0
                                                 }
                                             });
+                                            // 完成 Flow 捕获（重试成功）
+                                            if let Some(fid) = &flow_id {
+                                                let llm_response =
+                                                    build_llm_response(200, &parsed.content, None);
+                                                state
+                                                    .flow_monitor
+                                                    .complete_flow(fid, Some(llm_response))
+                                                    .await;
+                                            }
                                             return Json(response).into_response();
                                         }
-                                        Err(e) => return (
+                                        Err(e) => {
+                                            // 标记 Flow 失败
+                                            if let Some(fid) = &flow_id {
+                                                let error = FlowError::new(
+                                                    FlowErrorType::Network,
+                                                    &e.to_string(),
+                                                );
+                                                state.flow_monitor.fail_flow(fid, error).await;
+                                            }
+                                            return (
                                             StatusCode::INTERNAL_SERVER_ERROR,
                                             Json(serde_json::json!({"error": {"message": e.to_string()}})),
-                                        ).into_response(),
+                                        ).into_response();
+                                        }
                                     }
                                 }
                                 let body = retry_resp.text().await.unwrap_or_default();
+                                // 标记 Flow 失败（重试失败）
+                                if let Some(fid) = &flow_id {
+                                    let error = FlowError::new(
+                                        FlowErrorType::ServerError,
+                                        &format!("Retry failed: {}", body),
+                                    );
+                                    state.flow_monitor.fail_flow(fid, error).await;
+                                }
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     Json(serde_json::json!({"error": {"message": format!("Retry failed: {}", body)}})),
                                 ).into_response()
                             }
-                            Err(e) => (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({"error": {"message": e.to_string()}})),
-                            )
-                                .into_response(),
+                            Err(e) => {
+                                // 标记 Flow 失败
+                                if let Some(fid) = &flow_id {
+                                    let error =
+                                        FlowError::new(FlowErrorType::Network, &e.to_string());
+                                    state.flow_monitor.fail_flow(fid, error).await;
+                                }
+                                (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({"error": {"message": e.to_string()}})),
+                                )
+                                    .into_response()
+                            }
                         }
                     }
                     Err(e) => {
@@ -480,6 +885,14 @@ pub async fn chat_completions(
                             .write()
                             .await
                             .add("error", &format!("[AUTH] Token refresh failed: {e}"));
+                        // 标记 Flow 失败
+                        if let Some(fid) = &flow_id {
+                            let error = FlowError::new(
+                                FlowErrorType::Authentication,
+                                &format!("Token refresh failed: {e}"),
+                            );
+                            state.flow_monitor.fail_flow(fid, error).await;
+                        }
                         (
                             StatusCode::UNAUTHORIZED,
                             Json(serde_json::json!({"error": {"message": format!("Token refresh failed: {e}")}})),
@@ -493,6 +906,13 @@ pub async fn chat_completions(
                     "error",
                     &format!("Upstream error {}: {}", status, safe_truncate(&body, 200)),
                 );
+                // 标记 Flow 失败
+                if let Some(fid) = &flow_id {
+                    let error =
+                        FlowError::new(FlowErrorType::from_status_code(status.as_u16()), &body)
+                            .with_status_code(status.as_u16());
+                    state.flow_monitor.fail_flow(fid, error).await;
+                }
                 (
                     StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     Json(serde_json::json!({"error": {"message": format!("Upstream error: {}", body)}}))
@@ -505,6 +925,11 @@ pub async fn chat_completions(
                 .write()
                 .await
                 .add("error", &format!("API call failed: {e}"));
+            // 标记 Flow 失败
+            if let Some(fid) = &flow_id {
+                let error = FlowError::new(FlowErrorType::Network, &e.to_string());
+                state.flow_monitor.fail_flow(fid, error).await;
+            }
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": {"message": e.to_string()}})),
@@ -642,7 +1067,22 @@ pub async fn anthropic_messages(
                 &cred.uuid[..8]
             ),
         );
-        let response = call_provider_anthropic(&state, &cred, &request).await;
+
+        // 启动 Flow 捕获
+        let llm_request = build_llm_request_from_anthropic(&request, "/v1/messages", &headers);
+        let flow_metadata = build_flow_metadata(
+            provider,
+            Some(&cred.uuid),
+            cred.name.as_deref(),
+            &headers,
+            &ctx.request_id,
+        );
+        let flow_id = state
+            .flow_monitor
+            .start_flow(llm_request, flow_metadata)
+            .await;
+
+        let response = call_provider_anthropic(&state, &cred, &request, flow_id.as_deref()).await;
 
         // 记录请求统计
         let is_success = response.status().is_success();
@@ -653,32 +1093,54 @@ pub async fn anthropic_messages(
         };
         record_request_telemetry(&state, &ctx, status, None);
 
-        // 如果成功，记录估算的 Token 使用量
+        // 估算 Token 使用量
+        let estimated_input_tokens = request
+            .messages
+            .iter()
+            .map(|m| {
+                let content_len = match &m.content {
+                    serde_json::Value::String(s) => s.len(),
+                    serde_json::Value::Array(arr) => arr
+                        .iter()
+                        .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
+                        .map(|s| s.len())
+                        .sum(),
+                    _ => 0,
+                };
+                content_len / 4
+            })
+            .sum::<usize>() as u32;
+        let estimated_output_tokens = if is_success { 100u32 } else { 0u32 };
+
         if is_success {
-            let estimated_input_tokens = request
-                .messages
-                .iter()
-                .map(|m| {
-                    let content_len = match &m.content {
-                        serde_json::Value::String(s) => s.len(),
-                        serde_json::Value::Array(arr) => arr
-                            .iter()
-                            .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
-                            .map(|s| s.len())
-                            .sum(),
-                        _ => 0,
-                    };
-                    content_len / 4
-                })
-                .sum::<usize>() as u32;
-            // 输出 Token 使用估算值
-            let estimated_output_tokens = 100u32;
             record_token_usage(
                 &state,
                 &ctx,
                 Some(estimated_input_tokens),
                 Some(estimated_output_tokens),
             );
+        }
+
+        // 完成 Flow 捕获
+        if let Some(fid) = flow_id {
+            if is_success {
+                let llm_response = build_llm_response(
+                    200,
+                    "",
+                    Some((estimated_input_tokens, estimated_output_tokens)),
+                );
+                state
+                    .flow_monitor
+                    .complete_flow(&fid, Some(llm_response))
+                    .await;
+            } else {
+                let error = FlowError::new(
+                    FlowErrorType::from_status_code(response.status().as_u16()),
+                    "Request failed",
+                )
+                .with_status_code(response.status().as_u16());
+                state.flow_monitor.fail_flow(&fid, error).await;
+            }
         }
 
         return response;
@@ -692,6 +1154,14 @@ pub async fn anthropic_messages(
             default_provider
         ),
     );
+
+    // 启动 Flow 捕获（legacy mode）
+    let llm_request = build_llm_request_from_anthropic(&request, "/v1/messages", &headers);
+    let flow_metadata = build_flow_metadata(provider, None, None, &headers, &ctx.request_id);
+    let flow_id = state
+        .flow_monitor
+        .start_flow(llm_request, flow_metadata)
+        .await;
 
     // 检查是否需要刷新 token（无 token 或即将过期）
     {
@@ -710,6 +1180,14 @@ pub async fn anthropic_messages(
                     .write()
                     .await
                     .add("error", &format!("[AUTH] Token refresh failed: {e}"));
+                // 标记 Flow 失败
+                if let Some(fid) = &flow_id {
+                    let error = FlowError::new(
+                        FlowErrorType::Authentication,
+                        &format!("Token refresh failed: {e}"),
+                    );
+                    state.flow_monitor.fail_flow(fid, error).await;
+                }
                 return (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": {"message": format!("Token refresh failed: {e}")}})),
@@ -804,7 +1282,24 @@ pub async fn anthropic_messages(
 
                         // 如果请求流式响应，返回 SSE 格式
                         if request.stream {
+                            // 完成 Flow 捕获
+                            if let Some(fid) = &flow_id {
+                                let llm_response = build_llm_response(200, &parsed.content, None);
+                                state
+                                    .flow_monitor
+                                    .complete_flow(fid, Some(llm_response))
+                                    .await;
+                            }
                             return build_anthropic_stream_response(&request.model, &parsed);
+                        }
+
+                        // 完成 Flow 捕获
+                        if let Some(fid) = &flow_id {
+                            let llm_response = build_llm_response(200, &parsed.content, None);
+                            state
+                                .flow_monitor
+                                .complete_flow(fid, Some(llm_response))
+                                .await;
                         }
 
                         // 非流式响应
@@ -816,6 +1311,11 @@ pub async fn anthropic_messages(
                             .write()
                             .await
                             .add("error", &format!("[ERROR] Response body read failed: {e}"));
+                        // 标记 Flow 失败
+                        if let Some(fid) = &flow_id {
+                            let error = FlowError::new(FlowErrorType::Network, &e.to_string());
+                            state.flow_monitor.fail_flow(fid, error).await;
+                        }
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(serde_json::json!({"error": {"message": e.to_string()}})),
@@ -871,6 +1371,15 @@ pub async fn anthropic_messages(
                                                 parsed.content.len(), parsed.tool_calls.len()
                                             ),
                                             );
+                                            // 完成 Flow 捕获（重试成功）
+                                            if let Some(fid) = &flow_id {
+                                                let llm_response =
+                                                    build_llm_response(200, &parsed.content, None);
+                                                state
+                                                    .flow_monitor
+                                                    .complete_flow(fid, Some(llm_response))
+                                                    .await;
+                                            }
                                             if request.stream {
                                                 return build_anthropic_stream_response(
                                                     &request.model,
@@ -887,6 +1396,14 @@ pub async fn anthropic_messages(
                                                 "error",
                                                 &format!("[RETRY] Body read failed: {e}"),
                                             );
+                                            // 标记 Flow 失败
+                                            if let Some(fid) = &flow_id {
+                                                let error = FlowError::new(
+                                                    FlowErrorType::Network,
+                                                    &e.to_string(),
+                                                );
+                                                state.flow_monitor.fail_flow(fid, error).await;
+                                            }
                                             return (
                                                 StatusCode::INTERNAL_SERVER_ERROR,
                                                 Json(serde_json::json!({"error": {"message": e.to_string()}})),
@@ -907,6 +1424,14 @@ pub async fn anthropic_messages(
                                         safe_truncate(&body, 500)
                                     ),
                                 );
+                                // 标记 Flow 失败（重试失败）
+                                if let Some(fid) = &flow_id {
+                                    let error = FlowError::new(
+                                        FlowErrorType::ServerError,
+                                        &format!("Retry failed: {}", body),
+                                    );
+                                    state.flow_monitor.fail_flow(fid, error).await;
+                                }
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     Json(serde_json::json!({"error": {"message": format!("Retry failed: {}", body)}})),
@@ -919,6 +1444,12 @@ pub async fn anthropic_messages(
                                     .write()
                                     .await
                                     .add("error", &format!("[RETRY] Request failed: {e}"));
+                                // 标记 Flow 失败
+                                if let Some(fid) = &flow_id {
+                                    let error =
+                                        FlowError::new(FlowErrorType::Network, &e.to_string());
+                                    state.flow_monitor.fail_flow(fid, error).await;
+                                }
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     Json(serde_json::json!({"error": {"message": e.to_string()}})),
@@ -933,6 +1464,14 @@ pub async fn anthropic_messages(
                             .write()
                             .await
                             .add("error", &format!("[AUTH] Token refresh failed: {e}"));
+                        // 标记 Flow 失败
+                        if let Some(fid) = &flow_id {
+                            let error = FlowError::new(
+                                FlowErrorType::Authentication,
+                                &format!("Token refresh failed: {e}"),
+                            );
+                            state.flow_monitor.fail_flow(fid, error).await;
+                        }
                         (
                             StatusCode::UNAUTHORIZED,
                             Json(serde_json::json!({"error": {"message": format!("Token refresh failed: {e}")}})),
@@ -950,6 +1489,13 @@ pub async fn anthropic_messages(
                         safe_truncate(&body, 500)
                     ),
                 );
+                // 标记 Flow 失败
+                if let Some(fid) = &flow_id {
+                    let error =
+                        FlowError::new(FlowErrorType::from_status_code(status.as_u16()), &body)
+                            .with_status_code(status.as_u16());
+                    state.flow_monitor.fail_flow(fid, error).await;
+                }
                 (
                     StatusCode::from_u16(status.as_u16())
                         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -972,6 +1518,11 @@ pub async fn anthropic_messages(
                 "debug",
                 &format!("[ERROR] Full error details: {error_details}"),
             );
+            // 标记 Flow 失败
+            if let Some(fid) = &flow_id {
+                let error = FlowError::new(FlowErrorType::Network, &e.to_string());
+                state.flow_monitor.fail_flow(fid, error).await;
+            }
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": {"message": e.to_string()}})),
@@ -979,4 +1530,135 @@ pub async fn anthropic_messages(
                 .into_response()
         }
     }
+}
+
+// ============================================================================
+// 流式传输辅助函数
+// ============================================================================
+
+/// 获取目标流式格式
+///
+/// 根据请求路径确定目标流式格式。
+///
+/// # 参数
+/// - `path`: 请求路径
+///
+/// # 返回
+/// 目标流式格式
+fn get_target_stream_format(path: &str) -> StreamingFormat {
+    if path.contains("/v1/messages") {
+        // Anthropic 格式端点
+        StreamingFormat::AnthropicSse
+    } else {
+        // OpenAI 格式端点
+        StreamingFormat::OpenAiSse
+    }
+}
+
+/// 检查是否应该使用真正的流式传输
+///
+/// 根据凭证类型和配置决定是否使用真正的流式传输。
+/// 目前，只有当 Provider 实现了 StreamingProvider trait 时才返回 true。
+///
+/// # 参数
+/// - `credential`: 凭证信息
+///
+/// # 返回
+/// 是否应该使用真正的流式传输
+///
+/// # 注意
+/// 当前所有 Provider 都返回 false，因为 StreamingProvider trait 尚未实现。
+/// 一旦任务 6 完成，此函数将根据凭证类型返回适当的值。
+fn should_use_true_streaming(
+    credential: &crate::models::provider_pool_model::ProviderCredential,
+) -> bool {
+    use crate::models::provider_pool_model::CredentialData;
+
+    // TODO: 当 StreamingProvider trait 实现后，根据凭证类型返回 true
+    // 目前所有 Provider 都使用伪流式模式
+    match &credential.credential {
+        // Kiro/CodeWhisperer - 需要实现 StreamingProvider
+        CredentialData::KiroOAuth { .. } => false,
+        // Claude - 需要实现 StreamingProvider
+        CredentialData::ClaudeKey { .. } => false,
+        // OpenAI - 需要实现 StreamingProvider
+        CredentialData::OpenAIKey { .. } => false,
+        // Antigravity - 需要实现 StreamingProvider
+        CredentialData::AntigravityOAuth { .. } => false,
+        // 其他类型暂不支持流式
+        _ => false,
+    }
+}
+
+/// 构建流式错误响应
+///
+/// 将错误转换为 SSE 格式的错误事件。
+///
+/// # 参数
+/// - `error_type`: 错误类型
+/// - `message`: 错误消息
+/// - `target_format`: 目标流式格式
+///
+/// # 返回
+/// SSE 格式的错误响应
+///
+/// # 需求覆盖
+/// - 需求 5.3: 流中发生错误时发送错误事件并优雅关闭流
+fn build_stream_error_response(
+    error_type: &str,
+    message: &str,
+    target_format: StreamingFormat,
+) -> Response {
+    let error_event = match target_format {
+        StreamingFormat::AnthropicSse => {
+            format!(
+                "event: error\ndata: {}\n\n",
+                serde_json::json!({
+                    "type": "error",
+                    "error": {
+                        "type": error_type,
+                        "message": message
+                    }
+                })
+            )
+        }
+        // TODO: 任务 6 完成后，添加 GeminiStream 分支
+        StreamingFormat::OpenAiSse => {
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "error": {
+                        "type": error_type,
+                        "message": message
+                    }
+                })
+            )
+        }
+        StreamingFormat::AwsEventStream => {
+            // AWS Event Stream 格式的错误（不太可能作为目标格式）
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "error": {
+                        "type": error_type,
+                        "message": message
+                    }
+                })
+            )
+        }
+    };
+
+    Response::builder()
+        .status(StatusCode::OK) // SSE 错误仍然返回 200
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .body(Body::from(error_event))
+        .unwrap_or_else(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": {"message": "Failed to build error response"}})),
+            )
+                .into_response()
+        })
 }

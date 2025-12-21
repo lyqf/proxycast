@@ -5,10 +5,19 @@
 use crate::proxy::{ProxyClientFactory, ProxyError, ProxyProtocol};
 use proptest::prelude::*;
 
+/// 生成有效的主机名（必须以字母开头，避免纯数字被误认为 IP）
+fn arb_hostname() -> impl Strategy<Value = String> {
+    (
+        "[a-z]",          // 首字母必须是字母
+        "[a-z0-9]{0,19}", // 后续字符可以是字母或数字
+    )
+        .prop_map(|(first, rest)| format!("{}{}", first, rest))
+}
+
 /// 生成有效的 socks5 代理 URL
 fn arb_socks5_url() -> impl Strategy<Value = String> {
     (
-        "[a-z0-9]{1,20}",  // host
+        arb_hostname(),    // host
         1024u16..65535u16, // port
     )
         .prop_map(|(host, port)| format!("socks5://{}:{}", host, port))
@@ -17,7 +26,7 @@ fn arb_socks5_url() -> impl Strategy<Value = String> {
 /// 生成有效的 http 代理 URL
 fn arb_http_url() -> impl Strategy<Value = String> {
     (
-        "[a-z0-9]{1,20}",  // host
+        arb_hostname(),    // host
         1024u16..65535u16, // port
     )
         .prop_map(|(host, port)| format!("http://{}:{}", host, port))
@@ -26,7 +35,7 @@ fn arb_http_url() -> impl Strategy<Value = String> {
 /// 生成有效的 https 代理 URL
 fn arb_https_url() -> impl Strategy<Value = String> {
     (
-        "[a-z0-9]{1,20}",  // host
+        arb_hostname(),    // host
         1024u16..65535u16, // port
     )
         .prop_map(|(host, port)| format!("https://{}:{}", host, port))

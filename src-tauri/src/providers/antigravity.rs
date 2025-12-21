@@ -1421,7 +1421,7 @@ pub async fn start_oauth_login(
 
                 // 构建凭证
                 let now = chrono::Utc::now();
-                let mut credentials = AntigravityCredentials {
+                let credentials = AntigravityCredentials {
                     access_token: Some(access_token.to_string()),
                     refresh_token,
                     token_type: Some("Bearer".to_string()),
@@ -1565,5 +1565,161 @@ impl CredentialProvider for AntigravityProvider {
 
     fn provider_type(&self) -> &'static str {
         "antigravity"
+    }
+}
+
+// ============================================================================
+// StreamingProvider Trait 实现
+// ============================================================================
+
+use crate::models::openai::ChatCompletionRequest;
+use crate::providers::ProviderError;
+use crate::streaming::traits::{
+    reqwest_stream_to_stream_response, StreamFormat, StreamResponse, StreamingProvider,
+};
+
+#[async_trait]
+impl StreamingProvider for AntigravityProvider {
+    /// 发起流式 API 调用
+    ///
+    /// 使用 reqwest 的 bytes_stream 返回字节流，支持真正的端到端流式传输。
+    /// Antigravity 使用 Gemini 流式格式。
+    ///
+    /// # 需求覆盖
+    /// - 需求 1.4: AntigravityProvider 流式支持
+    async fn call_api_stream(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> Result<StreamResponse, ProviderError> {
+        let token = self
+            .credentials
+            .access_token
+            .as_ref()
+            .ok_or_else(|| ProviderError::AuthenticationError("No access token".to_string()))?;
+
+        let project_id = self.project_id.clone().unwrap_or_else(generate_project_id);
+        let actual_model = alias_to_model_name(&request.model);
+
+        // 构建 Antigravity 请求体
+        // 将 OpenAI 格式转换为 Gemini/Antigravity 格式
+        let mut contents = Vec::new();
+        let mut system_instruction = None;
+
+        for msg in &request.messages {
+            let role = &msg.role;
+            let text = match &msg.content {
+                Some(crate::models::openai::MessageContent::Text(t)) => t.clone(),
+                Some(crate::models::openai::MessageContent::Parts(parts)) => parts
+                    .iter()
+                    .filter_map(|p| {
+                        if let crate::models::openai::ContentPart::Text { text } = p {
+                            Some(text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(""),
+                None => String::new(),
+            };
+
+            if role == "system" {
+                system_instruction = Some(serde_json::json!({
+                    "parts": [{ "text": text }]
+                }));
+            } else {
+                let gemini_role = if role == "assistant" { "model" } else { "user" };
+                contents.push(serde_json::json!({
+                    "role": gemini_role,
+                    "parts": [{ "text": text }]
+                }));
+            }
+        }
+
+        let mut request_body = serde_json::json!({
+            "contents": contents
+        });
+
+        if let Some(sys) = system_instruction {
+            request_body["systemInstruction"] = sys;
+        }
+
+        // 构建 Antigravity 请求
+        let mut payload = request_body.clone();
+        payload["model"] = serde_json::json!(actual_model);
+        payload["userAgent"] = serde_json::json!("antigravity");
+        payload["project"] = serde_json::json!(project_id);
+        payload["requestId"] = serde_json::json!(generate_request_id());
+
+        if payload.get("request").is_none() {
+            payload["request"] = serde_json::json!({});
+        }
+        payload["request"]["sessionId"] = serde_json::json!(generate_session_id());
+
+        // 尝试多个 base URL
+        let mut last_error: Option<ProviderError> = None;
+
+        for base_url in &self.base_urls {
+            let url = format!(
+                "{}/{ANTIGRAVITY_API_VERSION}:streamGenerateContent",
+                base_url
+            );
+
+            tracing::info!(
+                "[ANTIGRAVITY_STREAM] 发起流式请求: url={} model={}",
+                url,
+                actual_model
+            );
+
+            let result = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .header("User-Agent", "antigravity/1.11.5 windows/amd64")
+                .json(&payload)
+                .send()
+                .await;
+
+            match result {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        tracing::info!("[ANTIGRAVITY_STREAM] 流式响应开始: status={}", status);
+                        return Ok(reqwest_stream_to_stream_response(resp));
+                    } else {
+                        let body = resp.text().await.unwrap_or_default();
+                        tracing::warn!(
+                            "[ANTIGRAVITY_STREAM] 请求失败 ({}): {} - {}",
+                            base_url,
+                            status,
+                            body
+                        );
+                        last_error = Some(ProviderError::from_http_status(status.as_u16(), &body));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[ANTIGRAVITY_STREAM] 连接失败 ({}): {}", base_url, e);
+                    last_error = Some(ProviderError::from_reqwest_error(&e));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            ProviderError::NetworkError("All Antigravity base URLs failed".to_string())
+        }))
+    }
+
+    fn supports_streaming(&self) -> bool {
+        self.credentials.access_token.is_some() && self.credentials.enable != Some(false)
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "AntigravityProvider"
+    }
+
+    fn stream_format(&self) -> StreamFormat {
+        StreamFormat::GeminiStream
     }
 }

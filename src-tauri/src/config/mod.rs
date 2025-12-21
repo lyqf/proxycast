@@ -10,15 +10,11 @@ mod path_utils;
 mod types;
 mod yaml;
 
-pub use export::{
-    base64_decode, base64_encode, ExportBundle, ExportError, ExportOptions, ExportService,
-    REDACTED_PLACEHOLDER,
-};
+pub use export::{ExportBundle, ExportOptions, ExportService, REDACTED_PLACEHOLDER};
 pub use hot_reload::{
-    ConfigChangeEvent, ConfigChangeKind, FileWatcher, HotReloadError, HotReloadManager,
-    HotReloadStatus, ReloadResult,
+    ConfigChangeEvent, ConfigChangeKind, FileWatcher, HotReloadManager, ReloadResult,
 };
-pub use import::{ImportError, ImportOptions, ImportResult, ImportService, ValidationResult};
+pub use import::{ImportOptions, ImportService, ValidationResult};
 pub use path_utils::{collapse_tilde, contains_tilde, expand_tilde};
 pub use types::{
     AmpConfig, AmpModelMapping, ApiKeyEntry, Config, CredentialEntry, CredentialPoolConfig,
@@ -27,9 +23,7 @@ pub use types::{
     RemoteManagementConfig, RetrySettings, RoutingConfig, RoutingRuleConfig, ServerConfig,
     TlsConfig, VertexApiKeyEntry, VertexModelAlias,
 };
-pub use yaml::{
-    load_config, save_config, save_config_yaml, ConfigError, ConfigManager, YamlService,
-};
+pub use yaml::{load_config, save_config, ConfigError, ConfigManager, YamlService};
 
 #[cfg(test)]
 mod tests;

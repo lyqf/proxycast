@@ -34,6 +34,7 @@ impl Default for ExportOptions {
     }
 }
 
+#[allow(dead_code)]
 impl ExportOptions {
     /// 创建仅配置导出选项
     pub fn config_only() -> Self {
@@ -95,6 +96,7 @@ pub struct ExportBundle {
     pub redacted: bool,
 }
 
+#[allow(dead_code)]
 impl ExportBundle {
     /// 当前导出格式版本
     pub const CURRENT_VERSION: &'static str = "1.0";
@@ -139,6 +141,7 @@ impl ExportBundle {
 
 /// 导出错误类型
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ExportError {
     /// 配置错误
     ConfigError(String),
@@ -180,6 +183,7 @@ pub const REDACTED_PLACEHOLDER: &str = "***REDACTED***";
 /// 提供配置和凭证的统一导出功能
 pub struct ExportService;
 
+#[allow(dead_code)]
 impl ExportService {
     /// 导出配置为 YAML 字符串
     ///

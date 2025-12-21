@@ -3,6 +3,7 @@ mod config;
 mod converter;
 pub mod credential;
 mod database;
+pub mod flow_monitor;
 pub mod injection;
 mod logger;
 pub mod middleware;
@@ -16,6 +17,7 @@ pub mod router;
 mod server;
 mod server_utils;
 mod services;
+pub mod streaming;
 pub mod telemetry;
 pub mod tray;
 pub mod websocket;
@@ -25,17 +27,17 @@ use std::sync::Arc;
 use tauri::{Manager, Runtime};
 use tokio::sync::RwLock;
 
+use commands::flow_monitor_cmd::{FlowMonitorState, FlowQueryServiceState};
 use commands::plugin_cmd::PluginManagerState;
 use commands::provider_pool_cmd::{CredentialSyncServiceState, ProviderPoolServiceState};
 use commands::resilience_cmd::ResilienceConfigState;
 use commands::router_cmd::RouterConfigState;
 use commands::skill_cmd::SkillServiceState;
+use flow_monitor::{FlowFileStore, FlowMonitor, FlowMonitorConfig, FlowQueryService};
 use services::provider_pool_service::ProviderPoolService;
 use services::skill_service::SkillService;
 use services::token_cache_service::TokenCacheService;
-use tray::{
-    calculate_icon_status, CredentialHealth, TrayIconStatus, TrayManager, TrayStateSnapshot,
-};
+use tray::{TrayIconStatus, TrayManager, TrayStateSnapshot};
 
 /// TokenCacheService 状态封装
 pub struct TokenCacheServiceState(pub Arc<TokenCacheService>);
@@ -1419,6 +1421,51 @@ pub fn run() {
     )
     .expect("Failed to create TelemetryState");
 
+    // Initialize FlowMonitor and FlowQueryService
+    let flow_monitor_config = FlowMonitorConfig::default();
+    let flow_file_store = {
+        // 获取应用数据目录
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("proxycast")
+            .join("flows");
+
+        // 创建目录（如果不存在）
+        if let Err(e) = std::fs::create_dir_all(&data_dir) {
+            tracing::warn!("无法创建 Flow 存储目录: {}", e);
+        }
+
+        let rotation_config = flow_monitor::RotationConfig::default();
+        match FlowFileStore::new(data_dir, rotation_config) {
+            Ok(store) => Some(Arc::new(store)),
+            Err(e) => {
+                tracing::warn!("无法初始化 Flow 文件存储: {}", e);
+                None
+            }
+        }
+    };
+    let flow_monitor = Arc::new(FlowMonitor::new(
+        flow_monitor_config,
+        flow_file_store.clone(),
+    ));
+    let flow_monitor_state = FlowMonitorState(flow_monitor.clone());
+
+    // FlowQueryService 需要 file_store，如果没有则创建一个临时的
+    let flow_query_service_state = if let Some(file_store) = flow_file_store {
+        let query_service = FlowQueryService::new(flow_monitor.memory_store(), file_store);
+        FlowQueryServiceState(Arc::new(query_service))
+    } else {
+        // 如果没有文件存储，创建一个临时的内存存储
+        let temp_dir = std::env::temp_dir().join("proxycast_flows");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let rotation_config = flow_monitor::RotationConfig::default();
+        let temp_store = FlowFileStore::new(temp_dir, rotation_config)
+            .expect("Failed to create temp FlowFileStore");
+        let query_service =
+            FlowQueryService::new(flow_monitor.memory_store(), Arc::new(temp_store));
+        FlowQueryServiceState(Arc::new(query_service))
+    };
+
     // Initialize default skill repos
     {
         let conn = db.lock().expect("Failed to lock database");
@@ -1435,6 +1482,7 @@ pub fn run() {
     let shared_stats_clone = shared_stats.clone();
     let shared_tokens_clone = shared_tokens.clone();
     let shared_logger_clone = shared_logger.clone();
+    let flow_monitor_clone = flow_monitor.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -1454,6 +1502,8 @@ pub fn run() {
         .manage(resilience_config_state)
         .manage(telemetry_state)
         .manage(plugin_manager_state)
+        .manage(flow_monitor_state)
+        .manage(flow_query_service_state)
         .setup(move |app| {
             // 初始化托盘管理器
             // Requirements 1.4: 应用启动时显示停止状态图标
@@ -1482,6 +1532,7 @@ pub fn run() {
             let shared_stats = shared_stats_clone.clone();
             let shared_tokens = shared_tokens_clone.clone();
             let shared_logger = shared_logger_clone.clone();
+            let shared_flow_monitor = flow_monitor_clone.clone();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // 先加载凭证
@@ -1495,7 +1546,7 @@ pub fn run() {
                         logs.write().await.add("info", "[启动] Kiro 凭证已加载");
                     }
                 }
-                // 启动服务器（使用共享的遥测实例）
+                // 启动服务器（使用共享的遥测实例和 Flow Monitor）
                 let server_started;
                 let server_address;
                 {
@@ -1504,7 +1555,7 @@ pub fn run() {
                         .await
                         .add("info", "[启动] 正在自动启动服务器...");
                     match s
-                        .start_with_telemetry(
+                        .start_with_telemetry_and_flow_monitor(
                             logs.clone(),
                             pool_service,
                             token_cache,
@@ -1512,6 +1563,7 @@ pub fn run() {
                             Some(shared_stats),
                             Some(shared_tokens),
                             Some(shared_logger),
+                            Some(shared_flow_monitor),
                         )
                         .await
                     {
@@ -1780,6 +1832,25 @@ pub fn run() {
             commands::plugin_cmd::reload_plugins,
             commands::plugin_cmd::unload_plugin,
             commands::plugin_cmd::get_plugins_dir,
+            // Flow Monitor commands
+            commands::flow_monitor_cmd::query_flows,
+            commands::flow_monitor_cmd::get_flow_detail,
+            commands::flow_monitor_cmd::search_flows,
+            commands::flow_monitor_cmd::get_flow_stats,
+            commands::flow_monitor_cmd::export_flows,
+            commands::flow_monitor_cmd::update_flow_annotations,
+            commands::flow_monitor_cmd::toggle_flow_starred,
+            commands::flow_monitor_cmd::add_flow_comment,
+            commands::flow_monitor_cmd::add_flow_tag,
+            commands::flow_monitor_cmd::remove_flow_tag,
+            commands::flow_monitor_cmd::set_flow_marker,
+            commands::flow_monitor_cmd::cleanup_flows,
+            commands::flow_monitor_cmd::get_recent_flows,
+            commands::flow_monitor_cmd::get_flow_monitor_status,
+            commands::flow_monitor_cmd::enable_flow_monitor,
+            commands::flow_monitor_cmd::disable_flow_monitor,
+            commands::flow_monitor_cmd::subscribe_flow_events,
+            commands::flow_monitor_cmd::get_all_flow_tags,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

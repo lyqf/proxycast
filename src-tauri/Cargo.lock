@@ -3367,7 +3367,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3375,6 +3375,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "dashmap",
  "dirs 5.0.1",
@@ -3405,6 +3406,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tiktoken-rs",
  "tokio",
+ "tokio-util",
  "tower 0.4.13",
  "tower-http 0.5.2",
  "tracing",
