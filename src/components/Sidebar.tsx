@@ -5,6 +5,7 @@ import {
   FileCode,
   Activity,
   Wrench,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +14,7 @@ type Page =
   | "config-management"
   | "api-server"
   | "flow-monitor"
+  | "agent"
   | "tools"
   | "browser-interceptor"
   | "machine-id"
@@ -28,6 +30,7 @@ const navItems = [
   { id: "provider-pool" as Page, label: "凭证池", icon: Database },
   { id: "config-management" as Page, label: "配置管理", icon: FileCode },
   { id: "flow-monitor" as Page, label: "Flow Monitor", icon: Activity },
+  { id: "agent" as Page, label: "AI Agent", icon: Bot },
   { id: "tools" as Page, label: "工具", icon: Wrench },
   { id: "settings" as Page, label: "设置", icon: Settings },
 ];

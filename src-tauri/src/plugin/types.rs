@@ -142,6 +142,79 @@ pub enum PluginType {
     Script,
     /// 原生 Rust 插件 (预留)
     Native,
+    /// 二进制可执行文件
+    Binary,
+}
+
+/// 平台二进制文件名映射
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformBinaries {
+    /// macOS ARM64 (Apple Silicon)
+    #[serde(rename = "macos-arm64")]
+    pub macos_arm64: String,
+    /// macOS x64 (Intel)
+    #[serde(rename = "macos-x64")]
+    pub macos_x64: String,
+    /// Linux x64
+    #[serde(rename = "linux-x64")]
+    pub linux_x64: String,
+    /// Linux ARM64
+    #[serde(rename = "linux-arm64")]
+    pub linux_arm64: String,
+    /// Windows x64
+    #[serde(rename = "windows-x64")]
+    pub windows_x64: String,
+}
+
+impl PlatformBinaries {
+    /// 获取当前平台的二进制文件名
+    pub fn get_current_platform(&self) -> Option<&str> {
+        match (std::env::consts::ARCH, std::env::consts::OS) {
+            ("aarch64", "macos") => Some(&self.macos_arm64),
+            ("x86_64", "macos") => Some(&self.macos_x64),
+            ("x86_64", "linux") => Some(&self.linux_x64),
+            ("aarch64", "linux") => Some(&self.linux_arm64),
+            ("x86_64", "windows") => Some(&self.windows_x64),
+            _ => None,
+        }
+    }
+}
+
+/// Binary 类型的 manifest 扩展字段
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryManifest {
+    /// 二进制文件名（不含平台后缀）
+    pub binary_name: String,
+    /// GitHub 仓库 owner
+    pub github_owner: String,
+    /// GitHub 仓库名
+    pub github_repo: String,
+    /// 平台文件名映射
+    pub platform_binaries: PlatformBinaries,
+    /// 校验文件名（可选）
+    #[serde(default)]
+    pub checksum_file: Option<String>,
+}
+
+/// 二进制组件状态
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryComponentStatus {
+    /// 组件名称
+    pub name: String,
+    /// 是否已安装
+    pub installed: bool,
+    /// 已安装版本
+    pub installed_version: Option<String>,
+    /// 最新可用版本
+    pub latest_version: Option<String>,
+    /// 是否有更新
+    pub has_update: bool,
+    /// 二进制文件路径
+    pub binary_path: Option<String>,
+    /// 安装时间
+    pub installed_at: Option<String>,
+    /// 描述
+    pub description: Option<String>,
 }
 
 /// 插件上下文 - 传递给钩子函数的上下文信息

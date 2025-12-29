@@ -69,6 +69,9 @@ impl PluginLoader {
         match manifest.plugin_type {
             PluginType::Script => self.load_script_plugin(plugin_dir, manifest, config).await,
             PluginType::Native => Err(PluginError::LoadError("原生插件暂不支持".to_string())),
+            PluginType::Binary => Err(PluginError::LoadError(
+                "二进制组件不通过插件加载器加载".to_string(),
+            )),
         }
     }
 

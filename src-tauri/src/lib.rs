@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod browser_interceptor;
 mod commands;
 mod config;
@@ -28,6 +29,7 @@ use std::sync::Arc;
 use tauri::{Manager, Runtime};
 use tokio::sync::RwLock;
 
+use agent::AsterProcessState;
 use commands::browser_interceptor_cmd::BrowserInterceptorState;
 use commands::flow_monitor_cmd::{
     BatchOperationsState, BookmarkManagerState, EnhancedStatsServiceState, FlowInterceptorState,
@@ -1647,6 +1649,9 @@ pub fn run() {
     // Initialize BrowserInterceptorState
     let browser_interceptor_state = BrowserInterceptorState::default();
 
+    // Initialize AsterProcessState
+    let aster_process_state = AsterProcessState::default();
+
     // FlowQueryService 需要 file_store，如果没有则创建一个临时的
     let flow_query_service_state = if let Some(file_store) = flow_file_store {
         let query_service = FlowQueryService::new(flow_monitor.memory_store(), file_store);
@@ -1744,6 +1749,7 @@ pub fn run() {
         .manage(enhanced_stats_service_state)
         .manage(batch_operations_state)
         .manage(browser_interceptor_state)
+        .manage(aster_process_state)
         .on_window_event(move |window, event| {
             // 处理窗口关闭事件
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -2346,6 +2352,23 @@ pub fn run() {
             commands::kiro_local::switch_kiro_to_local,
             commands::kiro_local::get_kiro_fingerprint_info,
             commands::kiro_local::get_local_kiro_credential_uuid,
+            // Agent commands
+            commands::agent_cmd::agent_start_process,
+            commands::agent_cmd::agent_stop_process,
+            commands::agent_cmd::agent_get_process_status,
+            commands::agent_cmd::agent_create_session,
+            commands::agent_cmd::agent_send_message,
+            commands::agent_cmd::agent_list_sessions,
+            commands::agent_cmd::agent_get_session,
+            commands::agent_cmd::agent_delete_session,
+            // Binary component commands
+            commands::binary_cmd::get_aster_status,
+            commands::binary_cmd::install_aster,
+            commands::binary_cmd::uninstall_aster,
+            commands::binary_cmd::check_aster_update,
+            commands::binary_cmd::update_aster,
+            commands::binary_cmd::get_aster_binary_path,
+            commands::binary_cmd::is_aster_installed,
             // Network commands
             commands::network_cmd::get_network_info,
         ])

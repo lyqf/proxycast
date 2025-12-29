@@ -836,6 +836,14 @@ async fn run_server(
             get(handlers::get_credential_status),
         );
 
+    // 凭证 API 路由（用于 aster Agent 集成）
+    let credentials_api_routes = Router::new()
+        .route("/v1/credentials/select", post(handlers::credentials_select))
+        .route(
+            "/v1/credentials/:uuid/token",
+            get(handlers::credentials_get_token),
+        );
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(models))
@@ -876,6 +884,8 @@ async fn run_server(
         .merge(management_routes)
         // Kiro凭证管理API路由
         .merge(kiro_api_routes)
+        // 凭证 API 路由（用于 aster Agent 集成）
+        .merge(credentials_api_routes)
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 

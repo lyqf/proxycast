@@ -8,6 +8,7 @@ import { FlowMonitorPage } from "./pages";
 import { ToolsPage } from "./components/tools/ToolsPage";
 import { BrowserInterceptorTool } from "./components/tools/browser-interceptor/BrowserInterceptorTool";
 import { MachineIdTool } from "./components/tools/machine-id/MachineIdTool";
+import { AgentChatPage } from "./components/agent";
 import { Toaster } from "./components/ui/sonner";
 import { flowEventManager } from "./lib/flowEventManager";
 
@@ -16,6 +17,7 @@ type Page =
   | "config-management"
   | "api-server"
   | "flow-monitor"
+  | "agent"
   | "tools"
   | "browser-interceptor"
   | "machine-id"
@@ -30,6 +32,14 @@ function App() {
     // 应用卸载时不取消订阅，因为这是全局订阅
   }, []);
 
+  // 页面切换时重置滚动位置
+  useEffect(() => {
+    const mainElement = document.querySelector("main");
+    if (mainElement) {
+      mainElement.scrollTop = 0;
+    }
+  }, [currentPage]);
+
   const renderPage = () => {
     switch (currentPage) {
       case "provider-pool":
@@ -40,6 +50,8 @@ function App() {
         return <ApiServerPage />;
       case "flow-monitor":
         return <FlowMonitorPage />;
+      case "agent":
+        return <AgentChatPage />;
       case "tools":
         return <ToolsPage onNavigate={setCurrentPage} />;
       case "browser-interceptor":
