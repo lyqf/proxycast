@@ -86,18 +86,18 @@ pub async fn handle_image_generation(
     }
 
     // 记录请求日志
+    // 安全截取 prompt，避免 UTF-8 字符边界问题
+    let prompt_preview: String = request.prompt.chars().take(50).collect();
+    let prompt_display = if request.prompt.chars().count() > 50 {
+        format!("{}...", prompt_preview)
+    } else {
+        request.prompt.clone()
+    };
     state.logs.write().await.add(
         "info",
         &format!(
             "[IMAGE] 收到图像生成请求: model={}, prompt={}, n={}, response_format={}",
-            request.model,
-            if request.prompt.len() > 50 {
-                format!("{}...", &request.prompt[..50])
-            } else {
-                request.prompt.clone()
-            },
-            request.n,
-            request.response_format
+            request.model, prompt_display, request.n, request.response_format
         ),
     );
 
