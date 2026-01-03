@@ -871,6 +871,11 @@ async fn run_server(
         .route("/v1/chat/completions", post(handlers::chat_completions))
         .route("/v1/messages", post(handlers::anthropic_messages))
         .route("/v1/messages/count_tokens", post(count_tokens))
+        // 图像生成 API 路由
+        .route(
+            "/v1/images/generations",
+            post(handlers::handle_image_generation),
+        )
         // Gemini 原生协议路由
         .route("/v1/gemini/*path", post(gemini_generate_content))
         // WebSocket 路由

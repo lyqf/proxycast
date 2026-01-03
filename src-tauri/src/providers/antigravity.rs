@@ -2007,13 +2007,21 @@ impl StreamingProvider for AntigravityProvider {
             match result {
                 Ok(resp) => {
                     let status = resp.status();
+                    eprintln!("[ANTIGRAVITY_STREAM] HTTP 响应状态: {}", status);
                     tracing::info!("[ANTIGRAVITY_STREAM] HTTP 响应状态: {}", status);
 
                     if status.is_success() {
+                        eprintln!("[ANTIGRAVITY_STREAM] ✓ 流式响应成功建立");
                         tracing::info!("[ANTIGRAVITY_STREAM] ✓ 流式响应成功建立，返回流");
                         return Ok(reqwest_stream_to_stream_response(resp));
                     } else {
                         let body = resp.text().await.unwrap_or_default();
+                        eprintln!(
+                            "[ANTIGRAVITY_STREAM] ✗ 请求失败\n  Base URL: {}\n  Status: {}\n  Body: {}",
+                            base_url,
+                            status,
+                            &body[..body.len().min(500)]
+                        );
                         tracing::error!(
                             "[ANTIGRAVITY_STREAM] ✗ 请求失败\n  Base URL: {}\n  Status: {}\n  Body: {}",
                             base_url,
@@ -2024,6 +2032,10 @@ impl StreamingProvider for AntigravityProvider {
                     }
                 }
                 Err(e) => {
+                    eprintln!(
+                        "[ANTIGRAVITY_STREAM] ✗ 连接失败\n  Base URL: {}\n  Error: {}",
+                        base_url, e
+                    );
                     tracing::error!(
                         "[ANTIGRAVITY_STREAM] ✗ 连接失败\n  Base URL: {}\n  Error: {}",
                         base_url,
