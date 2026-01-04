@@ -155,7 +155,6 @@ impl BrowserInterceptorConfig {
         self.target_processes.iter().any(|pattern| {
             // 支持简单的通配符匹配
             if pattern.contains('*') {
-                // TODO: 实现更复杂的模式匹配
                 process_name.contains(&pattern.replace('*', ""))
             } else {
                 process_name.eq_ignore_ascii_case(pattern)
@@ -193,7 +192,7 @@ impl BrowserInterceptorConfig {
     }
 
     /// 验证配置的有效性
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> std::result::Result<(), String> {
         if self.target_processes.is_empty() {
             return Err("目标进程列表不能为空".to_string());
         }

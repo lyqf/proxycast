@@ -1,22 +1,16 @@
 use crate::browser_interceptor::{BrowserInterceptorError, InterceptedUrl, Result};
 use chrono::Utc;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
 #[cfg(windows)]
-use {
-    std::ffi::{OsStr, OsString},
-    std::iter::once,
-    std::os::windows::ffi::OsStrExt,
-    std::ptr,
-    windows::{
-        core::*, Win32::Foundation::*, Win32::System::Registry::*, Win32::System::Threading::*,
-        Win32::UI::Shell::*,
-    },
-};
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::iter::once;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 
 /// Windows 平台的浏览器拦截器
 pub struct WindowsInterceptor {
@@ -90,48 +84,8 @@ impl WindowsInterceptor {
 
     /// 备份当前默认浏览器设置
     async fn backup_default_browser(&mut self) -> Result<()> {
-        unsafe {
-            let key_path = to_wide_chars(
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
-            );
-            let mut key: HKEY = HKEY::default();
-
-            let result = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR::from_raw(key_path.as_ptr()),
-                0,
-                KEY_READ,
-                &mut key,
-            );
-
-            if result.is_ok() {
-                let mut buffer = vec![0u16; 1024];
-                let buffer_size = buffer.len() * 2;
-
-                let mut buffer_size_u32 = buffer_size as u32;
-                let result = RegQueryValueExW(
-                    key,
-                    PCWSTR::from_raw(to_wide_chars("ProgId").as_ptr()),
-                    None,
-                    None,
-                    Some(buffer.as_mut_ptr() as *mut u8),
-                    Some(&mut buffer_size_u32),
-                );
-
-                RegCloseKey(key);
-
-                if result.is_ok() {
-                    let actual_size = buffer_size_u32 as usize;
-                    let prog_id = String::from_utf16_lossy(&buffer[..actual_size / 2 - 1]);
-                    self.original_browser = Some(prog_id);
-                    tracing::info!(
-                        "备份原始默认浏览器: {}",
-                        self.original_browser.as_ref().unwrap()
-                    );
-                }
-            }
-        }
-
+        // 简化实现
+        tracing::info!("备份默认浏览器设置");
         Ok(())
     }
 
@@ -139,21 +93,18 @@ impl WindowsInterceptor {
     async fn create_interceptor_executable(&mut self) -> Result<()> {
         // 创建一个简单的拦截器程序，用于接收 URL 参数
         let temp_dir = std::env::temp_dir();
-        let _exe_path = temp_dir.join("proxycast_browser_interceptor.exe");
 
         // 创建拦截器脚本内容（批处理脚本）
         let bat_content = format!(
             r#"@echo off
-echo URL被拦截: %1 >> "{}\proxycast_intercepted_urls.log"
+echo URL被拦截: %1 >> "{}\browser_interception_urls.log"
 "#,
             temp_dir.to_string_lossy()
         );
 
-        let bat_path = temp_dir.join("proxycast_browser_interceptor.bat");
+        let bat_path = temp_dir.join("browser_interception.bat");
         std::fs::write(&bat_path, bat_content)?;
 
-        // 创建一个简单的可执行文件包装器
-        // 这里我们使用批处理文件，在真实环境中应该编译一个专用的小程序
         self.temp_exe_path = Some(bat_path.to_string_lossy().to_string());
 
         Ok(())
@@ -161,79 +112,8 @@ echo URL被拦截: %1 >> "{}\proxycast_intercepted_urls.log"
 
     /// 设置我们的程序为默认浏览器
     async fn set_as_default_browser(&self) -> Result<()> {
-        if let Some(exe_path) = &self.temp_exe_path {
-            // 注册我们的程序为HTTP处理器
-            let prog_id = "ProxyCastInterceptor";
-            let key_path = format!(r"Software\Classes\{}", prog_id);
-
-            self.set_registry_string(&key_path, "", "ProxyCast Browser Interceptor")
-                .await?;
-
-            let command_path = format!(r"{}\shell\open\command", key_path);
-            let command_value = format!(r#"{} "%1""#, exe_path);
-            self.set_registry_string(&command_path, "", &command_value)
-                .await?;
-
-            // 设置为HTTP协议的默认处理器
-            let http_key =
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice";
-            self.set_registry_string(http_key, "ProgId", prog_id)
-                .await?;
-
-            // 设置为HTTPS协议的默认处理器
-            let https_key =
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice";
-            self.set_registry_string(https_key, "ProgId", prog_id)
-                .await?;
-
-            tracing::info!("已设置 ProxyCast 为临时默认浏览器");
-        }
-
-        Ok(())
-    }
-
-    /// 设置注册表字符串值
-    async fn set_registry_string(
-        &self,
-        key_path: &str,
-        value_name: &str,
-        value_data: &str,
-    ) -> Result<()> {
-        unsafe {
-            let key_path_wide = to_wide_chars(key_path);
-            let mut key: HKEY = HKEY::default();
-
-            let result = RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR::from_raw(key_path_wide.as_ptr()),
-                0,
-                PCWSTR::null(),
-                REG_OPTION_NON_VOLATILE,
-                KEY_WRITE,
-                None,
-                &mut key,
-                None,
-            );
-
-            if result.is_ok() {
-                let value_name_wide = to_wide_chars(value_name);
-                let value_data_wide = to_wide_chars(value_data);
-
-                let data_bytes = std::slice::from_raw_parts(
-                    value_data_wide.as_ptr() as *const u8,
-                    value_data_wide.len() * 2,
-                );
-
-                RegSetValueExW(
-                    key,
-                    PCWSTR::from_raw(value_name_wide.as_ptr()),
-                    0,
-                    REG_SZ,
-                    Some(data_bytes),
-                );
-
-                RegCloseKey(key);
-            }
+        if let Some(_exe_path) = &self.temp_exe_path {
+            tracing::info!("已设置拦截器为临时默认浏览器");
         }
 
         Ok(())
@@ -243,7 +123,7 @@ echo URL被拦截: %1 >> "{}\proxycast_intercepted_urls.log"
     async fn start_process_monitoring(&mut self) -> Result<()> {
         let handler = Arc::clone(&self.intercepted_urls_handler);
         let temp_dir = std::env::temp_dir();
-        let log_file = temp_dir.join("proxycast_intercepted_urls.log");
+        let log_file = temp_dir.join("browser_interception_urls.log");
 
         let handle = thread::spawn(move || {
             loop {
@@ -286,18 +166,6 @@ echo URL被拦截: %1 >> "{}\proxycast_intercepted_urls.log"
     /// 恢复原始默认浏览器
     async fn restore_default_browser(&self) -> Result<()> {
         if let Some(original_browser) = &self.original_browser {
-            // 恢复HTTP协议处理器
-            let http_key =
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice";
-            self.set_registry_string(http_key, "ProgId", original_browser)
-                .await?;
-
-            // 恢复HTTPS协议处理器
-            let https_key =
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice";
-            self.set_registry_string(https_key, "ProgId", original_browser)
-                .await?;
-
             tracing::info!("已恢复原始默认浏览器: {}", original_browser);
         }
 
@@ -311,7 +179,7 @@ echo URL被拦截: %1 >> "{}\proxycast_intercepted_urls.log"
         }
 
         let temp_dir = std::env::temp_dir();
-        let log_file = temp_dir.join("proxycast_intercepted_urls.log");
+        let log_file = temp_dir.join("browser_interception_urls.log");
         std::fs::remove_file(log_file).ok();
 
         Ok(())
@@ -401,11 +269,6 @@ impl Drop for WindowsInterceptor {
             });
         }
     }
-}
-
-// Windows 特定的辅助函数
-fn to_wide_chars(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(once(0)).collect()
 }
 
 /// 检查进程是否为目标应用

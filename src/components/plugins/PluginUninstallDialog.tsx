@@ -56,6 +56,8 @@ export function PluginUninstallDialog({
     try {
       await invoke<boolean>("uninstall_plugin", { pluginId: plugin.id });
       onSuccess();
+      // 触发侧边栏刷新事件
+      window.dispatchEvent(new CustomEvent("plugin-changed"));
       handleClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

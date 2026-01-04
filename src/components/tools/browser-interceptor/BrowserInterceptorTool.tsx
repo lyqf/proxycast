@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, Globe, Settings, History, BarChart3 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Globe, Settings, History, BarChart3 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusControlPanel } from "./StatusControlPanel";
 import { InterceptedUrlsPanel } from "./InterceptedUrlsPanel";
@@ -10,22 +9,7 @@ import { SystemStatusPanel } from "./SystemStatusPanel";
 import { InterceptorState } from "@/lib/api/browserInterceptor";
 import * as browserInterceptorApi from "@/lib/api/browserInterceptor";
 
-interface BrowserInterceptorToolProps {
-  onNavigate: (
-    page:
-      | "provider-pool"
-      | "config-management"
-      | "api-server"
-      | "flow-monitor"
-      | "tools"
-      | "browser-interceptor"
-      | "settings",
-  ) => void;
-}
-
-export function BrowserInterceptorTool({
-  onNavigate,
-}: BrowserInterceptorToolProps) {
+export function BrowserInterceptorTool() {
   const [interceptorState, setInterceptorState] =
     useState<InterceptorState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,21 +55,12 @@ export function BrowserInterceptorTool({
       {/* 页面头部 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <Button
-            variant="ghost"
-            onClick={() => onNavigate("tools")}
-            className="p-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-          <div className="flex items-center space-x-3">
-            <Globe className="w-8 h-8 text-blue-500" />
-            <div>
-              <h1 className="text-3xl font-bold">浏览器拦截器</h1>
-              <p className="text-gray-600 text-sm mt-1">
-                拦截桌面应用的浏览器启动，支持手动复制 URL 到指纹浏览器
-              </p>
-            </div>
+          <Globe className="w-8 h-8 text-blue-500" />
+          <div>
+            <h1 className="text-3xl font-bold">浏览器拦截器</h1>
+            <p className="text-gray-600 text-sm mt-1">
+              拦截桌面应用的浏览器启动，支持手动复制 URL 到指纹浏览器
+            </p>
           </div>
         </div>
 

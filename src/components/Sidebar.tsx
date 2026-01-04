@@ -1,13 +1,4 @@
-import {
-  Settings,
-  Globe,
-  Database,
-  FileCode,
-  Activity,
-  Wrench,
-  Bot,
-  Puzzle,
-} from "lucide-react";
+import { Settings, Globe, Database, Wrench, Bot, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,13 +12,10 @@ import { cn } from "@/lib/utils";
  */
 type Page =
   | "provider-pool"
-  | "config-management"
   | "api-server"
-  | "flow-monitor"
   | "agent"
   | "tools"
   | "plugins"
-  | "browser-interceptor"
   | "settings"
   | `plugin:${string}`;
 
@@ -40,8 +28,6 @@ const navItems = [
   { id: "agent" as Page, label: "AI Agent", icon: Bot },
   { id: "api-server" as Page, label: "API Server", icon: Globe },
   { id: "provider-pool" as Page, label: "凭证池", icon: Database },
-  { id: "config-management" as Page, label: "配置管理", icon: FileCode },
-  { id: "flow-monitor" as Page, label: "Flow Monitor", icon: Activity },
   { id: "tools" as Page, label: "工具", icon: Wrench },
   { id: "plugins" as Page, label: "插件中心", icon: Puzzle },
   { id: "settings" as Page, label: "设置", icon: Settings },

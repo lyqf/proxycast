@@ -38,12 +38,9 @@ interface DynamicToolCard {
  */
 type Page =
   | "provider-pool"
-  | "config-management"
   | "api-server"
-  | "flow-monitor"
   | "agent"
   | "tools"
-  | "browser-interceptor"
   | "settings"
   | "plugins"
   | `plugin:${string}`;

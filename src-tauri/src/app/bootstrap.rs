@@ -7,7 +7,6 @@ use tokio::sync::RwLock;
 
 use crate::agent::NativeAgentState;
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
-use crate::commands::browser_interceptor_cmd::BrowserInterceptorState;
 use crate::commands::flow_monitor_cmd::{
     BatchOperationsState, BookmarkManagerState, EnhancedStatsServiceState, FlowInterceptorState,
     FlowMonitorState, FlowQueryServiceState, FlowReplayerState, QuickFilterManagerState,
@@ -128,7 +127,6 @@ pub struct AppStates {
     pub bookmark_manager: BookmarkManagerState,
     pub enhanced_stats_service: EnhancedStatsServiceState,
     pub batch_operations: BatchOperationsState,
-    pub browser_interceptor: BrowserInterceptorState,
     pub native_agent: NativeAgentState,
     pub oauth_plugin_manager: crate::commands::oauth_plugin_cmd::OAuthPluginManagerState,
     pub orchestrator: OrchestratorState,
@@ -183,7 +181,7 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     // 遥测系统
     let (telemetry_state, shared_stats, shared_tokens, shared_logger) = init_telemetry(config)?;
 
-    // Flow Monitor 系统
+    // Flow Monitor 系统（根据插件安装状态启用/禁用）
     let (
         flow_monitor_state,
         flow_query_service_state,
@@ -196,10 +194,9 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         batch_operations_state,
         flow_monitor_arc,
         flow_interceptor_arc,
-    ) = init_flow_monitor(&provider_pool_service_state, &db)?;
+    ) = init_flow_monitor(&provider_pool_service_state, &db, &plugin_installer_state)?;
 
     // 其他状态
-    let browser_interceptor_state = BrowserInterceptorState::default();
     let native_agent_state = NativeAgentState::new();
     let oauth_plugin_manager_state =
         crate::commands::oauth_plugin_cmd::OAuthPluginManagerState::with_defaults();
@@ -236,7 +233,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         bookmark_manager: bookmark_manager_state,
         enhanced_stats_service: enhanced_stats_service_state,
         batch_operations: batch_operations_state,
-        browser_interceptor: browser_interceptor_state,
         native_agent: native_agent_state,
         oauth_plugin_manager: oauth_plugin_manager_state,
         orchestrator: orchestrator_state,
@@ -327,10 +323,13 @@ fn init_telemetry(
 }
 
 /// 初始化 Flow Monitor 系统
+///
+/// 如果 flow-monitor 插件已安装，则启用监控功能；否则禁用。
 #[allow(clippy::type_complexity)]
 fn init_flow_monitor(
     provider_pool_service_state: &ProviderPoolServiceState,
     db: &DbConnection,
+    plugin_installer_state: &PluginInstallerState,
 ) -> Result<
     (
         FlowMonitorState,
@@ -347,7 +346,21 @@ fn init_flow_monitor(
     ),
     String,
 > {
-    let flow_monitor_config = FlowMonitorConfig::default();
+    // 检查 flow-monitor 插件是否已安装
+    let is_plugin_installed = {
+        let installer = plugin_installer_state.0.blocking_read();
+        installer.is_installed("flow-monitor").unwrap_or(false)
+    };
+
+    // 根据插件安装状态设置 enabled
+    let mut flow_monitor_config = FlowMonitorConfig::default();
+    flow_monitor_config.enabled = is_plugin_installed;
+
+    if is_plugin_installed {
+        tracing::info!("[启动] flow-monitor 插件已安装，启用 Flow 监控");
+    } else {
+        tracing::info!("[启动] flow-monitor 插件未安装，禁用 Flow 监控");
+    }
 
     // 初始化文件存储
     let data_dir = dirs::data_dir()

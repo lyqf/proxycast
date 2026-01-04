@@ -37,12 +37,9 @@ import { toast } from "sonner";
  */
 type Page =
   | "provider-pool"
-  | "config-management"
   | "api-server"
-  | "flow-monitor"
   | "agent"
   | "tools"
-  | "browser-interceptor"
   | "settings"
   | "plugins"
   | `plugin:${string}`;
@@ -182,16 +179,7 @@ function ToolCard({
 /**
  * 内置工具列表
  */
-const builtinTools: DynamicToolCard[] = [
-  {
-    id: "browser-interceptor",
-    title: "浏览器拦截器",
-    description: "拦截桌面应用的浏览器启动，支持手动复制 URL 到指纹浏览器",
-    icon: "Globe",
-    source: "builtin",
-    status: "已停止", // TODO: 从状态管理中获取
-  },
-];
+const builtinTools: DynamicToolCard[] = [];
 
 /**
  * 占位工具列表 (敬请期待)
@@ -235,6 +223,22 @@ const recommendedPlugins: RecommendedPlugin[] = [
     // 插件包从 MachineIdTool 仓库 release 下载
     downloadUrl:
       "https://github.com/aiclientproxy/MachineIdTool/releases/latest/download/machine-id-tool-plugin.zip",
+  },
+  {
+    id: "browser-interception",
+    name: "浏览器拦截器",
+    description: "拦截桌面应用的浏览器启动，支持手动复制 URL 到指纹浏览器",
+    icon: "Globe",
+    downloadUrl:
+      "https://github.com/aiclientproxy/browser-interception/releases/latest/download/browser-interception-plugin.zip",
+  },
+  {
+    id: "flow-monitor",
+    name: "Flow Monitor",
+    description: "监控和分析 LLM API 请求，提供详细的流量分析和调试功能",
+    icon: "Activity",
+    downloadUrl:
+      "https://github.com/aiclientproxy/flow-monitor/releases/latest/download/flow-monitor-plugin.zip",
   },
 ];
 

@@ -16,24 +16,23 @@ import {
   Bot,
   Globe,
   Database,
-  FileCode,
-  Activity,
   Wrench,
   Puzzle,
   Settings,
   Moon,
   Sun,
+  Activity,
+  LucideIcon,
 } from "lucide-react";
+import * as LucideIcons from "lucide-react";
+import { getPluginsForSurface, PluginUIInfo } from "@/lib/api/pluginUI";
 
 type Page =
   | "provider-pool"
-  | "config-management"
   | "api-server"
-  | "flow-monitor"
   | "agent"
   | "tools"
   | "plugins"
-  | "browser-interceptor"
   | "settings"
   | `plugin:${string}`;
 
@@ -131,11 +130,20 @@ const mainMenuItems: { id: Page; label: string; icon: typeof Bot }[] = [
   { id: "agent", label: "AI Agent", icon: Bot },
   { id: "api-server", label: "API Server", icon: Globe },
   { id: "provider-pool", label: "凭证池", icon: Database },
-  { id: "config-management", label: "配置管理", icon: FileCode },
-  { id: "flow-monitor", label: "Flow Monitor", icon: Activity },
   { id: "tools", label: "工具", icon: Wrench },
   { id: "plugins", label: "插件中心", icon: Puzzle },
 ];
+
+/**
+ * 根据图标名称获取 Lucide 图标组件
+ * 默认返回 Activity 图标
+ */
+function getIconByName(iconName: string): LucideIcon {
+  const IconComponent = (
+    LucideIcons as unknown as Record<string, LucideIcon | undefined>
+  )[iconName];
+  return IconComponent || Activity;
+}
 
 export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -146,6 +154,46 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
     }
     return "light";
   });
+
+  // 已安装的侧边栏插件列表
+  const [sidebarPlugins, setSidebarPlugins] = useState<PluginUIInfo[]>([]);
+  // 刷新触发器
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // 加载侧边栏插件
+  useEffect(() => {
+    const loadSidebarPlugins = async () => {
+      try {
+        const plugins = await getPluginsForSurface("sidebar");
+        setSidebarPlugins(plugins);
+      } catch (error) {
+        console.error("加载侧边栏插件失败:", error);
+      }
+    };
+    loadSidebarPlugins();
+  }, [refreshTrigger]);
+
+  // 监听插件安装/卸载事件，刷新侧边栏
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "plugin-changed") {
+        setRefreshTrigger((prev) => prev + 1);
+      }
+    };
+
+    // 监听自定义事件
+    const handlePluginChange = () => {
+      setRefreshTrigger((prev) => prev + 1);
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("plugin-changed", handlePluginChange);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("plugin-changed", handlePluginChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (theme === "dark") {
@@ -190,6 +238,26 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
               </TooltipContent>
             </Tooltip>
           ))}
+          {/* 动态插件入口 */}
+          {sidebarPlugins.map((plugin) => {
+            const PluginIcon = getIconByName(plugin.icon);
+            const pluginPageId: Page = `plugin:${plugin.pluginId}`;
+            return (
+              <Tooltip key={plugin.pluginId}>
+                <TooltipTrigger asChild>
+                  <IconButton
+                    $active={currentPage === pluginPageId}
+                    onClick={() => onNavigate(pluginPageId)}
+                  >
+                    <PluginIcon />
+                  </IconButton>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <span className="whitespace-nowrap">{plugin.name}</span>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
         </MenusContainer>
 
         <BottomMenus>

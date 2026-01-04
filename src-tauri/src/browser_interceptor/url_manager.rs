@@ -209,28 +209,6 @@ impl UrlManager {
         Ok(result)
     }
 
-    /// 按日期范围获取历史记录
-    pub fn get_history_by_date_range(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> Result<Vec<InterceptedUrl>> {
-        let history = self
-            .history
-            .read()
-            .map_err(|e| BrowserInterceptorError::StateError(format!("读取历史记录失败: {}", e)))?;
-
-        let mut result: Vec<InterceptedUrl> = history
-            .iter()
-            .filter(|url| url.timestamp >= start && url.timestamp <= end)
-            .cloned()
-            .collect();
-
-        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-
-        Ok(result)
-    }
-
     /// 获取统计信息
     pub fn get_statistics(&self) -> Result<UrlStatistics> {
         let urls = self.intercepted_urls.read().map_err(|e| {
@@ -262,26 +240,6 @@ impl UrlManager {
             dismissed_count,
             process_stats,
         })
-    }
-
-    /// 清理过期的历史记录
-    pub fn cleanup_old_history(&self, days: u32) -> Result<usize> {
-        let cutoff_date = Utc::now() - chrono::Duration::days(days as i64);
-
-        let mut history = self
-            .history
-            .write()
-            .map_err(|e| BrowserInterceptorError::StateError(format!("清理历史记录失败: {}", e)))?;
-
-        let original_len = history.len();
-        history.retain(|url| url.timestamp > cutoff_date);
-        let removed_count = original_len - history.len();
-
-        if removed_count > 0 {
-            tracing::info!("已清理 {} 条过期的历史记录", removed_count);
-        }
-
-        Ok(removed_count)
     }
 
     /// 保存到存储文件
@@ -346,137 +304,6 @@ impl UrlManager {
         Ok(())
     }
 
-    /// 导出历史记录为 JSON
-    pub fn export_history_json(&self, export_path: &str) -> Result<()> {
-        let history = self
-            .history
-            .read()
-            .map_err(|e| BrowserInterceptorError::StateError(format!("读取历史记录失败: {}", e)))?;
-
-        let export_data = UrlExportData {
-            urls: history.clone(),
-            exported_at: Utc::now(),
-            total_count: history.len(),
-        };
-
-        let json_data = serde_json::to_string_pretty(&export_data).map_err(|e| {
-            BrowserInterceptorError::StateError(format!("序列化导出数据失败: {}", e))
-        })?;
-
-        // 确保目录存在
-        if let Some(parent) = Path::new(export_path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| BrowserInterceptorError::StateError(format!("创建目录失败: {}", e)))?;
-        }
-
-        fs::write(export_path, json_data)
-            .map_err(|e| BrowserInterceptorError::StateError(format!("写入导出文件失败: {}", e)))?;
-
-        tracing::info!("已导出历史记录到: {}", export_path);
-        Ok(())
-    }
-
-    /// 导出历史记录为 CSV
-    pub fn export_history_csv(&self, export_path: &str) -> Result<()> {
-        let history = self
-            .history
-            .read()
-            .map_err(|e| BrowserInterceptorError::StateError(format!("读取历史记录失败: {}", e)))?;
-
-        let mut csv_content =
-            String::from("ID,URL,Source Process,Timestamp,Copied,Opened in Browser,Dismissed\n");
-
-        for url in history.iter() {
-            csv_content.push_str(&format!(
-                "{},{},{},{},{},{},{}\n",
-                url.id,
-                url.url.replace(",", "%2C"), // 转义逗号
-                url.source_process,
-                url.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-                url.copied,
-                url.opened_in_browser,
-                url.dismissed
-            ));
-        }
-
-        // 确保目录存在
-        if let Some(parent) = Path::new(export_path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| BrowserInterceptorError::StateError(format!("创建目录失败: {}", e)))?;
-        }
-
-        fs::write(export_path, csv_content).map_err(|e| {
-            BrowserInterceptorError::StateError(format!("写入 CSV 文件失败: {}", e))
-        })?;
-
-        tracing::info!("已导出历史记录到 CSV: {}", export_path);
-        Ok(())
-    }
-
-    /// 验证 URL 是否有效
-    pub fn validate_url(url: &str) -> bool {
-        // 基本的 URL 验证
-        if url.is_empty() {
-            return false;
-        }
-
-        // 检查是否包含必要的协议
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return false;
-        }
-
-        // 使用 url crate 进行更严格的验证
-        if let Ok(_) = url::Url::parse(url) {
-            return true;
-        }
-
-        false
-    }
-
-    /// 按来源进程过滤历史记录
-    pub fn get_history_by_process(
-        &self,
-        process: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<InterceptedUrl>> {
-        let history = self
-            .history
-            .read()
-            .map_err(|e| BrowserInterceptorError::StateError(format!("读取历史记录失败: {}", e)))?;
-
-        let mut result: Vec<InterceptedUrl> = history
-            .iter()
-            .filter(|url| url.source_process.eq_ignore_ascii_case(process))
-            .cloned()
-            .collect();
-
-        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-
-        if let Some(limit) = limit {
-            result.truncate(limit);
-        }
-
-        Ok(result)
-    }
-
-    /// 获取所有唯一的来源进程列表
-    pub fn get_unique_processes(&self) -> Result<Vec<String>> {
-        let history = self
-            .history
-            .read()
-            .map_err(|e| BrowserInterceptorError::StateError(format!("读取历史记录失败: {}", e)))?;
-
-        let mut processes: Vec<String> = history
-            .iter()
-            .map(|url| url.source_process.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        processes.sort();
-        Ok(processes)
-    }
-
     /// 自动保存（如果已配置存储路径）
     fn auto_save(&self) -> Result<()> {
         if self.storage_path.is_some() {
@@ -492,14 +319,6 @@ struct UrlStorageData {
     history: Vec<InterceptedUrl>,
     max_history_size: usize,
     saved_at: DateTime<Utc>,
-}
-
-/// 导出数据结构
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct UrlExportData {
-    urls: Vec<InterceptedUrl>,
-    exported_at: DateTime<Utc>,
-    total_count: usize,
 }
 
 /// URL 统计信息
@@ -572,29 +391,5 @@ mod tests {
         let history = manager.get_history(None).unwrap();
         assert_eq!(history.len(), 1);
         assert!(history[0].dismissed);
-    }
-
-    #[test]
-    fn test_search_history() {
-        let manager = UrlManager::new();
-
-        manager
-            .add_intercepted_url(
-                "https://accounts.google.com/oauth".to_string(),
-                "kiro".to_string(),
-            )
-            .unwrap();
-
-        manager
-            .add_intercepted_url("https://github.com/login".to_string(), "cursor".to_string())
-            .unwrap();
-
-        let results = manager.search_history("google", None).unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(results[0].url.contains("google"));
-
-        let results = manager.search_history("cursor", None).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source_process, "cursor");
     }
 }

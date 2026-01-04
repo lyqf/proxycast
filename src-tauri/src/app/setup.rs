@@ -6,7 +6,6 @@ use std::sync::Arc;
 use tauri::{App, Manager};
 
 use crate::agent::NativeAgentState;
-use crate::commands::browser_interceptor_cmd::BrowserInterceptorState;
 use crate::commands::oauth_plugin_cmd::OAuthPluginManagerState;
 use crate::database;
 use crate::flow_monitor::FlowInterceptor;
@@ -33,19 +32,6 @@ pub fn setup_app(
     flow_monitor: Arc<crate::flow_monitor::FlowMonitor>,
     flow_interceptor: Arc<FlowInterceptor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 设置 deep-link 事件监听（用于浏览器拦截）
-    #[cfg(target_os = "macos")]
-    {
-        use tauri_plugin_deep_link::DeepLinkExt;
-        let _listener_id = app.deep_link().on_open_url(|event| {
-            for url in event.urls() {
-                tracing::info!("[Deep Link] 收到 URL: {}", url);
-                crate::browser_interceptor::platform::macos::handle_deep_link_url(url.to_string());
-            }
-        });
-        tracing::info!("[启动] Deep Link 事件监听已设置");
-    }
-
     // 初始化托盘管理器
     match TrayManager::new(app.handle()) {
         Ok(tray_manager) => {
@@ -61,10 +47,6 @@ pub fn setup_app(
             app.manage(tray_state);
         }
     }
-
-    // 初始化 BrowserInterceptorState
-    let browser_interceptor_state = BrowserInterceptorState::default();
-    app.manage(browser_interceptor_state);
 
     // 初始化 NativeAgentState
     let native_agent_state = NativeAgentState::new();

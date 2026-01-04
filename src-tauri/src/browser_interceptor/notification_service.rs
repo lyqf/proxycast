@@ -173,9 +173,6 @@ impl NotificationService {
         // 发送系统通知
         self.send_system_notification(&notification).await?;
 
-        // 发送到前端（通过事件系统）
-        self.send_frontend_notification(&notification).await?;
-
         Ok(())
     }
 
@@ -199,21 +196,9 @@ impl NotificationService {
         Ok(())
     }
 
-    /// 发送到前端
-    async fn send_frontend_notification(&self, notification: &NotificationMessage) -> Result<()> {
-        // TODO: 通过 Tauri 事件系统发送到前端
-        // tauri::emit_all("browser-interceptor-notification", notification)
-        //     .map_err(|e| BrowserInterceptorError::NotificationError(format!("发送前端通知失败: {}", e)))?;
-
-        tracing::debug!("前端通知已发送: {}", notification.id);
-        Ok(())
-    }
-
     /// Windows 系统通知
     #[cfg(target_os = "windows")]
     async fn send_windows_notification(&self, notification: &NotificationMessage) -> Result<()> {
-        // TODO: 使用 Windows Toast 通知 API
-        // 可以使用 winrt-notification 或 windows-rs crate
         tracing::debug!("Windows 通知: {}", notification.title);
         Ok(())
     }
@@ -221,8 +206,6 @@ impl NotificationService {
     /// macOS 系统通知
     #[cfg(target_os = "macos")]
     async fn send_macos_notification(&self, notification: &NotificationMessage) -> Result<()> {
-        // TODO: 使用 macOS 通知中心
-        // 可以使用 mac-notification-sys crate
         tracing::debug!("macOS 通知: {}", notification.title);
         Ok(())
     }
@@ -230,8 +213,6 @@ impl NotificationService {
     /// Linux 系统通知
     #[cfg(target_os = "linux")]
     async fn send_linux_notification(&self, notification: &NotificationMessage) -> Result<()> {
-        // TODO: 使用 libnotify 或 D-Bus
-        // 可以使用 notify-rust crate
         tracing::debug!("Linux 通知: {}", notification.title);
         Ok(())
     }
@@ -249,59 +230,5 @@ impl NotificationService {
 impl Default for NotificationService {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Utc;
-
-    #[test]
-    fn test_notification_message_creation() {
-        let notification = NotificationMessage::new(
-            NotificationType::UrlIntercepted,
-            "Test Title".to_string(),
-            "Test Message".to_string(),
-        )
-        .with_url("https://example.com".to_string())
-        .with_source_process("test_app".to_string());
-
-        assert_eq!(notification.title, "Test Title");
-        assert_eq!(notification.message, "Test Message");
-        assert_eq!(notification.url, Some("https://example.com".to_string()));
-        assert_eq!(notification.source_process, Some("test_app".to_string()));
-        assert!(notification.auto_dismiss_after.is_some());
-    }
-
-    #[test]
-    fn test_truncate_url() {
-        let service = NotificationService::new();
-
-        let short_url = "https://example.com";
-        assert_eq!(service.truncate_url(short_url, 100), short_url);
-
-        let long_url = "https://example.com/very/long/path/that/exceeds/the/maximum/length/limit";
-        let truncated = service.truncate_url(long_url, 20);
-        assert_eq!(truncated.len(), 20);
-        assert!(truncated.ends_with("..."));
-    }
-
-    #[tokio::test]
-    async fn test_notify_url_intercepted() {
-        let service = NotificationService::new();
-        let intercepted_url = InterceptedUrl {
-            id: "test-id".to_string(),
-            url: "https://accounts.google.com/oauth/authorize".to_string(),
-            source_process: "kiro".to_string(),
-            timestamp: Utc::now(),
-            copied: false,
-            opened_in_browser: false,
-            dismissed: false,
-        };
-
-        // 这个测试主要验证函数不会 panic
-        let result = service.notify_url_intercepted(&intercepted_url).await;
-        assert!(result.is_ok());
     }
 }

@@ -16,6 +16,9 @@ import {
   Package,
   Download,
   Cpu,
+  Globe,
+  Activity,
+  FileCode,
 } from "lucide-react";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { PluginUninstallDialog } from "./PluginUninstallDialog";
@@ -111,6 +114,30 @@ const recommendedPlugins: RecommendedPlugin[] = [
     downloadUrl:
       "https://github.com/aiclientproxy/MachineIdTool/releases/latest/download/machine-id-tool-plugin.zip",
   },
+  {
+    id: "browser-interception",
+    name: "浏览器拦截器",
+    description: "拦截桌面应用的浏览器启动，支持手动复制 URL 到指纹浏览器",
+    icon: Globe,
+    downloadUrl:
+      "https://github.com/aiclientproxy/browser-interception/releases/latest/download/browser-interception-plugin.zip",
+  },
+  {
+    id: "flow-monitor",
+    name: "Flow Monitor",
+    description: "监控和分析 LLM API 请求，提供详细的流量分析和调试功能",
+    icon: Activity,
+    downloadUrl:
+      "https://github.com/aiclientproxy/flow-monitor/releases/latest/download/flow-monitor-plugin.zip",
+  },
+  {
+    id: "config-switch",
+    name: "配置管理",
+    description: "一键切换 API 配置，支持 Claude Code、Codex、Gemini 等客户端",
+    icon: FileCode,
+    downloadUrl:
+      "https://github.com/aiclientproxy/config-switch/releases/latest/download/config-switch-plugin.zip",
+  },
 ];
 
 export function PluginManager() {
@@ -164,6 +191,9 @@ export function PluginManager() {
   const handleInstallSuccess = useCallback(() => {
     fetchData();
     setPendingInstallUrl(null);
+    toast.success("插件安装成功");
+    // 触发侧边栏刷新事件
+    window.dispatchEvent(new CustomEvent("plugin-changed"));
   }, [fetchData]);
 
   // 过滤出未安装的推荐插件

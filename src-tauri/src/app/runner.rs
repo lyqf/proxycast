@@ -67,7 +67,6 @@ pub fn run() {
         bookmark_manager: bookmark_manager_state,
         enhanced_stats_service: enhanced_stats_service_state,
         batch_operations: batch_operations_state,
-        browser_interceptor: browser_interceptor_state,
         native_agent: native_agent_state,
         oauth_plugin_manager: oauth_plugin_manager_state,
         orchestrator: orchestrator_state,
@@ -101,33 +100,12 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             tracing::info!("[单实例] 收到来自新实例的参数: {:?}", args);
 
-            // 处理传入的 URL 参数
-            for arg in args.iter().skip(1) {
-                // 跳过第一个参数（程序路径）
-                if arg.starts_with("http://") || arg.starts_with("https://") {
-                    tracing::info!("[单实例] 收到 URL: {}", arg);
-
-                    #[cfg(target_os = "macos")]
-                    {
-                        crate::browser_interceptor::platform::macos::handle_deep_link_url(
-                            arg.clone(),
-                        );
-                    }
-                }
-            }
-
             // 将窗口带到前台
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         }));
-
-    // 添加 Deep Link 插件（用于浏览器拦截）
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder.plugin(tauri_plugin_deep_link::init());
-    }
 
     builder
         .manage(state)
@@ -153,7 +131,6 @@ pub fn run() {
         .manage(bookmark_manager_state)
         .manage(enhanced_stats_service_state)
         .manage(batch_operations_state)
-        .manage(browser_interceptor_state)
         .manage(native_agent_state)
         .manage(oauth_plugin_manager_state)
         .manage(orchestrator_state)
@@ -183,21 +160,6 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            // 设置 deep-link 事件监听（用于浏览器拦截）
-            #[cfg(target_os = "macos")]
-            {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                let _listener_id = app.deep_link().on_open_url(|event| {
-                    for url in event.urls() {
-                        tracing::info!("[Deep Link] 收到 URL: {}", url);
-                        crate::browser_interceptor::platform::macos::handle_deep_link_url(
-                            url.to_string(),
-                        );
-                    }
-                });
-                tracing::info!("[启动] Deep Link 事件监听已设置");
-            }
-
             // 初始化托盘管理器
             // Requirements 1.4: 应用启动时显示停止状态图标
             match TrayManager::new(app.handle()) {
@@ -768,7 +730,6 @@ pub fn run() {
             commands::browser_interceptor_cmd::validate_browser_interceptor_config,
             commands::browser_interceptor_cmd::is_browser_interceptor_running,
             commands::browser_interceptor_cmd::get_browser_interceptor_statistics,
-            // Browser Interceptor notification commands
             commands::browser_interceptor_cmd::show_notification,
             commands::browser_interceptor_cmd::show_url_intercept_notification,
             commands::browser_interceptor_cmd::show_status_notification,

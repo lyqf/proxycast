@@ -15,15 +15,13 @@ import { AppSidebar } from "./components/AppSidebar";
 import { SettingsPage } from "./components/settings";
 import { ApiServerPage } from "./components/api-server/ApiServerPage";
 import { ProviderPoolPage } from "./components/provider-pool";
-import { ConfigManagementPage } from "./components/config/ConfigManagementPage";
-import { FlowMonitorPage } from "./pages";
 import { ToolsPage } from "./components/tools/ToolsPage";
-import { BrowserInterceptorTool } from "./components/tools/browser-interceptor/BrowserInterceptorTool";
 import { AgentChatPage } from "./components/agent";
 import { PluginUIRenderer } from "./components/plugins/PluginUIRenderer";
 import { PluginsPage } from "./components/plugins/PluginsPage";
 import { Toaster } from "./components/ui/sonner";
 import { flowEventManager } from "./lib/flowEventManager";
+import { OnboardingWizard, useOnboardingState } from "./components/onboarding";
 
 /**
  * 页面类型定义
@@ -36,13 +34,10 @@ import { flowEventManager } from "./lib/flowEventManager";
  */
 type Page =
   | "provider-pool"
-  | "config-management"
   | "api-server"
-  | "flow-monitor"
   | "agent"
   | "tools"
   | "plugins"
-  | "browser-interceptor"
   | "settings"
   | `plugin:${string}`;
 
@@ -70,6 +65,7 @@ const PageWrapper = styled.div`
 function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [currentPage, setCurrentPage] = useState<Page>("agent");
+  const { needsOnboarding, completeOnboarding } = useOnboardingState();
 
   // 在应用启动时初始化 Flow 事件订阅
   useEffect(() => {
@@ -116,22 +112,10 @@ function App() {
             <ProviderPoolPage />
           </PageWrapper>
         );
-      case "config-management":
-        return (
-          <PageWrapper>
-            <ConfigManagementPage />
-          </PageWrapper>
-        );
       case "api-server":
         return (
           <PageWrapper>
             <ApiServerPage />
-          </PageWrapper>
-        );
-      case "flow-monitor":
-        return (
-          <PageWrapper>
-            <FlowMonitorPage />
           </PageWrapper>
         );
       case "agent":
@@ -151,12 +135,6 @@ function App() {
             <PluginsPage />
           </PageWrapper>
         );
-      case "browser-interceptor":
-        return (
-          <PageWrapper>
-            <BrowserInterceptorTool onNavigate={setCurrentPage} />
-          </PageWrapper>
-        );
       case "settings":
         return (
           <PageWrapper>
@@ -172,11 +150,32 @@ function App() {
     }
   };
 
-  // 显示启动画面
+  // 引导完成回调
+  const handleOnboardingComplete = useCallback(() => {
+    completeOnboarding();
+  }, [completeOnboarding]);
+
+  // 1. 显示启动画面
   if (showSplash) {
     return <SplashScreen onComplete={handleSplashComplete} />;
   }
 
+  // 2. 检测中，显示空白
+  if (needsOnboarding === null) {
+    return null;
+  }
+
+  // 3. 需要引导时显示引导向导
+  if (needsOnboarding) {
+    return (
+      <>
+        <OnboardingWizard onComplete={handleOnboardingComplete} />
+        <Toaster />
+      </>
+    );
+  }
+
+  // 4. 正常主界面
   return (
     <AppContainer>
       <AppSidebar currentPage={currentPage} onNavigate={setCurrentPage} />

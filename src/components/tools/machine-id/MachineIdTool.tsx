@@ -10,15 +10,13 @@ import { MachineIdInfo, SystemInfo, AdminStatus } from "@/lib/api/machineId";
 import { machineIdApi } from "@/lib/api/machineId";
 
 interface MachineIdToolProps {
-  onNavigate: (
+  onNavigate?: (
     page:
       | "provider-pool"
-      | "config-management"
       | "api-server"
-      | "flow-monitor"
       | "agent"
       | "tools"
-      | "browser-interceptor"
+      | "plugins"
       | "settings"
       | `plugin:${string}`,
   ) => void;
@@ -78,7 +76,7 @@ export function MachineIdTool({ onNavigate }: MachineIdToolProps) {
         <div className="flex items-center space-x-3">
           <Button
             variant="ghost"
-            onClick={() => onNavigate("tools")}
+            onClick={() => onNavigate?.("tools")}
             className="p-2"
           >
             <ArrowLeft className="w-4 h-4" />

@@ -24,7 +24,7 @@ pub use config::{BrowserInterceptorConfig, InterceptedUrl, InterceptorState};
 pub use interceptor::BrowserInterceptor;
 pub use notification_service::NotificationService;
 pub use state_manager::StateManager;
-pub use url_manager::UrlManager;
+pub use url_manager::{UrlManager, UrlStatistics};
 
 use serde::{Deserialize, Serialize};
 use std::error::Error;

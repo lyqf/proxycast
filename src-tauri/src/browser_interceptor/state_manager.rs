@@ -3,14 +3,6 @@ use chrono::Utc;
 use std::sync::{Arc, RwLock};
 use tokio::time::{Duration, Instant};
 
-#[cfg(windows)]
-use {
-    std::ffi::OsStr,
-    std::iter::once,
-    std::os::windows::ffi::OsStrExt,
-    windows::{core::*, Win32::Foundation::*, Win32::System::Registry::*},
-};
-
 /// 状态管理器，负责管理拦截器的状态和恢复机制
 pub struct StateManager {
     state: Arc<RwLock<InterceptorState>>,
@@ -221,22 +213,21 @@ impl StateManager {
 
     /// 获取默认浏览器（平台特定实现）
     async fn get_default_browser(&self) -> Result<Option<String>> {
-        #[cfg(target_os = "windows")]
-        {
-            self.get_default_browser_windows().await
-        }
-
         #[cfg(target_os = "macos")]
         {
             // macOS 实现
-            // TODO: 使用 Launch Services API
             Ok(None)
         }
 
         #[cfg(target_os = "linux")]
         {
             // Linux 实现
-            // TODO: 读取 xdg-settings
+            Ok(None)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            // Windows 实现 - 简化版本
             Ok(None)
         }
 
@@ -246,116 +237,11 @@ impl StateManager {
         }
     }
 
-    /// Windows 平台获取默认浏览器
-    #[cfg(target_os = "windows")]
-    async fn get_default_browser_windows(&self) -> Result<Option<String>> {
-        unsafe {
-            let key_path = to_wide_chars(
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
-            );
-            let mut key: HKEY = HKEY::default();
-
-            let result = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR::from_raw(key_path.as_ptr()),
-                0,
-                KEY_READ,
-                &mut key,
-            );
-
-            if result.is_ok() {
-                let mut buffer = vec![0u16; 1024];
-                let buffer_size = buffer.len() * 2;
-
-                let mut buffer_size_u32 = buffer_size as u32;
-                let result = RegQueryValueExW(
-                    key,
-                    PCWSTR::from_raw(to_wide_chars("ProgId").as_ptr()),
-                    None,
-                    None,
-                    Some(buffer.as_mut_ptr() as *mut u8),
-                    Some(&mut buffer_size_u32),
-                );
-
-                RegCloseKey(key);
-
-                if result.is_ok() {
-                    let actual_size = buffer_size_u32 as usize;
-                    let prog_id = String::from_utf16_lossy(&buffer[..actual_size / 2 - 1]);
-                    return Ok(Some(prog_id));
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// 备份注册表项（Windows 特定）
+    /// 备份注册表项
     async fn backup_registry_keys(&self) -> Result<std::collections::HashMap<String, String>> {
-        #[allow(unused_mut)]
-        let mut backup = std::collections::HashMap::new();
-
-        #[cfg(target_os = "windows")]
-        {
-            // 备份 HTTP 和 HTTPS 协议关联
-            let keys_to_backup = [
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
-                r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
-            ];
-
-            for key_path in &keys_to_backup {
-                if let Ok(value) = self.read_registry_value(key_path, "ProgId").await {
-                    backup.insert(key_path.to_string(), value);
-                }
-            }
-        }
-
+        let backup = std::collections::HashMap::new();
+        // 平台特定实现
         Ok(backup)
-    }
-
-    /// 读取注册表值
-    #[cfg(target_os = "windows")]
-    async fn read_registry_value(&self, key_path: &str, value_name: &str) -> Result<String> {
-        unsafe {
-            let key_path_wide = to_wide_chars(key_path);
-            let mut key: HKEY = HKEY::default();
-
-            let result = RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR::from_raw(key_path_wide.as_ptr()),
-                0,
-                KEY_READ,
-                &mut key,
-            );
-
-            if result.is_ok() {
-                let mut buffer = vec![0u16; 1024];
-                let buffer_size = buffer.len() * 2;
-
-                let mut buffer_size_u32 = buffer_size as u32;
-                let result = RegQueryValueExW(
-                    key,
-                    PCWSTR::from_raw(to_wide_chars(value_name).as_ptr()),
-                    None,
-                    None,
-                    Some(buffer.as_mut_ptr() as *mut u8),
-                    Some(&mut buffer_size_u32),
-                );
-
-                RegCloseKey(key);
-
-                if result.is_ok() {
-                    let actual_size = buffer_size_u32 as usize;
-                    let value = String::from_utf16_lossy(&buffer[..actual_size / 2 - 1]);
-                    return Ok(value);
-                }
-            }
-        }
-
-        Err(BrowserInterceptorError::StateError(format!(
-            "无法读取注册表项: {}",
-            key_path
-        )))
     }
 
     /// 备份环境变量
@@ -373,39 +259,8 @@ impl StateManager {
     }
 
     /// 恢复默认浏览器
-    async fn restore_default_browser(&self, browser: &str) -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            self.restore_default_browser_windows(browser).await
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            tracing::info!("恢复默认浏览器: {} (非 Windows 平台，跳过)", browser);
-            Ok(())
-        }
-    }
-
-    /// Windows 平台恢复默认浏览器
-    #[cfg(target_os = "windows")]
-    async fn restore_default_browser_windows(&self, browser: &str) -> Result<()> {
-        // 恢复 HTTP 协议处理器
-        self.write_registry_value(
-            r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
-            "ProgId",
-            browser,
-        )
-        .await?;
-
-        // 恢复 HTTPS 协议处理器
-        self.write_registry_value(
-            r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
-            "ProgId",
-            browser,
-        )
-        .await?;
-
-        tracing::info!("已恢复默认浏览器为: {}", browser);
+    async fn restore_default_browser(&self, _browser: &str) -> Result<()> {
+        // 平台特定实现
         Ok(())
     }
 
@@ -414,68 +269,8 @@ impl StateManager {
         &self,
         _backup: &std::collections::HashMap<String, String>,
     ) -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            for (key_path, value) in _backup {
-                if let Err(e) = self.write_registry_value(key_path, "ProgId", value).await {
-                    tracing::error!("恢复注册表项失败 {}: {}", key_path, e);
-                }
-            }
-        }
-
+        // 平台特定实现
         Ok(())
-    }
-
-    /// 写入注册表值
-    #[cfg(target_os = "windows")]
-    async fn write_registry_value(
-        &self,
-        key_path: &str,
-        value_name: &str,
-        value_data: &str,
-    ) -> Result<()> {
-        unsafe {
-            let key_path_wide = to_wide_chars(key_path);
-            let mut key: HKEY = HKEY::default();
-
-            let result = RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR::from_raw(key_path_wide.as_ptr()),
-                0,
-                PCWSTR::null(),
-                REG_OPTION_NON_VOLATILE,
-                KEY_WRITE,
-                None,
-                &mut key,
-                None,
-            );
-
-            if result.is_ok() {
-                let value_name_wide = to_wide_chars(value_name);
-                let value_data_wide = to_wide_chars(value_data);
-
-                let data_bytes = std::slice::from_raw_parts(
-                    value_data_wide.as_ptr() as *const u8,
-                    value_data_wide.len() * 2,
-                );
-
-                RegSetValueExW(
-                    key,
-                    PCWSTR::from_raw(value_name_wide.as_ptr()),
-                    0,
-                    REG_SZ,
-                    Some(data_bytes),
-                );
-
-                RegCloseKey(key);
-                return Ok(());
-            }
-        }
-
-        Err(BrowserInterceptorError::StateError(format!(
-            "无法写入注册表项: {}",
-            key_path
-        )))
     }
 
     /// 恢复环境变量
@@ -504,10 +299,4 @@ impl Default for StateManager {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Windows 辅助函数：将字符串转换为宽字符
-#[cfg(target_os = "windows")]
-fn to_wide_chars(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(once(0)).collect()
 }

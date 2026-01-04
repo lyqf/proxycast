@@ -62,12 +62,12 @@ impl MacOSInterceptor {
             }
         }
 
-        // 3. 将 ProxyCast 设置为默认浏览器
+        // 3. 将应用设置为默认浏览器
         self.set_as_default_browser().await?;
 
         self.running = true;
         tracing::info!("macOS 浏览器拦截器已启动");
-        tracing::info!("提示：现在所有 http/https URL 打开请求都会被 ProxyCast 拦截");
+        tracing::info!("提示：现在所有 http/https URL 打开请求都会被拦截");
 
         Ok(())
     }
@@ -95,33 +95,14 @@ if let handler = LSCopyDefaultHandlerForURLScheme("https" as CFString) {
 
         if output.status.success() {
             let bundle_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !bundle_id.is_empty() && !bundle_id.contains("proxycast") {
+            if !bundle_id.is_empty() && !bundle_id.contains("browser-interception") {
                 tracing::info!("检测到当前默认浏览器: {}", bundle_id);
                 return Some(bundle_id);
             }
-            // 如果当前是 ProxyCast，说明之前已设置过，需要检测用户常用的浏览器
-            if bundle_id.contains("proxycast") {
-                tracing::info!("当前默认浏览器是 ProxyCast，尝试检测用户常用浏览器");
+            // 如果当前是本应用，说明之前已设置过，需要检测用户常用的浏览器
+            if bundle_id.contains("browser-interception") {
+                tracing::info!("当前默认浏览器是本应用，尝试检测用户常用浏览器");
                 return self.detect_installed_browser().await;
-            }
-        }
-
-        // 备选方法：使用 duti 查询
-        let duti_output = Command::new("duti").args(["-x", "https"]).output().ok();
-
-        if let Some(output) = duti_output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                // duti -x 输出格式：第三行是 bundle id
-                for line in stdout.lines() {
-                    let trimmed = line.trim();
-                    if (trimmed.starts_with("com.") || trimmed.starts_with("org."))
-                        && !trimmed.contains("proxycast")
-                    {
-                        tracing::info!("通过 duti 检测到默认浏览器: {}", trimmed);
-                        return Some(trimmed.to_string());
-                    }
-                }
             }
         }
 
@@ -129,34 +110,16 @@ if let handler = LSCopyDefaultHandlerForURLScheme("https" as CFString) {
         self.detect_installed_browser().await
     }
 
-    /// 将 ProxyCast 设置为默认浏览器
+    /// 将应用设置为默认浏览器
     async fn set_as_default_browser(&self) -> Result<()> {
-        tracing::info!("正在将 ProxyCast 设置为默认浏览器...");
+        tracing::info!("正在将应用设置为默认浏览器...");
 
-        // 使用 Swift 代码通过 Launch Services API 设置默认处理程序
-        // 由于 Rust 直接调用 Launch Services 较复杂，这里使用 osascript 辅助
-
-        // 方法 1: 使用 duti 工具（如果已安装）
-        let duti_result = Command::new("duti")
-            .args(["-s", "com.proxycast.app", "http", "all"])
-            .output();
-
-        if let Ok(output) = duti_result {
-            if output.status.success() {
-                let _ = Command::new("duti")
-                    .args(["-s", "com.proxycast.app", "https", "all"])
-                    .output();
-                tracing::info!("已通过 duti 设置默认浏览器");
-                return Ok(());
-            }
-        }
-
-        // 方法 2: 使用 Swift 脚本
+        // 使用 Swift 脚本
         let swift_code = r#"
 import Foundation
 import CoreServices
 
-let bundleId = "com.proxycast.app" as CFString
+let bundleId = "com.browser-interception.app" as CFString
 
 // 设置 HTTP handler
 LSSetDefaultHandlerForURLScheme("http" as CFString, bundleId)
@@ -179,10 +142,10 @@ print("OK")
             return Ok(());
         }
 
-        // 方法 3: 提示用户手动设置
+        // 提示用户手动设置
         let stderr = String::from_utf8_lossy(&output.stderr);
         tracing::warn!("自动设置默认浏览器失败: {}", stderr);
-        tracing::info!("请手动在系统设置中将 ProxyCast 设置为默认浏览器");
+        tracing::info!("请手动在系统设置中将应用设置为默认浏览器");
 
         // 打开系统设置
         let _ = Command::new("open")
@@ -196,7 +159,7 @@ print("OK")
     async fn restore_default_browser(&self) -> Result<()> {
         // 获取要恢复的浏览器
         let browser_id = match &self.original_default_browser {
-            Some(id) if !id.contains("proxycast") => id.clone(),
+            Some(id) if !id.contains("browser-interception") => id.clone(),
             _ => {
                 // 如果没有记录原始浏览器，尝试检测已安装的浏览器
                 self.detect_installed_browser()
@@ -206,21 +169,6 @@ print("OK")
         };
 
         tracing::info!("正在恢复默认浏览器为: {}", browser_id);
-
-        // 使用 duti
-        let duti_result = Command::new("duti")
-            .args(["-s", &browser_id, "http", "all"])
-            .output();
-
-        if let Ok(output) = duti_result {
-            if output.status.success() {
-                let _ = Command::new("duti")
-                    .args(["-s", &browser_id, "https", "all"])
-                    .output();
-                tracing::info!("已通过 duti 恢复默认浏览器为: {}", browser_id);
-                return Ok(());
-            }
-        }
 
         // 使用 Swift
         let swift_code = format!(
@@ -299,11 +247,6 @@ print("OK")
         self.running
     }
 
-    /// 获取当前监听的端口（不再使用，保留接口兼容性）
-    pub fn get_port(&self) -> Option<u16> {
-        None
-    }
-
     /// 恢复系统默认设置
     pub async fn restore_system_defaults(&self) -> Result<()> {
         self.restore_default_browser().await
@@ -346,7 +289,6 @@ impl Drop for MacOSInterceptor {
     fn drop(&mut self) {
         if self.running {
             tracing::info!("macOS 浏览器拦截器资源已清理");
-            // 注意：在 drop 中无法使用 async，恢复操作在 stop() 中完成
         }
     }
 }
@@ -413,7 +355,7 @@ fn detect_source_process(url: &str) -> String {
     {
         if output.status.success() {
             let app_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !app_name.is_empty() && app_name != "ProxyCast" {
+            if !app_name.is_empty() && app_name != "浏览器拦截器" {
                 return app_name;
             }
         }

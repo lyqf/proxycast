@@ -2,10 +2,11 @@
  * @file GeneralSettings.tsx
  * @description 通用设置页面 - 主题、代理、启动行为配置
  */
-import { useState, useEffect } from "react";
-import { Moon, Sun, Monitor, RefreshCw, Info } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Moon, Sun, Monitor, RefreshCw, Info, RotateCcw } from "lucide-react";
 import { cn, validateProxyUrl } from "@/lib/utils";
 import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
+import { useOnboardingState } from "@/components/onboarding";
 
 type Theme = "light" | "dark" | "system";
 
@@ -13,6 +14,13 @@ export function GeneralSettings() {
   const [theme, setTheme] = useState<Theme>("system");
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
+  const { resetOnboarding } = useOnboardingState();
+
+  // 重新运行引导
+  const handleResetOnboarding = useCallback(() => {
+    resetOnboarding();
+    window.location.reload();
+  }, [resetOnboarding]);
 
   // 网络代理状态
   const [config, setConfig] = useState<Config | null>(null);
@@ -214,6 +222,25 @@ export function GeneralSettings() {
             className="w-4 h-4 rounded border-gray-300"
           />
         </label>
+      </div>
+
+      {/* 重新运行引导 */}
+      <div className="rounded-lg border p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium">初次设置向导</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              重新运行初次安装向导，重新选择用户群体和安装插件
+            </p>
+          </div>
+          <button
+            onClick={handleResetOnboarding}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border text-sm hover:bg-muted transition-colors"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            重新引导
+          </button>
+        </div>
       </div>
     </div>
   );

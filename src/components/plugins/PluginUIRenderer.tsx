@@ -10,6 +10,9 @@
 import React from "react";
 import { AlertCircle, Package } from "lucide-react";
 import { MachineIdTool } from "@/components/tools/machine-id/MachineIdTool";
+import { BrowserInterceptorTool } from "@/components/tools/browser-interceptor/BrowserInterceptorTool";
+import { FlowMonitorPage } from "@/pages";
+import { ConfigManagementPage } from "@/components/config/ConfigManagementPage";
 
 /**
  * 页面类型定义
@@ -17,12 +20,10 @@ import { MachineIdTool } from "@/components/tools/machine-id/MachineIdTool";
  */
 export type Page =
   | "provider-pool"
-  | "config-management"
   | "api-server"
-  | "flow-monitor"
   | "agent"
   | "tools"
-  | "browser-interceptor"
+  | "plugins"
   | "settings"
   | `plugin:${string}`;
 
@@ -96,13 +97,16 @@ function PluginNotFound({ pluginId }: { pluginId: string }) {
  * 内置插件组件映射
  *
  * 将插件 ID 映射到对应的 React 组件
- * 目前支持 machine-id-tool 插件
+ * 支持 machine-id-tool 和 browser-interception 插件
  */
 const builtinPluginComponents: Record<
   string,
-  React.ComponentType<{ onNavigate: (page: Page) => void }>
+  React.ComponentType<{ onNavigate?: (page: Page) => void }>
 > = {
   "machine-id-tool": MachineIdTool,
+  "browser-interception": BrowserInterceptorTool,
+  "flow-monitor": FlowMonitorPage,
+  "config-switch": ConfigManagementPage,
 };
 
 /**

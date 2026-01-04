@@ -214,11 +214,29 @@ pub struct FlowMonitorStates {
 }
 
 /// 初始化 Flow Monitor 状态
+///
+/// 如果 flow-monitor 插件已安装，则启用监控功能；否则禁用。
 pub fn init_flow_monitor_states(
     provider_pool_service: Arc<ProviderPoolService>,
     db: database::DbConnection,
+    plugin_installer_state: &PluginInstallerState,
 ) -> FlowMonitorStates {
-    let flow_monitor_config = FlowMonitorConfig::default();
+    // 检查 flow-monitor 插件是否已安装
+    let is_plugin_installed = {
+        let installer = plugin_installer_state.0.blocking_read();
+        installer.is_installed("flow-monitor").unwrap_or(false)
+    };
+
+    // 根据插件安装状态设置 enabled
+    let mut flow_monitor_config = FlowMonitorConfig::default();
+    flow_monitor_config.enabled = is_plugin_installed;
+
+    if is_plugin_installed {
+        tracing::info!("[启动] flow-monitor 插件已安装，启用 Flow 监控");
+    } else {
+        tracing::info!("[启动] flow-monitor 插件未安装，禁用 Flow 监控");
+    }
+
     let flow_file_store = init_flow_file_store();
 
     let flow_monitor = Arc::new(FlowMonitor::new(

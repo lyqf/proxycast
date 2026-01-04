@@ -169,8 +169,10 @@ export function PluginInstallDialog({
       );
 
       if (installResult.success && installResult.plugin) {
-        setResult(installResult.plugin);
+        // 安装成功，关闭对话框并通知父组件
         onSuccess();
+        resetState();
+        onClose();
       } else {
         setError(installResult.error || "安装失败");
       }
@@ -179,7 +181,7 @@ export function PluginInstallDialog({
     } finally {
       setInstalling(false);
     }
-  }, [url, onSuccess]);
+  }, [url, onSuccess, onClose]);
 
   // 自动开始安装（当有 initialUrl 时）
   useEffect(() => {
@@ -262,8 +264,10 @@ export function PluginInstallDialog({
       );
 
       if (installResult.success && installResult.plugin) {
-        setResult(installResult.plugin);
+        // 安装成功，关闭对话框并通知父组件
         onSuccess();
+        resetState();
+        onClose();
       } else {
         setError(installResult.error || "安装失败");
       }
