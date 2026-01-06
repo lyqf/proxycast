@@ -4,6 +4,7 @@ use crate::models::openai::{ChatCompletionRequest, ContentPart, MessageContent};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeCustomConfig {
@@ -17,11 +18,26 @@ pub struct ClaudeCustomProvider {
     pub client: Client,
 }
 
+/// 创建配置好的 HTTP 客户端
+///
+/// 配置说明：
+/// - connect_timeout: 连接超时 30 秒
+/// - timeout: 总超时 10 分钟（流式响应可能很长）
+/// - 不设置 pool_idle_timeout 以保持连接活跃
+fn create_http_client() -> Client {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(600)) // 10 分钟总超时，支持长时间流式响应
+        .tcp_keepalive(Duration::from_secs(60)) // TCP keepalive 保持连接活跃
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
 impl Default for ClaudeCustomProvider {
     fn default() -> Self {
         Self {
             config: ClaudeCustomConfig::default(),
-            client: Client::new(),
+            client: create_http_client(),
         }
     }
 }
@@ -39,7 +55,7 @@ impl ClaudeCustomProvider {
                 base_url,
                 enabled: true,
             },
-            client: Client::new(),
+            client: create_http_client(),
         }
     }
 

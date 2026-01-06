@@ -611,8 +611,10 @@ pub async fn call_provider_anthropic(
                         return Response::builder()
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "text/event-stream")
-                            .header(header::CACHE_CONTROL, "no-cache")
+                            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
                             .header("Connection", "keep-alive")
+                            .header("X-Accel-Buffering", "no") // 禁用 nginx 等代理的缓冲
+                            .header("Transfer-Encoding", "chunked")
                             .body(Body::from_stream(stream))
                             .unwrap_or_else(|_| {
                                 (
@@ -823,8 +825,10 @@ pub async fn call_provider_anthropic(
                         return Response::builder()
                             .status(StatusCode::OK)
                             .header(header::CONTENT_TYPE, "text/event-stream")
-                            .header(header::CACHE_CONTROL, "no-cache")
+                            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
                             .header("Connection", "keep-alive")
+                            .header("X-Accel-Buffering", "no") // 禁用 nginx 等代理的缓冲
+                            .header("Transfer-Encoding", "chunked")
                             .body(Body::from_stream(stream))
                             .unwrap_or_else(|_| {
                                 (
@@ -1834,8 +1838,10 @@ pub async fn call_provider_openai(
                             return Response::builder()
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "text/event-stream")
-                                .header(header::CACHE_CONTROL, "no-cache")
+                                .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
                                 .header("Connection", "keep-alive")
+                                .header("X-Accel-Buffering", "no") // 禁用 nginx 等代理的缓冲
+                                .header("Transfer-Encoding", "chunked")
                                 .body(Body::from_stream(stream))
                                 .unwrap_or_else(|_| {
                                     (
