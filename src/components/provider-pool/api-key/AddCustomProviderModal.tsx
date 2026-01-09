@@ -180,8 +180,10 @@ export interface AddCustomProviderModalProps {
   isOpen: boolean;
   /** 关闭回调 */
   onClose: () => void;
-  /** 添加成功回调 */
-  onAdd: (request: AddCustomProviderRequest) => Promise<void>;
+  /** 添加成功回调，返回新创建的 Provider ID */
+  onAdd: (request: AddCustomProviderRequest) => Promise<{ id: string }>;
+  /** 添加 API Key 回调 */
+  onAddApiKey?: (providerId: string, apiKey: string) => Promise<void>;
   /** 额外的 CSS 类名 */
   className?: string;
 }
@@ -312,6 +314,7 @@ export const AddCustomProviderModal: React.FC<AddCustomProviderModalProps> = ({
   isOpen,
   onClose,
   onAdd,
+  onAddApiKey,
   className,
 }) => {
   // 表单状态
@@ -473,14 +476,32 @@ export const AddCustomProviderModal: React.FC<AddCustomProviderModalProps> = ({
         request.region = formState.region.trim();
       }
 
-      await onAdd(request);
+      // 1. 创建 Provider
+      const result = await onAdd(request);
+
+      // 2. 如果有 API Key，添加到新创建的 Provider
+      if (formState.apiKey.trim() && onAddApiKey && result?.id) {
+        try {
+          await onAddApiKey(result.id, formState.apiKey.trim());
+        } catch (apiKeyError) {
+          // API Key 添加失败，但 Provider 已创建成功
+          console.error("添加 API Key 失败:", apiKeyError);
+          setSubmitError(
+            `Provider 已创建，但 API Key 添加失败: ${apiKeyError instanceof Error ? apiKeyError.message : String(apiKeyError)}`,
+          );
+          // 不关闭模态框，让用户看到错误
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       handleClose();
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "添加失败");
     } finally {
       setIsSubmitting(false);
     }
-  }, [formState, onAdd, handleClose]);
+  }, [formState, onAdd, onAddApiKey, handleClose]);
 
   return (
     <Modal

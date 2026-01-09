@@ -35,7 +35,10 @@ export { ProviderSetting } from "./ProviderSetting";
 export type { ProviderSettingProps } from "./ProviderSetting";
 
 export { ApiKeyProviderSection } from "./ApiKeyProviderSection";
-export type { ApiKeyProviderSectionProps } from "./ApiKeyProviderSection";
+export type {
+  ApiKeyProviderSectionProps,
+  ApiKeyProviderSectionRef,
+} from "./ApiKeyProviderSection";
 
 export { AddCustomProviderModal } from "./AddCustomProviderModal";
 export type { AddCustomProviderModalProps } from "./AddCustomProviderModal";

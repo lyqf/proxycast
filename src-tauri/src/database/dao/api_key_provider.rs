@@ -495,6 +495,12 @@ impl ApiKeyProviderDao {
 
     /// 插入新 API Key
     pub fn insert_api_key(conn: &Connection, key: &ApiKeyEntry) -> Result<(), rusqlite::Error> {
+        tracing::info!(
+            "[DAO] insert_api_key: id={}, provider_id={}",
+            key.id,
+            key.provider_id
+        );
+
         conn.execute(
             "INSERT INTO api_keys
              (id, provider_id, api_key_encrypted, alias, enabled,
@@ -512,6 +518,8 @@ impl ApiKeyProviderDao {
                 key.created_at.to_rfc3339(),
             ],
         )?;
+
+        tracing::info!("[DAO] insert_api_key: 插入成功");
         Ok(())
     }
 
@@ -631,10 +639,21 @@ impl ApiKeyProviderDao {
         conn: &Connection,
     ) -> Result<Vec<ProviderWithKeys>, rusqlite::Error> {
         let providers = Self::get_all_providers(conn)?;
+        tracing::info!(
+            "[DAO] get_all_providers_with_keys: 获取到 {} 个 Provider",
+            providers.len()
+        );
+
         let mut result = Vec::new();
 
         for provider in providers {
             let api_keys = Self::get_api_keys_by_provider(conn, &provider.id)?;
+            tracing::info!(
+                "[DAO] Provider {} ({}): {} 个 API Key",
+                provider.id,
+                provider.name,
+                api_keys.len()
+            );
             result.push(ProviderWithKeys { provider, api_keys });
         }
 

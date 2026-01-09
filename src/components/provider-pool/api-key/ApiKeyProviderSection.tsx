@@ -7,7 +7,12 @@
  * **Validates: Requirements 1.1, 1.3, 1.4, 6.3, 6.4, 9.4, 9.5**
  */
 
-import React, { useCallback, useState } from "react";
+import React, {
+  useCallback,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+} from "react";
 import { cn } from "@/lib/utils";
 import { useApiKeyProvider } from "@/hooks/useApiKeyProvider";
 import {
@@ -31,6 +36,11 @@ export interface ApiKeyProviderSectionProps {
   className?: string;
 }
 
+export interface ApiKeyProviderSectionRef {
+  /** 刷新 Provider 列表 */
+  refresh: () => Promise<void>;
+}
+
 // ============================================================================
 // 组件实现
 // ============================================================================
@@ -47,14 +57,15 @@ export interface ApiKeyProviderSectionProps {
  * @example
  * ```tsx
  * <ApiKeyProviderSection
+ *   ref={apiKeyProviderRef}
  *   onAddCustomProvider={() => setShowAddModal(true)}
  * />
  * ```
  */
-export const ApiKeyProviderSection: React.FC<ApiKeyProviderSectionProps> = ({
-  onAddCustomProvider,
-  className,
-}) => {
+export const ApiKeyProviderSection = forwardRef<
+  ApiKeyProviderSectionRef,
+  ApiKeyProviderSectionProps
+>(({ onAddCustomProvider, className }, ref) => {
   // 使用 Hook 管理状态
   const {
     providersByGroup,
@@ -73,7 +84,17 @@ export const ApiKeyProviderSection: React.FC<ApiKeyProviderSectionProps> = ({
     deleteCustomProvider,
     exportConfig,
     importConfig,
+    refresh,
   } = useApiKeyProvider();
+
+  // 暴露 refresh 方法给父组件
+  useImperativeHandle(
+    ref,
+    () => ({
+      refresh,
+    }),
+    [refresh],
+  );
 
   // 删除对话框状态
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -95,9 +116,14 @@ export const ApiKeyProviderSection: React.FC<ApiKeyProviderSectionProps> = ({
       apiKey: string,
       alias?: string,
     ): Promise<void> => {
+      console.log("[ApiKeyProviderSection] handleAddApiKey 被调用:", {
+        providerId,
+        selectedProviderId,
+        alias,
+      });
       await addApiKey(providerId, apiKey, alias);
     },
-    [addApiKey],
+    [addApiKey, selectedProviderId],
   );
 
   // ===== 连接测试 =====
@@ -206,7 +232,9 @@ export const ApiKeyProviderSection: React.FC<ApiKeyProviderSectionProps> = ({
       />
     </div>
   );
-};
+});
+
+ApiKeyProviderSection.displayName = "ApiKeyProviderSection";
 
 // ============================================================================
 // 辅助函数（用于测试）

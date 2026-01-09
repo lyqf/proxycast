@@ -775,6 +775,40 @@ mod unit_tests {
         assert!(deleted);
     }
 
+    /// 单元测试：重复 API Key 检测
+    /// 验证修复：第一次添加 API Key 无法保存的问题
+    #[test]
+    fn test_duplicate_api_key_detection() {
+        let ctx = TestContext::new().expect("Failed to create test context");
+
+        // 创建 Provider
+        let provider_id = "test-provider-duplicate";
+        ctx.create_test_provider(provider_id)
+            .expect("Failed to create provider");
+
+        // 第一次添加 API Key 应该成功
+        let api_key = "sk-duplicate-test-123";
+        let first_result = ctx.add_test_api_key(provider_id, api_key);
+        assert!(first_result.is_ok(), "第一次添加应该成功");
+
+        // 第二次添加相同的 API Key 应该失败
+        let second_result = ctx.add_test_api_key(provider_id, api_key);
+        assert!(second_result.is_err(), "第二次添加相同 API Key 应该失败");
+        assert!(
+            second_result.unwrap_err().contains("该 API Key 已存在"),
+            "错误信息应该提示 API Key 已存在"
+        );
+
+        // 验证 Provider 中只有一个 API Key
+        let provider = ctx
+            .service
+            .get_provider(&ctx.db, provider_id)
+            .expect("Failed to get provider")
+            .expect("Provider not found");
+
+        assert_eq!(provider.api_keys.len(), 1, "应该只有一个 API Key");
+    }
+
     /// 单元测试：系统 Provider 不能删除
     #[test]
     fn test_system_provider_cannot_be_deleted() {

@@ -131,15 +131,32 @@ export function useApiKeyProvider(): UseApiKeyProviderReturn {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<ProviderGroup>>(
     new Set(),
   );
+  // 版本号，用于强制刷新
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   // ===== 加载 Provider 列表 =====
   const fetchProviders = useCallback(async () => {
     try {
+      console.log("[useApiKeyProvider] 开始获取 Provider 列表...");
       setLoading(true);
       setError(null);
       const data = await apiKeyProviderApi.getProviders();
-      setProviders(data);
+      console.log("[useApiKeyProvider] 获取到", data.length, "个 Provider");
+
+      // 打印每个 Provider 的 API Key 数量
+      data.forEach((p) => {
+        console.log(
+          `[useApiKeyProvider] Provider ${p.id} (${p.name}): ${p.api_keys?.length || 0} 个 API Key`,
+        );
+      });
+
+      // 创建新数组引用，确保 React 检测到状态变化
+      setProviders([...data]);
+      // 增加版本号，强制重新计算 selectedProvider
+      setRefreshVersion((v) => v + 1);
+      console.log("[useApiKeyProvider] 状态已更新，providers 数组已刷新");
     } catch (e) {
+      console.error("[useApiKeyProvider] 获取 Provider 列表失败:", e);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
@@ -312,8 +329,19 @@ export function useApiKeyProvider(): UseApiKeyProviderReturn {
         api_key: apiKey,
         alias,
       };
+
+      console.log("[useApiKeyProvider] 开始添加 API Key:", {
+        providerId,
+        alias,
+      });
       const result = await apiKeyProviderApi.addApiKey(request);
+      console.log("[useApiKeyProvider] API Key 添加成功:", result.id);
+
+      // 强制刷新 Provider 列表以确保新添加的 API Key 显示
+      console.log("[useApiKeyProvider] 刷新 Provider 列表...");
       await fetchProviders();
+      console.log("[useApiKeyProvider] Provider 列表刷新完成");
+
       return result;
     },
     [fetchProviders],
@@ -370,9 +398,26 @@ export function useApiKeyProvider(): UseApiKeyProviderReturn {
 
   /** 当前选中的 Provider */
   const selectedProvider = useMemo(() => {
-    if (!selectedProviderId) return null;
-    return providers.find((p) => p.id === selectedProviderId) ?? null;
-  }, [providers, selectedProviderId]);
+    // refreshVersion 用于强制重新计算
+    console.log(
+      `[useApiKeyProvider] 计算 selectedProvider, refreshVersion=${refreshVersion}`,
+    );
+    if (!selectedProviderId) {
+      console.log("[useApiKeyProvider] selectedProvider: 没有选中的 Provider");
+      return null;
+    }
+    const found = providers.find((p) => p.id === selectedProviderId);
+    if (found) {
+      console.log(
+        `[useApiKeyProvider] selectedProvider: ${found.name}, api_keys: ${found.api_keys?.length || 0}`,
+      );
+    } else {
+      console.log(
+        `[useApiKeyProvider] selectedProvider: 未找到 ID=${selectedProviderId}`,
+      );
+    }
+    return found ?? null;
+  }, [providers, selectedProviderId, refreshVersion]);
 
   /** 按搜索过滤后的 Provider 列表 */
   const filteredProviders = useMemo(() => {

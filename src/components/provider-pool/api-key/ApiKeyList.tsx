@@ -119,6 +119,23 @@ export const ApiKeyList: React.FC<ApiKeyListProps> = ({
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 监听 apiKeys 变化，用于调试
+  React.useEffect(() => {
+    console.log(
+      `[ApiKeyList] 组件更新: providerId=${providerId}, apiKeys.length=${apiKeys.length}`,
+    );
+    apiKeys.forEach((k, i) => {
+      console.log(
+        `[ApiKeyList]   [${i}] id=${k.id}, masked=${k.api_key_masked}`,
+      );
+    });
+  }, [apiKeys, providerId]);
+
+  // 监听 providerId 变化
+  React.useEffect(() => {
+    console.log(`[ApiKeyList] providerId 变化: ${providerId}`);
+  }, [providerId]);
+
   const handleAdd = async () => {
     if (!newApiKey.trim()) {
       setError("请输入 API Key");
@@ -129,13 +146,24 @@ export const ApiKeyList: React.FC<ApiKeyListProps> = ({
     setError(null);
 
     try {
+      console.log("[ApiKeyList] 开始添加 API Key:", {
+        providerId,
+        alias: newAlias.trim() || undefined,
+        apiKeyLength: newApiKey.trim().length,
+      });
       await onAdd?.(providerId, newApiKey.trim(), newAlias.trim() || undefined);
+      console.log(
+        "[ApiKeyList] API Key 添加成功，当前 apiKeys:",
+        apiKeys.length,
+      );
+
       // 重置表单
       setNewApiKey("");
       setNewAlias("");
       setShowAddForm(false);
       setShowApiKey(false);
     } catch (e) {
+      console.error("[ApiKeyList] API Key 添加失败:", e);
       setError(e instanceof Error ? e.message : "添加失败");
     } finally {
       setIsAdding(false);

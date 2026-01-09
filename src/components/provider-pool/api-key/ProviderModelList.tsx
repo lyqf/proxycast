@@ -48,11 +48,6 @@ const ModelItem: React.FC<ModelItemProps> = ({ model }) => {
           <span className="text-sm font-medium truncate">
             {model.display_name}
           </span>
-          {model.is_latest && (
-            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
-              最新
-            </span>
-          )}
         </div>
         <div className="text-xs text-muted-foreground truncate">{model.id}</div>
       </div>
