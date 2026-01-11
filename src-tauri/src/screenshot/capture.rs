@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tracing::{debug, error, info};
 
+#[cfg(target_os = "macos")]
+use tracing::warn;
+
 /// 截图错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {

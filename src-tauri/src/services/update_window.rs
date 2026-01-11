@@ -12,8 +12,10 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tracing::{debug, info};
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)]
 use cocoa::appkit::{NSColor, NSWindow};
 #[cfg(target_os = "macos")]
+#[allow(deprecated)]
 use cocoa::base::{id, nil};
 
 use super::update_check_service::UpdateInfo;
@@ -164,7 +166,8 @@ pub fn open_update_window(
 
     let (x, y) = calculate_window_position(app);
 
-    let _window = WebviewWindowBuilder::new(app, UPDATE_WINDOW_LABEL, WebviewUrl::App(url.into()))
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let window = WebviewWindowBuilder::new(app, UPDATE_WINDOW_LABEL, WebviewUrl::App(url.into()))
         .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
         .position(x, y)
         .decorations(false)
@@ -182,6 +185,7 @@ pub fn open_update_window(
     {
         use objc::{msg_send, sel, sel_impl};
         if let Ok(ns_win) = window.ns_window() {
+            #[allow(deprecated, unexpected_cfgs)]
             unsafe {
                 let ns_window = ns_win as id;
                 let clear_color = NSColor::clearColor(nil);

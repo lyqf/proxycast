@@ -2,6 +2,10 @@
 //!
 //! 这是一个 Tauri 应用，提供 AI API 的代理和管理功能。
 
+// 抑制 objc crate 宏内部的 unexpected_cfgs 警告
+// 该警告来自 cocoa/objc 依赖的 msg_send! 宏，是已知的 issue
+#![allow(unexpected_cfgs)]
+
 // 核心模块
 pub mod agent;
 pub mod app;

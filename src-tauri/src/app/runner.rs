@@ -5,6 +5,9 @@
 use std::sync::Arc;
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
+use tauri::{Emitter, Listener};
+
 use crate::commands;
 use crate::tray::{TrayIconStatus, TrayManager, TrayStateSnapshot};
 

@@ -8,8 +8,10 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tracing::{debug, info};
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)]
 use cocoa::appkit::{NSColor, NSWindow};
 #[cfg(target_os = "macos")]
+#[allow(deprecated)]
 use cocoa::base::{id, nil};
 
 /// 窗口错误类型
@@ -164,6 +166,7 @@ pub fn open_floating_window(app: &AppHandle, image_path: &Path) -> Result<(), Wi
         {
             use objc::{msg_send, sel, sel_impl};
             if let Ok(ns_win) = window.ns_window() {
+                #[allow(deprecated, unexpected_cfgs)]
                 unsafe {
                     let ns_window = ns_win as id;
                     // 设置窗口背景透明
@@ -202,24 +205,25 @@ pub fn open_floating_window(app: &AppHandle, image_path: &Path) -> Result<(), Wi
     let (x, y) = calculate_window_position(app);
 
     // 创建悬浮窗口（启用透明）
-    let _window =
-        WebviewWindowBuilder::new(app, FLOATING_WINDOW_LABEL, WebviewUrl::App(url.into()))
-            .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-            .position(x, y)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .visible(true)
-            .focused(true)
-            .transparent(true)
-            .build()
-            .map_err(|e| WindowError::CreateFailed(format!("{}", e)))?;
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let window = WebviewWindowBuilder::new(app, FLOATING_WINDOW_LABEL, WebviewUrl::App(url.into()))
+        .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+        .position(x, y)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(true)
+        .focused(true)
+        .transparent(true)
+        .build()
+        .map_err(|e| WindowError::CreateFailed(format!("{}", e)))?;
 
     // macOS: 设置窗口和 webview 背景透明
     #[cfg(target_os = "macos")]
     {
         use objc::{msg_send, sel, sel_impl};
         if let Ok(ns_win) = window.ns_window() {
+            #[allow(deprecated, unexpected_cfgs)]
             unsafe {
                 let ns_window = ns_win as id;
                 // 设置窗口背景透明
