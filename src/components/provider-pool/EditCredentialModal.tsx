@@ -220,8 +220,8 @@ export function EditCredentialModal({
         new_base_url: isApiKey ? newBaseUrl.trim() : undefined,
         // API Key 的 api_key（始终传递当前值）
         new_api_key: isApiKey ? newApiKey.trim() : undefined,
-        // 代理 URL（空字符串表示清除，使用全局代理）
-        new_proxy_url: proxyUrl.trim() || undefined,
+        // 代理 URL：始终传递当前值，空字符串表示清除代理
+        new_proxy_url: proxyUrl.trim(),
       };
 
       console.log("[EditCredentialModal] 提交更新请求:", updateRequest);
