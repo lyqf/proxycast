@@ -1,0 +1,17 @@
+[package]
+name = "agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Aster Agent Framework
+aster = { git = "https://github.com/astercloud/aster-rust", tag = "v0.3.0" }

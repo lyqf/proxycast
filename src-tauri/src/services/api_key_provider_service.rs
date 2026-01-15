@@ -11,12 +11,31 @@ use crate::database::dao::api_key_provider::{
 };
 use crate::database::system_providers::{get_system_providers, to_api_key_provider};
 use crate::database::DbConnection;
+use crate::models::{CredentialData, CredentialSource, PoolProviderType, ProviderCredential};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
+
+// ============================================================================
+// 连接测试结果
+// ============================================================================
+
+/// 连接测试结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionTestResult {
+    /// 是否成功
+    pub success: bool,
+    /// 延迟（毫秒）
+    pub latency_ms: Option<u64>,
+    /// 错误信息
+    pub error: Option<String>,
+    /// 模型列表（如果使用 models 端点测试）
+    pub models: Option<Vec<String>>,
+}
 
 // ============================================================================
 // 加密服务
@@ -1265,7 +1284,8 @@ impl ApiKeyProviderService {
     ) -> Result<Vec<String>, String> {
         use crate::providers::openai_custom::OpenAICustomProvider;
 
-        let provider = OpenAICustomProvider::with_config(api_key.to_string(), Some(api_host.to_string()));
+        let provider =
+            OpenAICustomProvider::with_config(api_key.to_string(), Some(api_host.to_string()));
 
         let response = provider
             .list_models()
@@ -1273,7 +1293,7 @@ impl ApiKeyProviderService {
             .map_err(|e| format!("获取模型列表失败: {}", e))?;
 
         // 解析模型列表
-        let models = response["data"]
+        let models: Vec<String> = response["data"]
             .as_array()
             .map(|arr| {
                 arr.iter()
@@ -1296,23 +1316,28 @@ impl ApiKeyProviderService {
         api_host: &str,
         model: &str,
     ) -> Result<Vec<String>, String> {
-        use crate::models::openai::{ChatCompletionRequest, Message, MessageContent};
+        use crate::models::openai::{ChatCompletionRequest, ChatMessage, MessageContent};
         use crate::providers::openai_custom::OpenAICustomProvider;
 
-        let provider = OpenAICustomProvider::with_config(api_key.to_string(), Some(api_host.to_string()));
+        let provider =
+            OpenAICustomProvider::with_config(api_key.to_string(), Some(api_host.to_string()));
 
         let request = ChatCompletionRequest {
             model: model.to_string(),
-            messages: vec![Message {
+            messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: Some(MessageContent::Text("hi".to_string())),
-                name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             }],
+            temperature: None,
             max_tokens: Some(1),
+            top_p: None,
             stream: false,
-            ..Default::default()
+            tools: None,
+            tool_choice: None,
+            reasoning_effort: None,
         };
 
         let response = provider
@@ -1338,7 +1363,8 @@ impl ApiKeyProviderService {
     ) -> Result<Vec<String>, String> {
         use crate::providers::claude_custom::ClaudeCustomProvider;
 
-        let provider = ClaudeCustomProvider::with_config(api_key.to_string(), Some(api_host.to_string()));
+        let provider =
+            ClaudeCustomProvider::with_config(api_key.to_string(), Some(api_host.to_string()));
 
         // 发送一个简单的测试请求
         let request = serde_json::json!({
@@ -1397,7 +1423,7 @@ impl ApiKeyProviderService {
             .await
             .map_err(|e| format!("解析响应失败: {}", e))?;
 
-        let models = data["models"]
+        let models: Vec<String> = data["models"]
             .as_array()
             .map(|arr| {
                 arr.iter()

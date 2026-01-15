@@ -810,6 +810,8 @@ pub fn run() {
             commands::api_key_provider_cmd::get_legacy_api_key_credentials,
             commands::api_key_provider_cmd::migrate_legacy_api_key_credentials,
             commands::api_key_provider_cmd::delete_legacy_api_key_credential,
+            // API Key Provider connection test command
+            commands::api_key_provider_cmd::test_api_key_provider_connection,
             // Route commands
             commands::route_cmd::get_available_routes,
             commands::route_cmd::get_route_curl_examples,

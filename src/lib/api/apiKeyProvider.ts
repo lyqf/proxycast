@@ -279,7 +279,51 @@ export const apiKeyProviderApi = {
   async deleteLegacyCredential(uuid: string): Promise<boolean> {
     return safeInvoke("delete_legacy_api_key_credential", { uuid });
   },
+
+  // ============================================================================
+  // 连接测试 API
+  // ============================================================================
+
+  /**
+   * 测试 API Key Provider 连接
+   *
+   * 方案 C 实现：
+   * 1. 默认使用 /v1/models 端点测试
+   * 2. 如果提供了 modelName，用该模型发送简单请求
+   *
+   * @param providerId Provider ID
+   * @param modelName 可选的模型名称，用于发送测试请求
+   */
+  async testConnection(
+    providerId: string,
+    modelName?: string,
+  ): Promise<ConnectionTestResult> {
+    return safeInvoke("test_api_key_provider_connection", {
+      providerId,
+      modelName,
+    });
+  },
 };
+
+// ============================================================================
+// 连接测试类型
+// ============================================================================
+
+/**
+ * 连接测试结果
+ */
+export interface ConnectionTestResult {
+  /** 是否成功 */
+  success: boolean;
+  /** 延迟（毫秒） */
+  latency_ms?: number;
+  /** 错误信息 */
+  error?: string;
+  /** 测试方法 */
+  method?: string;
+  /** 模型列表（如果使用 models 端点测试） */
+  models?: string[];
+}
 
 /**
  * 旧的 API Key 凭证信息

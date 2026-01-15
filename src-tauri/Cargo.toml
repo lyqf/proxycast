@@ -1,11 +1,22 @@
-[package]
-name = "proxycast"
-version = "0.47.2"
-description = "AI API Proxy Desktop App"
-authors = ["you"]
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.47.3"
 edition = "2021"
+authors = ["you"]
 repository = "https://github.com/aiclientproxy/proxycast"
 homepage = "https://github.com/aiclientproxy/proxycast"
+
+[package]
+name = "proxycast"
+version.workspace = true
+description = "AI API Proxy Desktop App"
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [lib]
 name = "proxycast_lib"
@@ -77,8 +88,8 @@ mouse_position = "0.1.4"
 window-vibrancy = "0.7.1"
 if-addrs = "0.13"
 
-# Aster Agent Framework
-aster = { git = "https://github.com/astercloud/aster-rust", branch = "main" }
+# Aster Agent Framework - 使用固定 tag 避免每次重新拉取
+aster = { git = "https://github.com/astercloud/aster-rust", tag = "v0.3.0" }
 
 # Platform specific dependencies for browser interceptor
 

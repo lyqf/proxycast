@@ -130,9 +130,6 @@ export const ApiKeyProviderSection = forwardRef<
   const handleTestConnection = useCallback(
     async (providerId: string): Promise<ConnectionTestResult> => {
       try {
-        // 调用后端测试连接 API
-        // 注意：这里需要后端实现 test_api_key_provider_connection 命令
-        // 暂时使用模拟实现
         const provider = selectedProvider;
         if (!provider || provider.api_keys.length === 0) {
           return {
@@ -141,20 +138,23 @@ export const ApiKeyProviderSection = forwardRef<
           };
         }
 
-        // 尝试获取下一个 API Key 来验证连接
-        const apiKey = await apiKeyProviderApi.getNextApiKey(providerId);
-        if (!apiKey) {
-          return {
-            success: false,
-            error: "没有启用的 API Key",
-          };
-        }
+        // 如果 Provider 配置了自定义模型，使用第一个模型进行测试
+        const modelName =
+          provider.custom_models && provider.custom_models.length > 0
+            ? provider.custom_models[0]
+            : undefined;
 
-        // TODO: 实现真正的连接测试
-        // 目前返回成功，后续需要调用后端的连接测试 API
+        // 调用后端连接测试 API
+        const result = await apiKeyProviderApi.testConnection(
+          providerId,
+          modelName,
+        );
+
+        // 转换后端返回的 latency_ms 为前端期望的 latencyMs
         return {
-          success: true,
-          latencyMs: Math.floor(Math.random() * 200) + 50,
+          success: result.success,
+          latencyMs: result.latency_ms,
+          error: result.error,
         };
       } catch (e) {
         return {
