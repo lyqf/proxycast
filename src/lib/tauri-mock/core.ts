@@ -259,15 +259,6 @@ const defaultMocks: Record<string, any> = {
   start_kiro_playwright_login: () => ({ success: true }),
   cancel_kiro_playwright_login: () => ({ success: true }),
 
-  // OAuth 插件相关
-  init_oauth_plugin_system: () => ({}),
-  enable_oauth_plugin: () => ({ success: true }),
-  disable_oauth_plugin: () => ({ success: true }),
-  uninstall_oauth_plugin: () => ({ success: true }),
-  update_oauth_plugin: () => ({ success: true }),
-  update_oauth_plugin_config: () => ({ success: true }),
-  reload_oauth_plugins: () => ({ success: true }),
-
   // 连接相关
   list_connections: () => [],
   connection_list: () => [],
@@ -485,18 +476,6 @@ const defaultMocks: Record<string, any> = {
   remove_injection_rule: () => ({ success: true }),
   update_injection_rule: () => ({ success: true }),
   get_injection_rules: () => ({ rules: [] }),
-
-  // Plugin SDK 相关
-  plugin_notification: () => ({}),
-  plugin_event_emit: () => ({}),
-  plugin_storage_set: () => ({ success: true }),
-  plugin_storage_delete: () => ({ success: true }),
-  plugin_credential_update: () => ({ success: true }),
-  plugin_credential_delete: () => ({ success: true }),
-  plugin_credential_refresh: () => ({ success: true }),
-  plugin_config_set: () => ({ success: true }),
-  plugin_rpc_connect: () => ({ success: true }),
-  plugin_rpc_disconnect: () => ({ success: true }),
 
   // OAuth 登录相关
   start_antigravity_oauth_login: () => ({ success: true }),

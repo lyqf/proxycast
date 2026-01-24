@@ -18,7 +18,6 @@ import { ApiServerPage } from "./components/api-server/ApiServerPage";
 import { ProviderPoolPage } from "./components/provider-pool";
 import { ToolsPage } from "./components/tools/ToolsPage";
 import { AgentChatPage } from "./components/agent";
-import { PluginUIRenderer } from "./components/plugins/PluginUIRenderer";
 import { PluginsPage } from "./components/plugins/PluginsPage";
 
 import {
@@ -120,7 +119,20 @@ function AppContent() {
               await windowApi.toggleFullscreen();
             }
           } else {
-            await windowApi.setWindowSizeByOption(savedPreference);
+            const [currentSize, options] = await Promise.all([
+              windowApi.getWindowSize(),
+              windowApi.getWindowSizeOptions(),
+            ]);
+
+            const target = options.find((opt) => opt.id === savedPreference);
+            const isAlreadyTargetSize =
+              !!target &&
+              currentSize.width === target.size.width &&
+              currentSize.height === target.size.height;
+
+            if (!isAlreadyTargetSize) {
+              await windowApi.setWindowSizeByOption(savedPreference);
+            }
           }
         } catch (error) {
           console.error("应用窗口尺寸偏好失败:", error);
@@ -228,33 +240,7 @@ function AppContent() {
           <SettingsPage />
         </PageWrapper>
 
-        {/* 动态插件页面 */}
-        {currentPage.startsWith("plugin:") &&
-          (() => {
-            const pluginId = currentPage.slice(7);
-            const fullscreenPlugins: string[] = [];
-            const isFullscreen = fullscreenPlugins.includes(pluginId);
-
-            if (isFullscreen) {
-              return (
-                <FullscreenWrapper $isActive={true}>
-                  <PluginUIRenderer
-                    pluginId={pluginId}
-                    onNavigate={setCurrentPage}
-                  />
-                </FullscreenWrapper>
-              );
-            }
-
-            return (
-              <PageWrapper $isActive={true}>
-                <PluginUIRenderer
-                  pluginId={pluginId}
-                  onNavigate={setCurrentPage}
-                />
-              </PageWrapper>
-            );
-          })()}
+        {/* 动态插件页面已移除 */}
       </>
     );
   };

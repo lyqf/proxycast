@@ -7,7 +7,6 @@ use tauri::{App, Manager};
 
 // use crate::agent::tools::{set_term_scrollback_tool_app_handle, set_terminal_tool_app_handle};
 use crate::agent::NativeAgentState;
-use crate::commands::oauth_plugin_cmd::OAuthPluginManagerState;
 use crate::database;
 use crate::flow_monitor::FlowInterceptor;
 use crate::services::provider_pool_service::ProviderPoolService;
@@ -60,10 +59,6 @@ pub fn setup_app(
 
     // set_term_scrollback_tool_app_handle(app.handle().clone());
     // tracing::info!("[启动] TermScrollbackTool AppHandle 已设置");
-
-    // 初始化 OAuth Plugin Manager State
-    let oauth_plugin_manager_state = OAuthPluginManagerState::with_defaults();
-    app.manage(oauth_plugin_manager_state);
 
     // 初始化默认 skill repos
     {

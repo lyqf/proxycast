@@ -72,7 +72,6 @@ pub fn run() {
         batch_operations: batch_operations_state,
         native_agent: native_agent_state,
         aster_agent: aster_agent_state,
-        oauth_plugin_manager: oauth_plugin_manager_state,
         orchestrator: orchestrator_state,
         connect_state,
         model_registry: model_registry_state,
@@ -157,7 +156,6 @@ pub fn run() {
         .manage(batch_operations_state)
         .manage(native_agent_state)
         .manage(aster_agent_state)
-        .manage(oauth_plugin_manager_state)
         .manage(orchestrator_state)
         .manage(connect_state)
         .manage(model_registry_state)
@@ -1087,43 +1085,6 @@ pub fn run() {
             commands::models_cmd::remove_provider,
             // Network commands
             commands::network_cmd::get_network_info,
-            // OAuth Plugin commands
-            commands::oauth_plugin_cmd::init_oauth_plugin_system,
-            commands::oauth_plugin_cmd::list_oauth_plugins,
-            commands::oauth_plugin_cmd::get_oauth_plugin,
-            commands::oauth_plugin_cmd::enable_oauth_plugin,
-            commands::oauth_plugin_cmd::disable_oauth_plugin,
-            commands::oauth_plugin_cmd::install_oauth_plugin,
-            commands::oauth_plugin_cmd::uninstall_oauth_plugin,
-            commands::oauth_plugin_cmd::check_oauth_plugin_updates,
-            commands::oauth_plugin_cmd::update_oauth_plugin,
-            commands::oauth_plugin_cmd::reload_oauth_plugins,
-            commands::oauth_plugin_cmd::get_oauth_plugin_config,
-            commands::oauth_plugin_cmd::update_oauth_plugin_config,
-            commands::oauth_plugin_cmd::scan_oauth_plugin_directory,
-            // OAuth Plugin credential commands
-            commands::oauth_plugin_cmd::plugin_credential_list,
-            commands::oauth_plugin_cmd::plugin_credential_get,
-            commands::oauth_plugin_cmd::plugin_credential_create,
-            commands::oauth_plugin_cmd::plugin_credential_update,
-            commands::oauth_plugin_cmd::plugin_credential_delete,
-            commands::oauth_plugin_cmd::plugin_credential_validate,
-            commands::oauth_plugin_cmd::plugin_credential_refresh,
-            // OAuth Plugin SDK commands
-            commands::oauth_plugin_cmd::plugin_database_query,
-            commands::oauth_plugin_cmd::plugin_database_execute,
-            commands::oauth_plugin_cmd::plugin_http_request,
-            commands::oauth_plugin_cmd::plugin_crypto_encrypt,
-            commands::oauth_plugin_cmd::plugin_crypto_decrypt,
-            commands::oauth_plugin_cmd::plugin_notification,
-            commands::oauth_plugin_cmd::plugin_storage_get,
-            commands::oauth_plugin_cmd::plugin_storage_set,
-            commands::oauth_plugin_cmd::plugin_storage_delete,
-            commands::oauth_plugin_cmd::plugin_storage_keys,
-            commands::oauth_plugin_cmd::plugin_config_get,
-            commands::oauth_plugin_cmd::plugin_config_set,
-            // OAuth Plugin UI commands
-            commands::oauth_plugin_cmd::read_plugin_ui_file,
             // Orchestrator commands
             commands::orchestrator_cmd::init_orchestrator,
             commands::orchestrator_cmd::get_orchestrator_config,

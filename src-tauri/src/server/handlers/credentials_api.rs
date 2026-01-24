@@ -261,53 +261,13 @@ async fn try_select_api_key_credential(
     Ok(Some(response))
 }
 
-/// 尝试从 OAuth 插件选择凭证
+/// 尝试从 OAuth 插件选择凭证（已禁用 - 插件系统已移除）
 async fn try_select_plugin_credential(
     _state: &AppState,
-    request: &SelectCredentialRequest,
+    _request: &SelectCredentialRequest,
 ) -> Result<Option<CredentialResponse>, CredentialApiError> {
-    // 获取 OAuth 插件注册表
-    let registry = match crate::credential::registry::get_global_registry() {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-
-    // 根据模型查找插件
-    let model = request.model.as_deref().unwrap_or("");
-    let plugin = match registry.find_by_model(model).await {
-        Some(p) => p,
-        None => return Ok(None),
-    };
-
-    // 获取凭证
-    let acquired = match plugin.acquire_credential(model).await {
-        Ok(cred) => cred,
-        Err(_) => return Ok(None),
-    };
-
-    // 构建响应
-    let response = CredentialResponse {
-        uuid: acquired.id.clone(),
-        provider_type: plugin.id().to_string(),
-        credential_type: CredentialType::Plugin,
-        access_token: acquired
-            .headers
-            .get("Authorization")
-            .map(|h| h.trim_start_matches("Bearer ").to_string())
-            .unwrap_or_default(),
-        base_url: acquired.base_url.unwrap_or_default(),
-        expires_at: None,
-        name: acquired.name,
-        extra_headers: Some(acquired.headers),
-    };
-
-    tracing::info!(
-        "[CREDENTIALS_API] OAuth 插件凭证选择成功: {} ({})",
-        response.name.as_deref().unwrap_or("未命名"),
-        response.uuid
-    );
-
-    Ok(Some(response))
+    // OAuth 插件系统已移除，直接返回 None
+    Ok(None)
 }
 
 /// 根据 OAuth Provider 类型获取 base_url

@@ -20,7 +20,6 @@ pub mod music_cmd;
 pub mod native_agent_cmd;
 pub mod network_cmd;
 pub mod oauth_cmd;
-pub mod oauth_plugin_cmd;
 pub mod orchestrator_cmd;
 pub mod plugin_cmd;
 pub mod plugin_install_cmd;

@@ -140,7 +140,6 @@ pub struct AppStates {
     pub batch_operations: BatchOperationsState,
     pub native_agent: NativeAgentState,
     pub aster_agent: AsterAgentState,
-    pub oauth_plugin_manager: crate::commands::oauth_plugin_cmd::OAuthPluginManagerState,
     pub orchestrator: OrchestratorState,
     pub connect_state: ConnectStateWrapper,
     pub model_registry: ModelRegistryState,
@@ -222,8 +221,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     // 其他状态
     let native_agent_state = NativeAgentState::new();
     let aster_agent_state = AsterAgentState::new();
-    let oauth_plugin_manager_state =
-        crate::commands::oauth_plugin_cmd::OAuthPluginManagerState::with_defaults();
     let orchestrator_state = OrchestratorState::new();
 
     // 初始化 Connect 状态（延迟初始化，在 setup hook 中完成）
@@ -297,7 +294,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         batch_operations: batch_operations_state,
         native_agent: native_agent_state,
         aster_agent: aster_agent_state,
-        oauth_plugin_manager: oauth_plugin_manager_state,
         orchestrator: orchestrator_state,
         connect_state,
         model_registry: model_registry_state,
