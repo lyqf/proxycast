@@ -10,3 +10,5 @@ export { AddAsrCredentialModal } from "./AddAsrCredentialModal";
 export { AsrProviderSection } from "./AsrProviderSection";
 export { VoiceSettings } from "./VoiceSettings";
 export { InstructionEditor } from "./InstructionEditor";
+export { MicrophoneTest } from "./MicrophoneTest";
+export { VolumeWaveform } from "./VolumeWaveform";

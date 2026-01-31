@@ -78,11 +78,7 @@ export function KiroFormStandalone({
     } else if (kiroForm.mode === "file") {
       kiroForm.handleFileSubmit();
     }
-    // login 模式不需要手动提交，登录按钮会直接触发
   }, [kiroForm]);
-
-  // 是否显示提交按钮（login 模式不需要）
-  const showSubmitButton = kiroForm.mode !== "login";
 
   return (
     <div className="space-y-4">
@@ -121,18 +117,16 @@ export function KiroFormStandalone({
             取消
           </Button>
         )}
-        {showSubmitButton && (
-          <Button type="button" onClick={handleSubmit} disabled={loading}>
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                添加中...
-              </>
-            ) : (
-              "添加凭证"
-            )}
-          </Button>
-        )}
+        <Button type="button" onClick={handleSubmit} disabled={loading}>
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              添加中...
+            </>
+          ) : (
+            "添加凭证"
+          )}
+        </Button>
       </div>
     </div>
   );

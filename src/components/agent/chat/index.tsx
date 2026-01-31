@@ -103,7 +103,7 @@ export function AgentChatPage({
 }: {
   onNavigate?: (page: string) => void;
 }) {
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState("");
 

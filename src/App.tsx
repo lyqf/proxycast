@@ -19,6 +19,7 @@ import { ProviderPoolPage } from "./components/provider-pool";
 import { ToolsPage } from "./components/tools/ToolsPage";
 import { AgentChatPage } from "./components/agent";
 import { PluginsPage } from "./components/plugins/PluginsPage";
+import { ImageGenPage } from "./components/image-gen";
 
 import {
   TerminalWorkspace,
@@ -28,7 +29,6 @@ import {
 } from "./components/terminal";
 import { flowEventManager } from "./lib/flowEventManager";
 import { OnboardingWizard, useOnboardingState } from "./components/onboarding";
-import { STORAGE_KEYS } from "./components/onboarding/constants";
 import { ConnectConfirmDialog } from "./components/connect";
 import { showRegistryLoadError } from "./lib/utils/connectError";
 import { useDeepLink } from "./hooks/useDeepLink";
@@ -37,7 +37,6 @@ import { ComponentDebugProvider } from "./contexts/ComponentDebugContext";
 import { SoundProvider } from "./contexts/SoundProvider";
 import { ComponentDebugOverlay } from "./components/dev";
 import { Page } from "./types/page";
-import { windowApi } from "./lib/api/window";
 
 const AppContainer = styled.div`
   display: flex;
@@ -105,44 +104,6 @@ function AppContent() {
     flowEventManager.subscribe();
   }, []);
 
-  // 应用启动时应用保存的窗口尺寸偏好
-  useEffect(() => {
-    const applyWindowSizePreference = async () => {
-      const savedPreference = localStorage.getItem(
-        STORAGE_KEYS.WINDOW_SIZE_PREFERENCE,
-      );
-      if (savedPreference) {
-        try {
-          if (savedPreference === "fullscreen") {
-            const isCurrentlyFullscreen = await windowApi.isFullscreen();
-            if (!isCurrentlyFullscreen) {
-              await windowApi.toggleFullscreen();
-            }
-          } else {
-            const [currentSize, options] = await Promise.all([
-              windowApi.getWindowSize(),
-              windowApi.getWindowSizeOptions(),
-            ]);
-
-            const target = options.find((opt) => opt.id === savedPreference);
-            const isAlreadyTargetSize =
-              !!target &&
-              currentSize.width === target.size.width &&
-              currentSize.height === target.size.height;
-
-            if (!isAlreadyTargetSize) {
-              await windowApi.setWindowSizeByOption(savedPreference);
-            }
-          }
-        } catch (error) {
-          console.error("应用窗口尺寸偏好失败:", error);
-        }
-      }
-    };
-
-    applyWindowSizePreference();
-  }, []);
-
   // 处理 Registry 加载失败
   // _Requirements: 7.2, 7.3_
   useEffect(() => {
@@ -180,6 +141,18 @@ function AppContent() {
         <PageWrapper $isActive={currentPage === "provider-pool"}>
           <ProviderPoolPage />
         </PageWrapper>
+
+        {/* 图片生成页面 */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: currentPage === "image-gen" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <ImageGenPage onNavigate={setCurrentPage} />
+        </div>
 
         {/* API Server 页面 */}
         <PageWrapper $isActive={currentPage === "api-server"}>

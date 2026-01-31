@@ -1006,10 +1006,7 @@ pub fn run() {
             // Window control commands
             commands::window_cmd::get_window_size,
             commands::window_cmd::set_window_size,
-            commands::window_cmd::restore_window_size,
             commands::window_cmd::center_window,
-            commands::window_cmd::get_window_size_options,
-            commands::window_cmd::set_window_size_by_option,
             commands::window_cmd::toggle_fullscreen,
             commands::window_cmd::is_fullscreen,
             // Browser Interceptor commands
@@ -1277,6 +1274,7 @@ pub fn run() {
             crate::voice::commands::stop_recording,
             crate::voice::commands::cancel_recording,
             crate::voice::commands::get_recording_status,
+            crate::voice::commands::list_audio_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

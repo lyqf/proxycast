@@ -91,9 +91,34 @@ export interface VoiceInputConfig {
   processor: VoiceProcessorConfig;
   output: VoiceOutputConfig;
   instructions: VoiceInstruction[];
+  /** 选择的麦克风设备 ID（为空时使用系统默认设备） */
+  selected_device_id?: string;
+  /** 是否启用交互音效 */
+  sound_enabled: boolean;
+  /** 翻译模式快捷键（可选） */
+  translate_shortcut?: string;
+  /** 翻译模式使用的指令 ID */
+  translate_instruction_id: string;
+}
+
+// ============ 麦克风设备类型 ============
+
+/** 麦克风设备信息 */
+export interface AudioDeviceInfo {
+  /** 设备 ID */
+  id: string;
+  /** 设备名称 */
+  name: string;
+  /** 是否为默认设备 */
+  is_default: boolean;
 }
 
 // ============ Tauri 命令封装 ============
+
+/** 获取所有可用的麦克风设备 */
+export async function listAudioDevices(): Promise<AudioDeviceInfo[]> {
+  return invoke<AudioDeviceInfo[]>("list_audio_devices");
+}
 
 /** 获取 ASR 凭证列表 */
 export async function getAsrCredentials(): Promise<AsrCredentialEntry[]> {
@@ -241,8 +266,8 @@ export interface StopRecordingResult {
 }
 
 /** 开始录音 */
-export async function startRecording(): Promise<void> {
-  return invoke("start_recording");
+export async function startRecording(deviceId?: string): Promise<void> {
+  return invoke("start_recording", { deviceId });
 }
 
 /** 停止录音并返回音频数据 */

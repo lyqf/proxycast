@@ -1,13 +1,13 @@
 /**
- * @file ScreenshotPreview.tsx
+ * @file SmartInputPreview.tsx
  * @description 截图预览组件，用于悬浮对话窗口中显示截图
- * @module components/screenshot-chat/ScreenshotPreview
+ * @module components/smart-input/SmartInputPreview
  */
 
 import React, { useState, useCallback } from "react";
 
 /** 截图预览属性 */
-export interface ScreenshotPreviewProps {
+export interface SmartInputPreviewProps {
   /** 图片路径或 Base64 编码 */
   src: string;
   /** 图片 alt 文本 */
@@ -22,7 +22,7 @@ export interface ScreenshotPreviewProps {
  * 截图预览组件
  * 支持缩放和拖拽查看截图
  */
-export const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
+export const SmartInputPreview: React.FC<SmartInputPreviewProps> = ({
   src,
   alt = "截图预览",
   className = "",
@@ -171,4 +171,4 @@ export const ScreenshotPreview: React.FC<ScreenshotPreviewProps> = ({
   );
 };
 
-export default ScreenshotPreview;
+export default SmartInputPreview;

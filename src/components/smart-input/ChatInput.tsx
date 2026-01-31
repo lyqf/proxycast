@@ -1,7 +1,7 @@
 /**
  * @file ChatInput.tsx
  * @description 聊天输入框组件，支持文本输入和发送
- * @module components/screenshot-chat/ChatInput
+ * @module components/smart-input/ChatInput
  */
 
 import React, { useCallback, useRef, useEffect } from "react";
@@ -64,11 +64,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const canSend = value.trim() && !disabled && !isLoading;
 
   return (
-    <div className="screenshot-chat-input-area">
+    <div className="smart-input-input-area">
       <input
         ref={inputRef}
         type="text"
-        className="screenshot-chat-input"
+        className="smart-input-input"
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -77,14 +77,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         autoFocus
       />
       <button
-        className="screenshot-chat-send-btn"
+        className="smart-input-send-btn"
         onClick={handleSendClick}
         disabled={!canSend}
         title="发送 (Enter)"
       >
         {isLoading ? (
           <span
-            className="screenshot-chat-loading-spinner"
+            className="smart-input-loading-spinner"
             style={{ width: 16, height: 16 }}
           />
         ) : (

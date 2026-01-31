@@ -114,7 +114,7 @@ export interface ApiKeyEntry {
 /**
  * 截图对话功能配置
  */
-export interface ScreenshotChatConfig {
+export interface SmartInputConfig {
   /** 是否启用截图对话功能 */
   enabled: boolean;
   /** 触发截图的全局快捷键 */
@@ -126,7 +126,7 @@ export interface ScreenshotChatConfig {
  */
 export interface ExperimentalFeatures {
   /** 截图对话功能配置 */
-  screenshot_chat: ScreenshotChatConfig;
+  screenshot_chat: SmartInputConfig;
 }
 
 export interface Config {

@@ -11,7 +11,6 @@ import {
   Info,
   RotateCcw,
   Volume2,
-  Maximize2,
 } from "lucide-react";
 import { cn, validateProxyUrl } from "@/lib/utils";
 import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
@@ -19,8 +18,6 @@ import { useOnboardingState } from "@/components/onboarding";
 import { LanguageSelector, Language } from "./LanguageSelector";
 import { useI18nPatch } from "@/i18n/I18nPatchProvider";
 import { useSoundContext } from "@/contexts/useSoundContext";
-import { windowApi, type WindowSizeOption } from "@/lib/api/window";
-import { STORAGE_KEYS } from "@/components/onboarding/constants";
 
 type Theme = "light" | "dark" | "system";
 
@@ -33,14 +30,6 @@ export function GeneralSettings() {
   const { setLanguage: setI18nLanguage } = useI18nPatch();
   const { soundEnabled, setSoundEnabled, playToolcallSound } =
     useSoundContext();
-
-  // 窗口尺寸状态
-  const [windowSizeOptions, setWindowSizeOptions] = useState<
-    WindowSizeOption[]
-  >([]);
-  const [currentWindowSize, setCurrentWindowSize] = useState<string>("default");
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [windowSizeLoading, setWindowSizeLoading] = useState(true);
 
   // 重新运行引导
   const handleResetOnboarding = useCallback(() => {
@@ -65,52 +54,7 @@ export function GeneralSettings() {
       setTheme(savedTheme);
     }
     loadConfig();
-    loadWindowSizeOptions();
   }, []);
-
-  const loadWindowSizeOptions = async () => {
-    setWindowSizeLoading(true);
-    try {
-      const options = await windowApi.getWindowSizeOptions();
-      setWindowSizeOptions(options);
-
-      const fullscreen = await windowApi.isFullscreen();
-      setIsFullscreen(fullscreen);
-
-      // 从 localStorage 读取保存的偏好
-      const savedPreference = localStorage.getItem(
-        STORAGE_KEYS.WINDOW_SIZE_PREFERENCE,
-      );
-      if (savedPreference) {
-        setCurrentWindowSize(savedPreference);
-      }
-    } catch (error) {
-      console.error("加载窗口尺寸选项失败:", error);
-    } finally {
-      setWindowSizeLoading(false);
-    }
-  };
-
-  const handleWindowSizeChange = async (optionId: string) => {
-    try {
-      if (optionId === "fullscreen") {
-        if (!isFullscreen) {
-          await windowApi.toggleFullscreen();
-          setIsFullscreen(true);
-        }
-      } else {
-        if (isFullscreen) {
-          await windowApi.toggleFullscreen();
-          setIsFullscreen(false);
-        }
-        await windowApi.setWindowSizeByOption(optionId);
-      }
-      setCurrentWindowSize(optionId);
-      localStorage.setItem(STORAGE_KEYS.WINDOW_SIZE_PREFERENCE, optionId);
-    } catch (error) {
-      console.error("设置窗口尺寸失败:", error);
-    }
-  };
 
   const loadConfig = async () => {
     setConfigLoading(true);
@@ -271,52 +215,6 @@ export function GeneralSettings() {
             ))}
           </div>
         </div>
-      </div>
-
-      {/* 窗口尺寸 */}
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center gap-2 mb-3">
-          <Maximize2 className="h-4 w-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium">窗口尺寸</h3>
-        </div>
-
-        {windowSizeLoading ? (
-          <div className="flex items-center justify-center py-2">
-            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {windowSizeOptions.map((option) => (
-              <button
-                key={option.id}
-                onClick={() => handleWindowSizeChange(option.id)}
-                className={cn(
-                  "flex flex-col items-start p-2 rounded border text-left transition-colors",
-                  currentWindowSize === option.id && !isFullscreen
-                    ? "border-primary bg-primary/5"
-                    : "hover:bg-muted",
-                )}
-              >
-                <span className="text-sm font-medium">{option.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {option.description}
-                </span>
-              </button>
-            ))}
-            <button
-              onClick={() => handleWindowSizeChange("fullscreen")}
-              className={cn(
-                "flex flex-col items-start p-2 rounded border text-left transition-colors",
-                isFullscreen ? "border-primary bg-primary/5" : "hover:bg-muted",
-              )}
-            >
-              <span className="text-sm font-medium">全屏模式</span>
-              <span className="text-xs text-muted-foreground">
-                占满整个屏幕
-              </span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* 语言 */}

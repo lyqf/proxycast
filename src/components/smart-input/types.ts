@@ -1,7 +1,7 @@
 /**
  * @file types.ts
  * @description 截图对话模块类型定义
- * @module components/screenshot-chat/types
+ * @module components/smart-input/types
  */
 
 // ============================================================
@@ -12,7 +12,7 @@
  * 截图对话功能配置
  * 需求: 1.1 - 实验室功能应提供 screenshot_chat.enabled 布尔开关
  */
-export interface ScreenshotChatConfig {
+export interface SmartInputConfig {
   /** 是否启用截图对话功能 */
   enabled: boolean;
   /** 触发截图的全局快捷键 */
@@ -62,7 +62,7 @@ export interface ChatMessage {
 /**
  * 截图对话 Hook 状态
  */
-export interface ScreenshotChatState {
+export interface SmartInputState {
   /** 消息列表 */
   messages: ChatMessage[];
   /** 是否正在加载 */
@@ -78,7 +78,7 @@ export interface ScreenshotChatState {
 /**
  * 截图对话 Hook 返回值
  */
-export interface UseScreenshotChatReturn extends ScreenshotChatState {
+export interface UseSmartInputReturn extends SmartInputState {
   /** 发送消息到 AI */
   sendMessage: (message: string) => Promise<void>;
   /** 设置截图路径 */
@@ -99,7 +99,7 @@ export interface UseScreenshotChatReturn extends ScreenshotChatState {
  * 截图预览组件属性
  * 需求: 4.2 - 悬浮窗口应显示截图预览
  */
-export interface ScreenshotPreviewProps {
+export interface SmartInputPreviewProps {
   /** 图片路径或 Base64 编码 */
   src: string;
   /** 图片 alt 文本 */
@@ -144,7 +144,7 @@ export interface ChatMessagesProps {
  * 悬浮窗主组件属性
  * 需求: 4.1, 4.6, 4.7 - 无边框置顶窗口，支持 ESC 关闭和拖动
  */
-export interface ScreenshotChatWindowProps {
+export interface SmartInputWindowProps {
   /** 截图路径 */
   imagePath: string;
   /** 关闭窗口回调 */

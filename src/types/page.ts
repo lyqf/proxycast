@@ -12,6 +12,7 @@ export type Page =
   | "provider-pool"
   | "api-server"
   | "agent"
+  | "image-gen"
   | "tools"
   | "plugins"
   | "settings"

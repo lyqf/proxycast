@@ -23,6 +23,7 @@ import {
   Sun,
   Activity,
   Terminal,
+  Image,
   LucideIcon,
 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
@@ -121,6 +122,7 @@ const IconButton = styled.button<{ $active?: boolean }>`
 
 const mainMenuItems: { id: Page; label: string; icon: typeof Bot }[] = [
   { id: "agent", label: "AI Agent", icon: Bot },
+  { id: "image-gen", label: "图片生成", icon: Image },
   { id: "api-server", label: "API Server", icon: Globe },
   { id: "provider-pool", label: "凭证池", icon: Database },
   { id: "terminal", label: "终端", icon: Terminal },

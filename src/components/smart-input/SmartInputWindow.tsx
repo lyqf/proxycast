@@ -1,17 +1,17 @@
 /**
- * @file ScreenshotChatWindow.tsx
+ * @file SmartInputWindow.tsx
  * @description 截图对话悬浮窗主组件
- * @module components/screenshot-chat/ScreenshotChatWindow
+ * @module components/smart-input/SmartInputWindow
  */
 
 import React, { useState, useEffect, useCallback } from "react";
 import { safeInvoke } from "@/lib/dev-bridge";
-import { ScreenshotPreview } from "./ScreenshotPreview";
+import { SmartInputPreview } from "./SmartInputPreview";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
-import { useScreenshotChat } from "./useScreenshotChat";
-import type { ScreenshotChatWindowProps } from "./types";
-import "./screenshot-chat.css";
+import { useSmartInput } from "./useSmartInput";
+import type { SmartInputWindowProps } from "./types";
+import "./smart-input.css";
 
 /**
  * 截图对话悬浮窗主组件
@@ -23,7 +23,7 @@ import "./screenshot-chat.css";
  * - 4.6: 当用户按下 ESC 或点击窗口外部时，悬浮窗口应关闭
  * - 4.7: 悬浮窗口应支持用户拖动
  */
-export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
+export const SmartInputWindow: React.FC<SmartInputWindowProps> = ({
   imagePath,
   onClose,
 }) => {
@@ -37,7 +37,7 @@ export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
     setImagePath,
     clearError,
     retry,
-  } = useScreenshotChat();
+  } = useSmartInput();
 
   // 加载图片
   useEffect(() => {
@@ -82,12 +82,12 @@ export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
     : imagePath;
 
   return (
-    <div className="screenshot-chat-page">
+    <div className="smart-input-page">
       {/* 窗口头部 - 可拖动区域 */}
-      <div className="screenshot-chat-header">
-        <span className="screenshot-chat-title">截图对话</span>
+      <div className="smart-input-header">
+        <span className="smart-input-title">截图对话</span>
         <button
-          className="screenshot-chat-close-btn"
+          className="smart-input-close-btn"
           onClick={handleClose}
           title="关闭 (ESC)"
         >
@@ -106,19 +106,19 @@ export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
 
       {/* 截图预览区域 */}
       {imageSrc && (
-        <div className="screenshot-chat-preview">
-          <ScreenshotPreview src={imageSrc} maxHeight={200} />
+        <div className="smart-input-preview">
+          <SmartInputPreview src={imageSrc} maxHeight={200} />
         </div>
       )}
 
       {/* 对话区域 */}
-      <div className="screenshot-chat-conversation">
+      <div className="smart-input-conversation">
         {/* 错误提示 */}
         {error && (
-          <div className="screenshot-chat-error">
-            <div className="screenshot-chat-error-content">
+          <div className="smart-input-error">
+            <div className="smart-input-error-content">
               <p style={{ color: "#f43f5e", marginBottom: 8 }}>{error}</p>
-              <button className="screenshot-chat-retry-btn" onClick={retry}>
+              <button className="smart-input-retry-btn" onClick={retry}>
                 <svg
                   className="w-3 h-3"
                   viewBox="0 0 24 24"
@@ -132,7 +132,7 @@ export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
                 重试
               </button>
               <button
-                className="screenshot-chat-retry-btn"
+                className="smart-input-retry-btn"
                 onClick={clearError}
                 style={{ marginLeft: 8 }}
               >
@@ -158,7 +158,7 @@ export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
 
       {/* 调试信息（开发模式） */}
       {import.meta.env.DEV && (
-        <div className="screenshot-chat-debug">
+        <div className="smart-input-debug">
           路径: {imagePath} | Base64: {imageBase64 ? "已加载" : "未加载"} |
           消息数: {messages.length}
         </div>
@@ -167,4 +167,4 @@ export const ScreenshotChatWindow: React.FC<ScreenshotChatWindowProps> = ({
   );
 };
 
-export default ScreenshotChatWindow;
+export default SmartInputWindow;

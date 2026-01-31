@@ -1,7 +1,7 @@
 /**
- * @file screenshot-chat.css
+ * @file smart-input.css
  * @description 截图对话组件样式 - 参考 Claude 的简洁设计
- * @module components/screenshot-chat
+ * @module components/smart-input
  */
 
 /* ============================================================================
@@ -306,7 +306,7 @@
  * 截图对话页面
  * ============================================================================ */
 
-.screenshot-chat-page {
+.smart-input-page {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -317,7 +317,7 @@
 }
 
 /* 窗口头部 - 拖动区域 */
-.screenshot-chat-header {
+.smart-input-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -328,13 +328,13 @@
   user-select: none;
 }
 
-.screenshot-chat-title {
+.smart-input-title {
   font-size: 13px;
   font-weight: 500;
   color: var(--terminal-fg, #c0caf5);
 }
 
-.screenshot-chat-close-btn {
+.smart-input-close-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -349,32 +349,32 @@
   -webkit-app-region: no-drag;
 }
 
-.screenshot-chat-close-btn:hover {
+.smart-input-close-btn:hover {
   background-color: #f43f5e;
   color: white;
 }
 
 /* 截图预览区域 */
-.screenshot-chat-preview {
+.smart-input-preview {
   padding: 12px;
   border-bottom: 1px solid var(--terminal-border, #3b4261);
 }
 
 /* 对话区域 */
-.screenshot-chat-conversation {
+.smart-input-conversation {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.screenshot-chat-messages {
+.smart-input-messages {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
 }
 
-.screenshot-chat-placeholder {
+.smart-input-placeholder {
   text-align: center;
   color: var(--terminal-muted, #565f89);
   font-size: 13px;
@@ -382,7 +382,7 @@
 }
 
 /* 输入区域 */
-.screenshot-chat-input-area {
+.smart-input-input-area {
   display: flex;
   gap: 8px;
   padding: 12px;
@@ -390,7 +390,7 @@
   background-color: var(--terminal-tab-bg, #24283b);
 }
 
-.screenshot-chat-input {
+.smart-input-input {
   flex: 1;
   padding: 8px 12px;
   border-radius: 6px;
@@ -402,16 +402,16 @@
   transition: border-color 0.15s ease;
 }
 
-.screenshot-chat-input:focus {
+.smart-input-input:focus {
   border-color: var(--terminal-accent, #7aa2f7);
 }
 
-.screenshot-chat-input:disabled {
+.smart-input-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.screenshot-chat-send-btn {
+.smart-input-send-btn {
   padding: 8px 16px;
   border-radius: 6px;
   border: none;
@@ -423,23 +423,23 @@
   transition: all 0.15s ease;
 }
 
-.screenshot-chat-send-btn:hover:not(:disabled) {
+.smart-input-send-btn:hover:not(:disabled) {
   background-color: var(--terminal-accent-hover, #5d8bea);
 }
 
-.screenshot-chat-send-btn:disabled {
+.smart-input-send-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 /* 错误状态 */
-.screenshot-chat-error {
+.smart-input-error {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.screenshot-chat-error-content {
+.smart-input-error-content {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -448,7 +448,7 @@
 }
 
 /* 加载状态 */
-.screenshot-chat-loading {
+.smart-input-loading {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -457,23 +457,23 @@
   color: var(--terminal-muted, #565f89);
 }
 
-.screenshot-chat-loading-spinner {
+.smart-input-loading-spinner {
   width: 32px;
   height: 32px;
   border: 3px solid var(--terminal-border, #3b4261);
   border-top-color: var(--terminal-accent, #7aa2f7);
   border-radius: 50%;
-  animation: screenshot-chat-spin 0.8s linear infinite;
+  animation: smart-input-spin 0.8s linear infinite;
 }
 
-@keyframes screenshot-chat-spin {
+@keyframes smart-input-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
 /* 调试信息 */
-.screenshot-chat-debug {
+.smart-input-debug {
   padding: 4px 12px;
   background-color: var(--terminal-tab-bg, #24283b);
   border-top: 1px solid var(--terminal-border, #3b4261);
@@ -488,7 +488,7 @@
  * 消息列表组件
  * ============================================================================ */
 
-.screenshot-chat-message {
+.smart-input-message {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -498,23 +498,23 @@
   max-width: 85%;
 }
 
-.screenshot-chat-message-user {
+.smart-input-message-user {
   align-self: flex-end;
   background-color: var(--terminal-accent, #7aa2f7);
   color: white;
 }
 
-.screenshot-chat-message-assistant {
+.smart-input-message-assistant {
   align-self: flex-start;
   background-color: var(--terminal-tab-bg, #24283b);
   border: 1px solid var(--terminal-border, #3b4261);
 }
 
-.screenshot-chat-message-image {
+.smart-input-message-image {
   margin-bottom: 8px;
 }
 
-.screenshot-chat-message-thumbnail {
+.smart-input-message-thumbnail {
   max-width: 120px;
   max-height: 80px;
   border-radius: 4px;
@@ -522,23 +522,23 @@
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.screenshot-chat-message-content {
+.smart-input-message-content {
   font-size: 13px;
   line-height: 1.5;
 }
 
-.screenshot-chat-message-content p {
+.smart-input-message-content p {
   margin: 0;
 }
 
-.screenshot-chat-message-time {
+.smart-input-message-time {
   font-size: 10px;
   opacity: 0.6;
   align-self: flex-end;
 }
 
 /* 思考中状态 */
-.screenshot-chat-thinking {
+.smart-input-thinking {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -546,27 +546,27 @@
   font-style: italic;
 }
 
-.screenshot-chat-thinking .screenshot-chat-loading-spinner {
+.smart-input-thinking .smart-input-loading-spinner {
   width: 14px;
   height: 14px;
   border-width: 2px;
 }
 
 /* Markdown 渲染样式 */
-.screenshot-chat-markdown {
+.smart-input-markdown {
   font-size: 13px;
   line-height: 1.6;
 }
 
-.screenshot-chat-markdown p {
+.smart-input-markdown p {
   margin: 0 0 8px 0;
 }
 
-.screenshot-chat-markdown p:last-child {
+.smart-input-markdown p:last-child {
   margin-bottom: 0;
 }
 
-.screenshot-chat-markdown code {
+.smart-input-markdown code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   padding: 2px 4px;
@@ -574,7 +574,7 @@
   background-color: rgba(0, 0, 0, 0.2);
 }
 
-.screenshot-chat-markdown pre {
+.smart-input-markdown pre {
   margin: 8px 0;
   padding: 8px;
   border-radius: 4px;
@@ -582,39 +582,39 @@
   overflow-x: auto;
 }
 
-.screenshot-chat-markdown pre code {
+.smart-input-markdown pre code {
   padding: 0;
   background: transparent;
 }
 
-.screenshot-chat-markdown ul,
-.screenshot-chat-markdown ol {
+.smart-input-markdown ul,
+.smart-input-markdown ol {
   margin: 8px 0;
   padding-left: 20px;
 }
 
-.screenshot-chat-markdown li {
+.smart-input-markdown li {
   margin-bottom: 4px;
 }
 
-.screenshot-chat-markdown strong {
+.smart-input-markdown strong {
   font-weight: 600;
 }
 
-.screenshot-chat-markdown em {
+.smart-input-markdown em {
   font-style: italic;
 }
 
-.screenshot-chat-markdown a {
+.smart-input-markdown a {
   color: var(--terminal-accent, #7aa2f7);
   text-decoration: none;
 }
 
-.screenshot-chat-markdown a:hover {
+.smart-input-markdown a:hover {
   text-decoration: underline;
 }
 
-.screenshot-chat-markdown blockquote {
+.smart-input-markdown blockquote {
   margin: 8px 0;
   padding-left: 12px;
   border-left: 3px solid var(--terminal-accent, #7aa2f7);
@@ -622,7 +622,7 @@
 }
 
 /* 重试按钮 */
-.screenshot-chat-retry-btn {
+.smart-input-retry-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -637,7 +637,7 @@
   transition: all 0.15s ease;
 }
 
-.screenshot-chat-retry-btn:hover {
+.smart-input-retry-btn:hover {
   background-color: var(--terminal-tab-hover-bg, #414868);
   color: var(--terminal-fg, #c0caf5);
 }

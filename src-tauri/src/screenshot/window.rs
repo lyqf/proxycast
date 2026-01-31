@@ -26,7 +26,7 @@ pub enum WindowError {
 }
 
 /// 悬浮窗口标签
-const FLOATING_WINDOW_LABEL: &str = "screenshot-chat";
+const FLOATING_WINDOW_LABEL: &str = "smart-input";
 
 /// 窗口尺寸（包含 padding 用于阴影）
 const WINDOW_WIDTH: f64 = 645.0;
@@ -146,7 +146,7 @@ pub fn open_floating_window(app: &AppHandle, image_path: &Path) -> Result<(), Wi
     // 构建窗口 URL，包含图片路径参数
     let image_path_str = image_path.to_str().unwrap_or("");
     let encoded_path = urlencoding::encode(image_path_str);
-    let url = format!("/screenshot-chat?image={}", encoded_path);
+    let url = format!("/smart-input?image={}", encoded_path);
 
     debug!("悬浮窗口 URL: {}", url);
 
@@ -309,7 +309,7 @@ pub fn open_floating_window_with_text(app: &AppHandle, text: &str) -> Result<(),
 
     // 构建窗口 URL，包含文本参数
     let encoded_text = urlencoding::encode(text);
-    let url = format!("/screenshot-chat?text={}", encoded_text);
+    let url = format!("/smart-input?text={}", encoded_text);
 
     open_floating_window_with_url(app, &url)
 }
@@ -325,7 +325,7 @@ pub fn open_floating_window_with_text(app: &AppHandle, text: &str) -> Result<(),
 /// 成功返回 Ok(()), 失败返回错误
 pub fn open_floating_window_voice_mode(app: &AppHandle) -> Result<(), WindowError> {
     info!("打开语音模式的悬浮输入框");
-    let url = "/screenshot-chat?voice=true";
+    let url = "/smart-input?voice=true";
     open_floating_window_with_url(app, url)
 }
 
@@ -449,12 +449,35 @@ pub fn send_voice_stop_event(app: &AppHandle) -> Result<(), WindowError> {
     Ok(())
 }
 
+/// 打开翻译模式的悬浮输入框
+///
+/// 自动开始录音，录音完成后使用指定的翻译指令处理
+///
+/// # 参数
+/// - `app`: Tauri 应用句柄
+/// - `instruction_id`: 翻译指令 ID
+///
+/// # 返回
+/// 成功返回 Ok(()), 失败返回错误
+pub fn open_floating_window_with_translate(
+    app: &AppHandle,
+    instruction_id: &str,
+) -> Result<(), WindowError> {
+    info!("打开翻译模式的悬浮输入框，指令: {}", instruction_id);
+    let encoded_instruction = urlencoding::encode(instruction_id);
+    let url = format!(
+        "/smart-input?voice=true&translate=true&instruction={}",
+        encoded_instruction
+    );
+    open_floating_window_with_url(app, &url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_window_label() {
-        assert_eq!(FLOATING_WINDOW_LABEL, "screenshot-chat");
+        assert_eq!(FLOATING_WINDOW_LABEL, "smart-input");
     }
 }

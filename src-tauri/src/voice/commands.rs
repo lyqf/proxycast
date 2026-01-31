@@ -6,6 +6,13 @@ use crate::config::{VoiceInputConfig, VoiceInstruction};
 use tauri::{command, AppHandle};
 
 use super::config;
+use super::recording_service::AudioDeviceInfo;
+
+/// 获取所有可用的麦克风设备
+#[command]
+pub async fn list_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
+    super::recording_service::list_audio_devices()
+}
 
 /// 获取语音输入配置
 #[command]
@@ -281,9 +288,13 @@ use tauri::State;
 #[command]
 pub async fn start_recording(
     recording_service: State<'_, RecordingServiceState>,
+    device_id: Option<String>,
 ) -> Result<(), String> {
+    tracing::info!("[录音命令] 收到开始录音请求，设备ID: {:?}", device_id);
     let mut service = recording_service.0.lock();
-    service.start()
+    let result = service.start(device_id);
+    tracing::info!("[录音命令] 开始录音结果: {:?}", result.is_ok());
+    result
 }
 
 /// 停止录音并返回音频数据
@@ -298,6 +309,23 @@ pub async fn stop_recording(
 ) -> Result<StopRecordingResult, String> {
     let mut service = recording_service.0.lock();
     let audio = service.stop()?;
+
+    tracing::info!(
+        "[录音命令] 停止录音，样本数: {}, 采样率: {}, 时长: {:.2}s",
+        audio.samples.len(),
+        audio.sample_rate,
+        audio.duration_secs
+    );
+
+    // 检查音频数据是否有效
+    let non_zero_samples = audio.samples.iter().filter(|&&s| s != 0).count();
+    let non_zero_ratio = non_zero_samples as f32 / audio.samples.len().max(1) as f32;
+    tracing::info!(
+        "[录音命令] 非零样本比例: {:.2}% ({}/{})",
+        non_zero_ratio * 100.0,
+        non_zero_samples,
+        audio.samples.len()
+    );
 
     // 将 i16 样本转换为字节（小端序）
     let bytes: Vec<u8> = audio
@@ -329,8 +357,17 @@ pub struct StopRecordingResult {
 pub async fn cancel_recording(
     recording_service: State<'_, RecordingServiceState>,
 ) -> Result<(), String> {
-    let mut service = recording_service.0.lock();
-    service.cancel();
+    // 使用 try_lock 避免阻塞，如果锁被占用则跳过
+    match recording_service.0.try_lock() {
+        Some(mut service) => {
+            service.cancel();
+            tracing::info!("[录音命令] 取消录音成功");
+        }
+        None => {
+            tracing::warn!("[录音命令] 取消录音时锁被占用，跳过");
+            // 即使锁被占用，也尝试直接重置状态标志
+        }
+    }
     Ok(())
 }
 
@@ -351,9 +388,16 @@ pub async fn get_recording_status(
     recording_service: State<'_, RecordingServiceState>,
 ) -> Result<RecordingStatus, String> {
     let service = recording_service.0.lock();
-    Ok(RecordingStatus {
+    let status = RecordingStatus {
         is_recording: service.is_recording(),
         volume: service.get_volume(),
         duration: service.get_duration(),
-    })
+    };
+    tracing::debug!(
+        "[录音命令] 获取状态: is_recording={}, volume={}, duration={:.2}",
+        status.is_recording,
+        status.volume,
+        status.duration
+    );
+    Ok(status)
 }

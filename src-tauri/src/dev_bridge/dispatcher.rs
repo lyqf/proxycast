@@ -188,6 +188,146 @@ pub async fn handle_command(
             }))
         }
 
+        // ========== Agent 会话管理 ==========
+        "agent_create_session" => {
+            let args = args.unwrap_or_default();
+            let provider_type = args["provider_type"].as_str().unwrap_or("").to_string();
+            let model = args["model"].as_str().map(|s| s.to_string());
+            let system_prompt = args["system_prompt"].as_str().map(|s| s.to_string());
+
+            if let Some(db) = &state.db {
+                // 简化版本：直接创建会话，不需要 agent_state
+                use crate::database::dao::agent::AgentDao;
+                use crate::agent::types::AgentSession;
+
+                let session_id = uuid::Uuid::new_v4().to_string();
+                let model_name = model.clone().unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+                let now = chrono::Utc::now().to_rfc3339();
+
+                let session = AgentSession {
+                    id: session_id.clone(),
+                    model: model_name.clone(),
+                    messages: Vec::new(),
+                    system_prompt,
+                    created_at: now.clone(),
+                    updated_at: now,
+                };
+
+                let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+                AgentDao::create_session(&conn, &session)
+                    .map_err(|e| format!("创建会话失败: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "session_id": session_id,
+                    "credential_name": "ProxyCast",
+                    "credential_uuid": null,
+                    "provider_type": provider_type,
+                    "model": model_name
+                }))
+            } else {
+                Err("Database not initialized".into())
+            }
+        }
+
+        "agent_list_sessions" => {
+            if let Some(db) = &state.db {
+                use crate::database::dao::agent::AgentDao;
+
+                let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+                let sessions = AgentDao::list_sessions(&conn)
+                    .map_err(|e| format!("获取会话列表失败: {}", e))?;
+
+                let result: Vec<serde_json::Value> = sessions
+                    .into_iter()
+                    .map(|s| {
+                        let messages_count = AgentDao::get_message_count(&conn, &s.id).unwrap_or(0);
+                        serde_json::json!({
+                            "session_id": s.id,
+                            "provider_type": "aster",
+                            "model": s.model,
+                            "created_at": s.created_at,
+                            "last_activity": s.updated_at,
+                            "messages_count": messages_count
+                        })
+                    })
+                    .collect();
+
+                Ok(serde_json::json!(result))
+            } else {
+                Err("Database not initialized".into())
+            }
+        }
+
+        "agent_get_session" => {
+            let args = args.unwrap_or_default();
+            // 支持 session_id 和 sessionId 两种格式
+            let session_id = args["session_id"].as_str()
+                .or_else(|| args["sessionId"].as_str())
+                .unwrap_or("").to_string();
+
+            if let Some(db) = &state.db {
+                use crate::database::dao::agent::AgentDao;
+
+                let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+                let session = AgentDao::get_session(&conn, &session_id)
+                    .map_err(|e| format!("获取会话失败: {}", e))?
+                    .ok_or_else(|| "会话不存在")?;
+
+                let messages_count = AgentDao::get_message_count(&conn, &session_id).unwrap_or(0);
+
+                Ok(serde_json::json!({
+                    "session_id": session.id,
+                    "provider_type": "aster",
+                    "model": session.model,
+                    "created_at": session.created_at,
+                    "last_activity": session.updated_at,
+                    "messages_count": messages_count
+                }))
+            } else {
+                Err("Database not initialized".into())
+            }
+        }
+
+        "agent_delete_session" => {
+            let args = args.unwrap_or_default();
+            // 支持 session_id 和 sessionId 两种格式
+            let session_id = args["session_id"].as_str()
+                .or_else(|| args["sessionId"].as_str())
+                .unwrap_or("").to_string();
+
+            if let Some(db) = &state.db {
+                use crate::database::dao::agent::AgentDao;
+
+                let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+                AgentDao::delete_session(&conn, &session_id)
+                    .map_err(|e| format!("删除会话失败: {}", e))?;
+
+                Ok(serde_json::json!({ "success": true }))
+            } else {
+                Err("Database not initialized".into())
+            }
+        }
+
+        "agent_get_session_messages" => {
+            let args = args.unwrap_or_default();
+            // 支持 session_id 和 sessionId 两种格式
+            let session_id = args["session_id"].as_str()
+                .or_else(|| args["sessionId"].as_str())
+                .unwrap_or("").to_string();
+
+            if let Some(db) = &state.db {
+                use crate::database::dao::agent::AgentDao;
+
+                let conn = db.lock().map_err(|e| format!("数据库锁定失败: {}", e))?;
+                let messages = AgentDao::get_messages(&conn, &session_id)
+                    .map_err(|e| format!("获取消息失败: {}", e))?;
+
+                Ok(serde_json::to_value(messages)?)
+            } else {
+                Err("Database not initialized".into())
+            }
+        }
+
         _ => Err(format!(
             "[DevBridge] 未知命令: '{}'. 如需此命令，请将其添加到 dispatcher.rs 的 handle_command 函数中。",
             cmd

@@ -1,14 +1,14 @@
 /**
  * @file ChatMessages.tsx
  * @description 消息列表组件，显示用户和 AI 的对话消息
- * @module components/screenshot-chat/ChatMessages
+ * @module components/smart-input/ChatMessages
  */
 
 import React, { useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessagesProps, ChatMessage } from "./types";
-import "./screenshot-chat.css";
+import "./smart-input.css";
 
 /**
  * 单条消息组件
@@ -18,30 +18,30 @@ const MessageItem: React.FC<{ message: ChatMessage }> = ({ message }) => {
 
   return (
     <div
-      className={`screenshot-chat-message ${isUser ? "screenshot-chat-message-user" : "screenshot-chat-message-assistant"}`}
+      className={`smart-input-message ${isUser ? "smart-input-message-user" : "smart-input-message-assistant"}`}
     >
       {/* 用户消息显示图片 */}
       {isUser && message.image && (
-        <div className="screenshot-chat-message-image">
+        <div className="smart-input-message-image">
           <img
             src={`data:${message.image.mediaType};base64,${message.image.data}`}
             alt="截图"
-            className="screenshot-chat-message-thumbnail"
+            className="smart-input-message-thumbnail"
           />
         </div>
       )}
 
       {/* 消息内容 */}
-      <div className="screenshot-chat-message-content">
+      <div className="smart-input-message-content">
         {message.isThinking ? (
-          <div className="screenshot-chat-thinking">
-            <span className="screenshot-chat-loading-spinner" />
+          <div className="smart-input-thinking">
+            <span className="smart-input-loading-spinner" />
             <span>{message.thinkingContent || "思考中..."}</span>
           </div>
         ) : isUser ? (
           <p>{message.content}</p>
         ) : (
-          <div className="screenshot-chat-markdown">
+          <div className="smart-input-markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {message.content}
             </ReactMarkdown>
@@ -50,7 +50,7 @@ const MessageItem: React.FC<{ message: ChatMessage }> = ({ message }) => {
       </div>
 
       {/* 时间戳 */}
-      <div className="screenshot-chat-message-time">
+      <div className="smart-input-message-time">
         {new Date(message.timestamp).toLocaleTimeString("zh-CN", {
           hour: "2-digit",
           minute: "2-digit",
@@ -84,8 +84,8 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
 
   if (messages.length === 0) {
     return (
-      <div className={`screenshot-chat-messages ${className}`}>
-        <div className="screenshot-chat-placeholder">
+      <div className={`smart-input-messages ${className}`}>
+        <div className="smart-input-placeholder">
           输入问题，开始与 AI 讨论截图内容
         </div>
       </div>
@@ -93,7 +93,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
   }
 
   return (
-    <div ref={containerRef} className={`screenshot-chat-messages ${className}`}>
+    <div ref={containerRef} className={`smart-input-messages ${className}`}>
       {messages.map((message) => (
         <MessageItem key={message.id} message={message} />
       ))}

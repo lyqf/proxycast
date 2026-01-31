@@ -5,10 +5,26 @@
  */
 
 import { useState, useCallback } from "react";
-import { Mic, AlertTriangle, Settings2, Sparkles } from "lucide-react";
+import {
+  Mic,
+  AlertTriangle,
+  Settings2,
+  Sparkles,
+  Volume2,
+  Globe,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ShortcutSettings } from "@/components/screenshot-chat/ShortcutSettings";
+import { ShortcutSettings } from "@/components/smart-input/ShortcutSettings";
 import { VoiceInputConfig } from "@/lib/api/asrProvider";
+import { MicrophoneTest } from "./MicrophoneTest";
+import { PolishModelSelector } from "./PolishModelSelector";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface VoiceSettingsProps {
   config: VoiceInputConfig;
@@ -74,6 +90,91 @@ export function VoiceSettings({
     }
   }, [config, onConfigChange, disabled, saving]);
 
+  // 切换音效
+  const handleToggleSound = useCallback(async () => {
+    if (disabled || saving) return;
+    setSaving(true);
+    try {
+      await onConfigChange({
+        ...config,
+        sound_enabled: !config.sound_enabled,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [config, onConfigChange, disabled, saving]);
+
+  // 更新润色模型
+  const handlePolishModelChange = useCallback(
+    async (modelId: string) => {
+      if (disabled || saving) return;
+      setSaving(true);
+      try {
+        await onConfigChange({
+          ...config,
+          processor: {
+            ...config.processor,
+            polish_model: modelId,
+          },
+        });
+      } finally {
+        setSaving(false);
+      }
+    },
+    [config, onConfigChange, disabled, saving],
+  );
+
+  // 更新翻译快捷键
+  const handleTranslateShortcutChange = useCallback(
+    async (newShortcut: string) => {
+      if (disabled || saving) return;
+      setSaving(true);
+      try {
+        await onConfigChange({
+          ...config,
+          translate_shortcut: newShortcut || undefined,
+        });
+      } finally {
+        setSaving(false);
+      }
+    },
+    [config, onConfigChange, disabled, saving],
+  );
+
+  // 更新翻译指令
+  const handleTranslateInstructionChange = useCallback(
+    async (instructionId: string) => {
+      if (disabled || saving) return;
+      setSaving(true);
+      try {
+        await onConfigChange({
+          ...config,
+          translate_instruction_id: instructionId,
+        });
+      } finally {
+        setSaving(false);
+      }
+    },
+    [config, onConfigChange, disabled, saving],
+  );
+
+  // 更新麦克风设备
+  const handleDeviceChange = useCallback(
+    async (deviceId: string | undefined) => {
+      if (disabled || saving) return;
+      setSaving(true);
+      try {
+        await onConfigChange({
+          ...config,
+          selected_device_id: deviceId,
+        });
+      } finally {
+        setSaving(false);
+      }
+    },
+    [config, onConfigChange, disabled, saving],
+  );
+
   return (
     <div className="space-y-4">
       {/* 标题和开关 */}
@@ -121,6 +222,21 @@ export function VoiceSettings({
             />
           </div>
 
+          {/* 麦克风设备选择和测试 */}
+          <div className="pt-3 border-t">
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Mic className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">麦克风设备</span>
+              </div>
+              <MicrophoneTest
+                selectedDeviceId={config.selected_device_id}
+                onDeviceChange={handleDeviceChange}
+                disabled={disabled || saving}
+              />
+            </div>
+          </div>
+
           {/* AI 润色设置 */}
           <div className="pt-3 border-t">
             <div className="flex items-center justify-between">
@@ -152,6 +268,107 @@ export function VoiceSettings({
                   )}
                 />
               </label>
+            </div>
+
+            {/* 润色模型选择 - 仅在启用润色时显示 */}
+            {config.processor.polish_enabled && (
+              <div className="mt-3">
+                <label className="text-xs text-muted-foreground mb-1.5 block">
+                  润色模型
+                </label>
+                <PolishModelSelector
+                  value={config.processor.polish_model}
+                  onChange={handlePolishModelChange}
+                  disabled={disabled || saving}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* 交互音效设置 */}
+          <div className="pt-3 border-t">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Volume2 className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <span className="text-sm">交互音效</span>
+                  <p className="text-xs text-muted-foreground">
+                    录音开始和停止时播放提示音
+                  </p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.sound_enabled}
+                  onChange={handleToggleSound}
+                  disabled={disabled || saving}
+                  className="sr-only peer"
+                />
+                <div
+                  className={cn(
+                    "w-9 h-5 rounded-full transition-colors",
+                    "bg-muted peer-checked:bg-primary",
+                    "after:content-[''] after:absolute after:top-0.5 after:left-0.5",
+                    "after:bg-white after:rounded-full after:h-4 after:w-4",
+                    "after:transition-transform peer-checked:after:translate-x-4",
+                    (disabled || saving) && "opacity-50 cursor-not-allowed",
+                  )}
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* 翻译模式快捷键设置 */}
+          <div className="pt-3 border-t">
+            <div className="flex items-center gap-2 mb-3">
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <span className="text-sm font-medium">翻译模式</span>
+                <p className="text-xs text-muted-foreground">
+                  设置独立快捷键，语音识别后自动翻译
+                </p>
+              </div>
+            </div>
+
+            {/* 翻译快捷键 */}
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  翻译快捷键（可选）
+                </label>
+                <ShortcutSettings
+                  currentShortcut={config.translate_shortcut || ""}
+                  onShortcutChange={handleTranslateShortcutChange}
+                  onValidate={onValidateShortcut}
+                  disabled={disabled || saving}
+                />
+              </div>
+
+              {/* 翻译指令选择 */}
+              {config.translate_shortcut && (
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">
+                    翻译指令
+                  </label>
+                  <Select
+                    value={config.translate_instruction_id}
+                    onValueChange={handleTranslateInstructionChange}
+                    disabled={disabled || saving}
+                  >
+                    <SelectTrigger className="w-full h-8 text-sm">
+                      <SelectValue placeholder="选择翻译指令" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {config.instructions.map((instruction) => (
+                        <SelectItem key={instruction.id} value={instruction.id}>
+                          {instruction.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
 

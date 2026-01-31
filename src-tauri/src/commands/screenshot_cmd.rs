@@ -334,7 +334,7 @@ pub async fn send_screenshot_chat(
     // 发送事件到主窗口
     if let Some(main_window) = app.get_webview_window("main") {
         main_window
-            .emit("screenshot-chat-message", &chat_message)
+            .emit("smart-input-message", &chat_message)
             .map_err(|e| format!("发送事件失败: {}", e))?;
 
         // 恢复并聚焦主窗口（主窗口在截图时被最小化）
@@ -343,7 +343,7 @@ pub async fn send_screenshot_chat(
         let _ = main_window.set_focus();
     } else {
         // 尝试发送到所有窗口
-        app.emit("screenshot-chat-message", &chat_message)
+        app.emit("smart-input-message", &chat_message)
             .map_err(|e| format!("发送事件失败: {}", e))?;
     }
 

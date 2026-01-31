@@ -4,14 +4,14 @@
  */
 
 import App from "./App";
-import { ScreenshotChatPage } from "./pages/screenshot-chat";
+import { SmartInputPage } from "./pages/smart-input";
 import { UpdateNotificationPage } from "./pages/update-notification";
 import { Toaster } from "./components/ui/sonner";
 
 /**
  * 根据 URL 路径渲染对应的组件
  *
- * - /screenshot-chat: 截图对话悬浮窗口（独立 Tauri 窗口，支持语音模式）
+ * - /smart-input: 截图对话悬浮窗口（独立 Tauri 窗口，支持语音模式）
  * - /update-notification: 更新提醒悬浮窗口（独立 Tauri 窗口）
  * - 其他: 主应用
  */
@@ -19,8 +19,8 @@ export function RootRouter() {
   const pathname = window.location.pathname;
 
   // 截图对话悬浮窗口路由（也用于语音输入）
-  if (pathname === "/screenshot-chat") {
-    return <ScreenshotChatPage />;
+  if (pathname === "/smart-input") {
+    return <SmartInputPage />;
   }
 
   // 更新提醒悬浮窗口路由

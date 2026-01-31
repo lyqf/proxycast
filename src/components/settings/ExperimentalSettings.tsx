@@ -16,7 +16,7 @@ import {
   updateScreenshotShortcut,
   ExperimentalFeatures,
 } from "@/hooks/useTauri";
-import { ShortcutSettings } from "@/components/screenshot-chat/ShortcutSettings";
+import { ShortcutSettings } from "@/components/smart-input/ShortcutSettings";
 import { UpdateCheckSettings } from "./UpdateNotification";
 import { VoiceSettings } from "@/components/voice";
 import {
@@ -77,6 +77,8 @@ export function ExperimentalSettings() {
           type_delay_ms: 10,
         },
         instructions: [],
+        sound_enabled: true,
+        translate_instruction_id: "default",
       });
     } finally {
       setLoading(false);
@@ -89,7 +91,7 @@ export function ExperimentalSettings() {
   }, [loadConfig]);
 
   // 切换截图对话功能开关
-  const handleToggleScreenshotChat = useCallback(async () => {
+  const handleToggleSmartInput = useCallback(async () => {
     if (!config) return;
 
     const newEnabled = !config.screenshot_chat.enabled;
@@ -248,7 +250,7 @@ export function ExperimentalSettings() {
             <input
               type="checkbox"
               checked={config?.screenshot_chat.enabled ?? false}
-              onChange={handleToggleScreenshotChat}
+              onChange={handleToggleSmartInput}
               disabled={saving}
               className="sr-only peer"
             />

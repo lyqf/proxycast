@@ -1,18 +1,14 @@
 /**
- * @file useScreenshotChat.ts
+ * @file useSmartInput.ts
  * @description 截图对话核心 Hook，管理消息、图片和 AI 通信
- * @module components/screenshot-chat/useScreenshotChat
+ * @module components/smart-input/useSmartInput
  */
 
 import { useState, useCallback, useRef } from "react";
 import { safeInvoke, safeListen } from "@/lib/dev-bridge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import type {
-  ChatMessage,
-  MessageImage,
-  UseScreenshotChatReturn,
-} from "./types";
+import type { ChatMessage, MessageImage, UseSmartInputReturn } from "./types";
 import { parseStreamEvent, type StreamEvent } from "@/lib/api/agent";
 
 /**
@@ -45,7 +41,7 @@ export async function readImageAsBase64(imagePath: string): Promise<string> {
  * - 5.3: 显示加载指示器
  * - 5.5: 显示错误信息并提供重试选项
  */
-export function useScreenshotChat(): UseScreenshotChatReturn {
+export function useSmartInput(): UseSmartInputReturn {
   // 状态
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -314,4 +310,4 @@ export function useScreenshotChat(): UseScreenshotChatReturn {
   };
 }
 
-export default useScreenshotChat;
+export default useSmartInput;

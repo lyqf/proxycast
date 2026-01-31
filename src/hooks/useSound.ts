@@ -1,6 +1,6 @@
 /**
  * @file useSound.ts
- * @description 音效管理 Hook，提供工具调用和打字机音效播放功能
+ * @description 音效管理 Hook，提供工具调用、打字机和录音音效播放功能
  * @module hooks/useSound
  * @requires react
  */
@@ -15,6 +15,8 @@ export interface UseSoundReturn {
   setSoundEnabled: (enabled: boolean) => void;
   playToolcallSound: () => void;
   playTypewriterSound: () => void;
+  playRecordingStartSound: () => void;
+  playRecordingStopSound: () => void;
 }
 
 export function useSound(): UseSoundReturn {
@@ -25,6 +27,8 @@ export function useSound(): UseSoundReturn {
 
   const toolcallAudioRef = useRef<HTMLAudioElement | null>(null);
   const typewriterAudioRef = useRef<HTMLAudioElement | null>(null);
+  const recordingStartAudioRef = useRef<HTMLAudioElement | null>(null);
+  const recordingStopAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastSoundTimeRef = useRef<number>(0);
 
   // 初始化音频
@@ -38,6 +42,16 @@ export function useSound(): UseSoundReturn {
       typewriterAudioRef.current = new Audio("/sounds/typing.mp3");
       typewriterAudioRef.current.volume = 0.6;
       typewriterAudioRef.current.load();
+    }
+    if (!recordingStartAudioRef.current) {
+      recordingStartAudioRef.current = new Audio("/sounds/recording-start.mp3");
+      recordingStartAudioRef.current.volume = 0.8;
+      recordingStartAudioRef.current.load();
+    }
+    if (!recordingStopAudioRef.current) {
+      recordingStopAudioRef.current = new Audio("/sounds/recording-stop.mp3");
+      recordingStopAudioRef.current.volume = 0.8;
+      recordingStopAudioRef.current.load();
     }
   }, []);
 
@@ -62,10 +76,24 @@ export function useSound(): UseSoundReturn {
     }
   }, [soundEnabled]);
 
+  const playRecordingStartSound = useCallback(() => {
+    if (!recordingStartAudioRef.current) return;
+    recordingStartAudioRef.current.currentTime = 0;
+    recordingStartAudioRef.current.play().catch(console.error);
+  }, []);
+
+  const playRecordingStopSound = useCallback(() => {
+    if (!recordingStopAudioRef.current) return;
+    recordingStopAudioRef.current.currentTime = 0;
+    recordingStopAudioRef.current.play().catch(console.error);
+  }, []);
+
   return {
     soundEnabled,
     setSoundEnabled,
     playToolcallSound,
     playTypewriterSound,
+    playRecordingStartSound,
+    playRecordingStopSound,
   };
 }

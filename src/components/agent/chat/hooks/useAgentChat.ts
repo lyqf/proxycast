@@ -284,7 +284,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
         message: string;
         image_path: string | null;
         image_base64: string | null;
-      }>("screenshot-chat-message", async (event) => {
+      }>("smart-input-message", async (event) => {
         console.log("[AgentChat] 收到截图对话消息:", event.payload);
         const { message, image_base64 } = event.payload;
 

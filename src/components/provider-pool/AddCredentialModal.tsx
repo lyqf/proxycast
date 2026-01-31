@@ -438,11 +438,6 @@ export function AddCredentialModal({
       );
     }
 
-    // Kiro 登录模式 - 不需要按钮，登录按钮在表单内部
-    if (providerType === "kiro" && kiroForm.mode === "login") {
-      return null;
-    }
-
     // Kiro JSON 模式
     if (providerType === "kiro" && kiroForm.mode === "json") {
       return (

@@ -606,10 +606,30 @@ pub struct VoiceInputConfig {
     /// 自定义指令列表
     #[serde(default)]
     pub instructions: Vec<VoiceInstruction>,
+    /// 选择的麦克风设备 ID（为空时使用系统默认设备）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_device_id: Option<String>,
+    /// 是否启用交互音效
+    #[serde(default = "default_sound_enabled")]
+    pub sound_enabled: bool,
+    /// 翻译模式快捷键（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate_shortcut: Option<String>,
+    /// 翻译模式使用的指令 ID
+    #[serde(default = "default_translate_instruction_id")]
+    pub translate_instruction_id: String,
 }
 
 fn default_voice_shortcut() -> String {
     "CommandOrControl+Shift+V".to_string()
+}
+
+fn default_sound_enabled() -> bool {
+    true
+}
+
+fn default_translate_instruction_id() -> String {
+    "translate_en".to_string()
 }
 
 impl Default for VoiceInputConfig {
@@ -620,6 +640,10 @@ impl Default for VoiceInputConfig {
             processor: VoiceProcessorConfig::default(),
             output: VoiceOutputConfig::default(),
             instructions: default_instructions(),
+            selected_device_id: None,
+            sound_enabled: default_sound_enabled(),
+            translate_shortcut: None,
+            translate_instruction_id: default_translate_instruction_id(),
         }
     }
 }

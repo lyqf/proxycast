@@ -2,7 +2,7 @@
   "$schema": "https://schemas.tauri.app/config/2/capability",
   "identifier": "default",
   "description": "Default capabilities for ProxyCast",
-  "windows": ["main", "screenshot-chat", "update-notification"],
+  "windows": ["main", "smart-input", "update-notification"],
   "permissions": [
     "core:default",
     "core:webview:default",

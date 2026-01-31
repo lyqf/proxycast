@@ -8,20 +8,16 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { WelcomeStep } from "./steps/WelcomeStep";
 import { UserProfileStep } from "./steps/UserProfileStep";
-import { WindowSizeStep } from "./steps/WindowSizeStep";
 import { PluginSelectStep } from "./steps/PluginSelectStep";
 import {
   InstallProgressStep,
   type PluginInstallState,
 } from "./steps/InstallProgressStep";
+import { VoiceShortcutTestStep } from "./steps/VoiceShortcutTestStep";
+import { MicrophoneTestStep } from "./steps/MicrophoneTestStep";
+import { VoiceDemoStep } from "./steps/VoiceDemoStep";
 import { CompleteStep } from "./steps/CompleteStep";
-import {
-  userProfiles,
-  type UserProfile,
-  type WindowSizePreference,
-  STORAGE_KEYS,
-} from "./constants";
-import { windowApi } from "@/lib/api/window";
+import { userProfiles, type UserProfile } from "./constants";
 
 const Overlay = styled.div`
   position: fixed;
@@ -90,7 +86,7 @@ const FooterRight = styled.div`
   gap: 12px;
 `;
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 8;
 
 interface OnboardingWizardProps {
   onComplete: () => void;
@@ -99,12 +95,28 @@ interface OnboardingWizardProps {
 export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [windowSizePreference, setWindowSizePreference] =
-    useState<WindowSizePreference | null>("default");
   const [selectedPlugins, setSelectedPlugins] = useState<string[]>([]);
   const [installResults, setInstallResults] = useState<PluginInstallState[]>(
     [],
   );
+  const [voiceShortcut, setVoiceShortcut] = useState(
+    "CommandOrControl+Shift+V",
+  );
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+
+  // 加载语音配置
+  useEffect(() => {
+    (async () => {
+      try {
+        const { getVoiceInputConfig } = await import("@/lib/api/asrProvider");
+        const config = await getVoiceInputConfig();
+        setVoiceShortcut(config.shortcut);
+        setVoiceEnabled(config.enabled);
+      } catch (err) {
+        console.error("加载语音配置失败:", err);
+      }
+    })();
+  }, []);
 
   // 当用户选择群体时，自动选中默认插件
   useEffect(() => {
@@ -119,61 +131,74 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const handleNext = useCallback(() => {
     if (currentStep < TOTAL_STEPS) {
       // 如果没有选择插件，跳过安装步骤
-      if (currentStep === 4 && selectedPlugins.length === 0) {
-        setCurrentStep(6); // 直接跳到完成页
+      if (currentStep === 3 && selectedPlugins.length === 0) {
+        // 跳到语音快捷键测试（如果语音功能启用）或完成页
+        setCurrentStep(voiceEnabled ? 5 : 8);
+      } else if (currentStep === 4) {
+        // 安装完成后，跳到语音快捷键测试（如果语音功能启用）或完成页
+        // 注意：这个分支不会被执行，因为 InstallProgressStep 会调用 handleInstallComplete
       } else {
         setCurrentStep((prev) => prev + 1);
       }
     }
-  }, [currentStep, selectedPlugins]);
+  }, [currentStep, selectedPlugins, voiceEnabled]);
 
   const handleBack = useCallback(() => {
     if (currentStep > 1) {
-      // 如果从完成页返回且没有安装结果，返回到插件选择
-      if (currentStep === 6 && installResults.length === 0) {
-        setCurrentStep(4);
-      } else if (currentStep === 6) {
-        // 已经安装过，不能返回
+      // 如果从完成页返回
+      if (currentStep === 8) {
+        // 返回到语音演示或插件选择
+        setCurrentStep(voiceEnabled ? 7 : 3);
+      } else if (currentStep === 5 && installResults.length === 0) {
+        // 从语音快捷键测试返回到插件选择
+        setCurrentStep(3);
+      } else if (currentStep === 5 && installResults.length > 0) {
+        // 已经安装过，不能返回到安装步骤
         return;
       } else {
         setCurrentStep((prev) => prev - 1);
       }
     }
-  }, [currentStep, installResults]);
+  }, [currentStep, installResults, voiceEnabled]);
 
   const handleSkip = useCallback(() => {
     onComplete();
   }, [onComplete]);
 
-  const handleInstallComplete = useCallback((results: PluginInstallState[]) => {
-    setInstallResults(results);
+  const handleInstallComplete = useCallback(
+    (results: PluginInstallState[]) => {
+      setInstallResults(results);
+      // 安装完成后，跳到语音快捷键测试（如果语音功能启用）或完成页
+      setCurrentStep(voiceEnabled ? 5 : 8);
+    },
+    [voiceEnabled],
+  );
+
+  // 语音快捷键测试成功
+  const handleShortcutTestSuccess = useCallback(() => {
     setCurrentStep(6);
   }, []);
 
-  const handleFinish = useCallback(async () => {
-    // 保存窗口尺寸偏好
-    if (windowSizePreference) {
-      localStorage.setItem(
-        STORAGE_KEYS.WINDOW_SIZE_PREFERENCE,
-        windowSizePreference,
-      );
+  // 麦克风测试成功
+  const handleMicTestSuccess = useCallback(() => {
+    setCurrentStep(7);
+  }, []);
 
-      // 应用窗口尺寸
-      try {
-        if (windowSizePreference === "fullscreen") {
-          await windowApi.toggleFullscreen();
-        } else {
-          await windowApi.setWindowSizeByOption(windowSizePreference);
-        }
-      } catch (error) {
-        console.error("应用窗口尺寸失败:", error);
-      }
-    }
+  // 语音演示完成
+  const handleVoiceDemoSuccess = useCallback(() => {
+    setCurrentStep(8);
+  }, []);
 
+  // 跳过语音测试
+  const handleSkipVoiceTest = useCallback(() => {
+    setCurrentStep(8);
+  }, []);
+
+  const handleFinish = useCallback(() => {
     // 触发插件变化事件，刷新侧边栏
     window.dispatchEvent(new CustomEvent("plugin-changed"));
     onComplete();
-  }, [onComplete, windowSizePreference]);
+  }, [onComplete]);
 
   // 渲染当前步骤
   const renderStep = () => {
@@ -189,27 +214,42 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         );
       case 3:
         return (
-          <WindowSizeStep
-            selectedSize={windowSizePreference}
-            onSelect={setWindowSizePreference}
-          />
-        );
-      case 4:
-        return (
           <PluginSelectStep
             userProfile={userProfile}
             selectedPlugins={selectedPlugins}
             onSelectionChange={setSelectedPlugins}
           />
         );
-      case 5:
+      case 4:
         return (
           <InstallProgressStep
             selectedPlugins={selectedPlugins}
             onComplete={handleInstallComplete}
           />
         );
+      case 5:
+        return (
+          <VoiceShortcutTestStep
+            shortcut={voiceShortcut}
+            onSuccess={handleShortcutTestSuccess}
+            onSkip={handleSkipVoiceTest}
+          />
+        );
       case 6:
+        return (
+          <MicrophoneTestStep
+            onSuccess={handleMicTestSuccess}
+            onSkip={handleSkipVoiceTest}
+          />
+        );
+      case 7:
+        return (
+          <VoiceDemoStep
+            onSuccess={handleVoiceDemoSuccess}
+            onSkip={handleSkipVoiceTest}
+          />
+        );
+      case 8:
         return (
           <CompleteStep
             installResults={installResults}
@@ -226,16 +266,20 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     switch (currentStep) {
       case 2:
         return userProfile !== null;
-      case 3:
-        return windowSizePreference !== null;
       default:
         return true;
     }
   };
 
   // 判断是否显示底部导航
+  // 不显示底部导航的步骤：欢迎页、安装进度、语音测试步骤、完成页
   const showFooter =
-    currentStep !== 1 && currentStep !== 5 && currentStep !== 6;
+    currentStep !== 1 &&
+    currentStep !== 4 &&
+    currentStep !== 5 &&
+    currentStep !== 6 &&
+    currentStep !== 7 &&
+    currentStep !== 8;
 
   return (
     <Overlay>
@@ -267,7 +311,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 跳过
               </Button>
               <Button onClick={handleNext} disabled={!canProceed()}>
-                {currentStep === 4
+                {currentStep === 3
                   ? selectedPlugins.length > 0
                     ? "开始安装"
                     : "跳过安装"

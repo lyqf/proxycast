@@ -30,6 +30,39 @@ use crate::types::{AudioData, Segment, TranscribeResult};
 /// 讯飞建议每帧发送 1280 字节（约 40ms 的 16kHz 16bit 单声道音频）
 const FRAME_SIZE: usize = 1280;
 
+/// 简单的线性插值重采样
+///
+/// 将音频从源采样率转换到目标采样率
+fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+    if from_rate == to_rate {
+        return samples.to_vec();
+    }
+
+    let ratio = from_rate as f64 / to_rate as f64;
+    let new_len = (samples.len() as f64 / ratio) as usize;
+    let mut result = Vec::with_capacity(new_len);
+
+    for i in 0..new_len {
+        let src_idx = i as f64 * ratio;
+        let idx_floor = src_idx.floor() as usize;
+        let idx_ceil = (idx_floor + 1).min(samples.len() - 1);
+        let frac = src_idx - idx_floor as f64;
+
+        // 线性插值
+        let sample = if idx_floor < samples.len() {
+            let s1 = samples[idx_floor] as f64;
+            let s2 = samples[idx_ceil] as f64;
+            (s1 + (s2 - s1) * frac) as i16
+        } else {
+            0
+        };
+
+        result.push(sample);
+    }
+
+    result
+}
+
 /// 讯飞客户端
 pub struct XunfeiClient {
     app_id: String,
@@ -158,24 +191,78 @@ impl XunfeiClient {
         }
     }
 
-    /// 解析识别结果
+    /// 解析识别结果（支持动态修正）
+    ///
+    /// 动态修正说明：
+    /// - pgs="apd": 追加到之前的结果
+    /// - pgs="rpl": 替换之前的部分结果，替换范围由 rg 字段指定
     fn parse_result(responses: &[XunfeiResponse]) -> TranscribeResult {
-        let mut full_text = String::new();
-        let mut segments = Vec::new();
+        // 使用 HashMap 存储每个 sn 对应的文本，支持动态修正替换
+        let mut sn_texts: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+        let mut max_sn: i32 = 0;
 
         for resp in responses {
             if let Some(ref data) = resp.data {
                 if let Some(ref result) = data.result {
-                    // 拼接所有词
+                    let sn = result.sn.unwrap_or(0);
+                    max_sn = max_sn.max(sn);
+
+                    // 提取当前结果的文本
+                    let mut current_text = String::new();
                     for ws in &result.ws {
                         for cw in &ws.cw {
-                            full_text.push_str(&cw.w);
+                            current_text.push_str(&cw.w);
+                        }
+                    }
+
+                    // 根据 pgs 字段处理
+                    match result.pgs.as_deref() {
+                        Some("rpl") => {
+                            // 替换模式：删除 rg 范围内的结果，然后添加当前结果
+                            if let Some(ref rg) = result.rg {
+                                if rg.len() >= 2 {
+                                    let start = rg[0];
+                                    let end = rg[1];
+                                    // 删除 [start, end] 范围内的所有 sn
+                                    for i in start..=end {
+                                        sn_texts.remove(&i);
+                                    }
+                                    tracing::debug!(
+                                        "动态修正替换: sn={}, rg=[{}, {}], text={}",
+                                        sn,
+                                        start,
+                                        end,
+                                        current_text
+                                    );
+                                }
+                            }
+                            sn_texts.insert(sn, current_text);
+                        }
+                        Some("apd") | None => {
+                            // 追加模式或无标识：直接添加
+                            sn_texts.insert(sn, current_text);
+                        }
+                        _ => {
+                            // 其他情况也直接添加
+                            sn_texts.insert(sn, current_text);
                         }
                     }
                 }
             }
         }
 
+        // 按 sn 顺序拼接最终文本
+        let mut full_text = String::new();
+        let mut sorted_sns: Vec<i32> = sn_texts.keys().cloned().collect();
+        sorted_sns.sort();
+
+        for sn in sorted_sns {
+            if let Some(text) = sn_texts.get(&sn) {
+                full_text.push_str(text);
+            }
+        }
+
+        let mut segments = Vec::new();
         // 如果有文本，创建一个整体的 segment
         if !full_text.is_empty() {
             segments.push(Segment {
@@ -215,8 +302,33 @@ impl AsrClient for XunfeiClient {
 
         let (mut write, mut read) = ws_stream.split();
 
+        // 如果采样率不是 16000，需要重采样
+        let samples_16k = if audio.sample_rate != 16000 {
+            tracing::info!(
+                "重采样: {}Hz -> 16000Hz (原始样本数: {})",
+                audio.sample_rate,
+                audio.samples.len()
+            );
+            resample(&audio.samples, audio.sample_rate, 16000)
+        } else {
+            audio.samples.clone()
+        };
+
+        tracing::info!("重采样后样本数: {}", samples_16k.len());
+
+        // 检查重采样后的音频数据是否有效
+        let non_zero_count = samples_16k.iter().filter(|&&s| s != 0).count();
+        let max_sample = samples_16k.iter().map(|&s| s.abs()).max().unwrap_or(0);
+        tracing::info!(
+            "重采样后音频检查: 非零样本={}/{} ({:.1}%), 最大振幅={}",
+            non_zero_count,
+            samples_16k.len(),
+            non_zero_count as f64 / samples_16k.len().max(1) as f64 * 100.0,
+            max_sample
+        );
+
         // 将音频数据转换为字节（16-bit PCM）
-        let audio_bytes: Vec<u8> = audio.samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let audio_bytes: Vec<u8> = samples_16k.iter().flat_map(|s| s.to_le_bytes()).collect();
 
         // 分帧发送音频数据
         let chunks: Vec<&[u8]> = audio_bytes.chunks(FRAME_SIZE).collect();
@@ -447,11 +559,17 @@ struct XunfeiResponseData {
 /// 识别结果
 #[derive(Debug, Deserialize)]
 struct XunfeiResult {
+    /// 返回结果的序号
+    sn: Option<i32>,
     /// 词列表
     ws: Vec<XunfeiWord>,
     /// 是否是最终结果
     #[allow(dead_code)]
     ls: Option<bool>,
+    /// 动态修正标识：apd=追加，rpl=替换
+    pgs: Option<String>,
+    /// 替换范围 [start, end]，当 pgs=rpl 时有效
+    rg: Option<Vec<i32>>,
 }
 
 /// 词

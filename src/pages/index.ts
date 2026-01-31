@@ -1,2 +1,2 @@
 export { FlowMonitorPage } from "./FlowMonitorPage";
-export { ScreenshotChatPage } from "./screenshot-chat";
+export { SmartInputPage } from "./smart-input";

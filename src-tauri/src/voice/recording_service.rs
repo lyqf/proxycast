@@ -20,6 +20,7 @@
 //! - 录音线程通过 channel 返回结果
 
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -27,11 +28,47 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use voice_core::types::AudioData;
 
+/// 麦克风设备信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioDeviceInfo {
+    /// 设备 ID（用于选择设备）
+    pub id: String,
+    /// 设备名称
+    pub name: String,
+    /// 是否为默认设备
+    pub is_default: bool,
+}
+
+/// 获取所有可用的麦克风设备
+pub fn list_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    let host = cpal::default_host();
+    let default_device = host.default_input_device();
+    let default_name = default_device.as_ref().and_then(|d| d.name().ok());
+
+    let devices: Vec<AudioDeviceInfo> = host
+        .input_devices()
+        .map_err(|e| format!("无法枚举音频设备: {}", e))?
+        .filter_map(|device| {
+            let name = device.name().ok()?;
+            let is_default = default_name.as_ref().map(|n| n == &name).unwrap_or(false);
+            Some(AudioDeviceInfo {
+                id: name.clone(),
+                name,
+                is_default,
+            })
+        })
+        .collect();
+
+    Ok(devices)
+}
+
 /// 录音控制命令
 #[derive(Debug)]
 pub enum RecordingCommand {
-    /// 开始录音
-    Start,
+    /// 开始录音（可选指定设备 ID）
+    Start(Option<String>),
     /// 停止录音
     Stop,
     /// 取消录音
@@ -106,14 +143,14 @@ impl RecordingService {
         tracing::info!("[录音服务] 录音线程已启动");
     }
 
-    /// 开始录音
-    pub fn start(&mut self) -> Result<(), String> {
+    /// 开始录音（可选指定设备 ID）
+    pub fn start(&mut self, device_id: Option<String>) -> Result<(), String> {
         self.ensure_thread_started();
 
         let tx = self.command_tx.as_ref().ok_or("录音线程未启动")?;
         let rx = self.response_rx.as_ref().ok_or("录音线程未启动")?;
 
-        tx.send(RecordingCommand::Start)
+        tx.send(RecordingCommand::Start(device_id))
             .map_err(|e| format!("发送命令失败: {}", e))?;
 
         match rx.recv() {
@@ -150,12 +187,25 @@ impl RecordingService {
     pub fn cancel(&mut self) {
         if let Some(tx) = &self.command_tx {
             let _ = tx.send(RecordingCommand::Cancel);
-            // 不等待响应，直接返回
+            // 使用 try_recv 避免阻塞，或者设置超时
             if let Some(rx) = &self.response_rx {
-                let _ = rx.recv();
+                // 尝试接收响应，但不阻塞太久
+                use std::time::Duration;
+                match rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(_) => tracing::info!("[录音服务] 取消录音成功"),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        tracing::warn!("[录音服务] 取消录音超时，强制继续");
+                    }
+                    Err(e) => {
+                        tracing::warn!("[录音服务] 取消录音响应错误: {}", e);
+                    }
+                }
             }
-            tracing::info!("[录音服务] 取消录音");
         }
+        // 无论如何都重置状态
+        self.is_recording.store(false, Ordering::SeqCst);
+        self.volume_level.store(0, Ordering::SeqCst);
+        *self.start_time.lock() = None;
     }
 
     /// 获取当前音量级别（0-100）
@@ -226,7 +276,7 @@ fn recording_thread_main(
 
     loop {
         match cmd_rx.recv() {
-            Ok(RecordingCommand::Start) => {
+            Ok(RecordingCommand::Start(device_id)) => {
                 // 如果已在录音，返回错误
                 if is_recording.load(Ordering::SeqCst) {
                     let _ = resp_tx.send(RecordingResponse::Error("已在录音中".to_string()));
@@ -236,9 +286,24 @@ fn recording_thread_main(
                 // 清空缓冲区
                 samples.lock().clear();
 
-                // 获取默认输入设备
+                // 获取输入设备
                 let host = cpal::default_host();
-                let device = match host.default_input_device() {
+                let device = if let Some(ref id) = device_id {
+                    // 查找指定设备
+                    host.input_devices()
+                        .ok()
+                        .and_then(|mut devices| {
+                            devices.find(|d| d.name().ok().as_ref() == Some(id))
+                        })
+                        .or_else(|| {
+                            tracing::warn!("[录音线程] 未找到指定设备 {}，使用默认设备", id);
+                            host.default_input_device()
+                        })
+                } else {
+                    host.default_input_device()
+                };
+
+                let device = match device {
                     Some(d) => d,
                     None => {
                         let _ =
@@ -301,10 +366,19 @@ fn recording_thread_main(
                             tracing::debug!("[录音线程] 已收到 {} 次音频回调", count);
                         }
 
-                        // 计算音量级别
-                        let sum: f32 = data.iter().map(|s| s.abs()).sum();
-                        let avg = sum / data.len() as f32;
-                        let level = (avg * 100.0).min(100.0) as u32;
+                        // 计算音量级别（使用 RMS 均方根，更准确反映音量）
+                        let sum_sq: f32 = data.iter().map(|s| s * s).sum();
+                        let rms = (sum_sq / data.len() as f32).sqrt();
+                        // 将 RMS 值映射到 0-100 范围
+                        // 静音时 RMS 约 0.001-0.01，说话时约 0.02-0.1
+                        // 使用更高的系数来提高灵敏度
+                        let level = ((rms * 1500.0).min(100.0)) as u32;
+
+                        // 每 50 次回调打印一次音量（用于调试）
+                        if count % 50 == 0 {
+                            tracing::debug!("[录音线程] RMS: {:.6}, 音量: {}%", rms, level);
+                        }
+
                         volume_clone.store(level, Ordering::SeqCst);
 
                         // 如果是多声道，转换为单声道
@@ -343,13 +417,19 @@ fn recording_thread_main(
                     continue;
                 }
 
+                tracing::info!("[录音线程] stream.play() 成功，等待音频数据...");
+
                 // 保存流和状态
                 active_stream = Some(stream);
                 is_recording.store(true, Ordering::SeqCst);
                 *start_time.lock() = Some(Instant::now());
 
                 let _ = resp_tx.send(RecordingResponse::Ok);
-                tracing::info!("[录音线程] 开始录音，采样率: {}", actual_sample_rate);
+                tracing::info!(
+                    "[录音线程] 开始录音，采样率: {}, 声道: {}",
+                    actual_sample_rate,
+                    actual_channels
+                );
             }
 
             Ok(RecordingCommand::Stop) => {
