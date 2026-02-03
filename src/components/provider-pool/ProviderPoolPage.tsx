@@ -22,7 +22,6 @@ import {
   HeartOff,
   RotateCcw,
   Activity,
-  Download,
 } from "lucide-react";
 import { useProviderPool } from "@/hooks/useProviderPool";
 import { useApiKeyProvider } from "@/hooks/useApiKeyProvider";
@@ -32,7 +31,6 @@ import { AddCredentialModal } from "./AddCredentialModal";
 import { EditCredentialModal } from "./EditCredentialModal";
 import { ErrorDisplay, useErrorDisplay } from "./ErrorDisplay";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { getConfig } from "@/hooks/useTauri";
 import { ProviderIcon } from "@/icons/providers";
 import { ApiKeyProviderSection, AddCustomProviderModal } from "./api-key";
 import type { ApiKeyProviderSectionRef } from "./api-key";
@@ -91,7 +89,8 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [editingCredential, setEditingCredential] =
       useState<CredentialDisplay | null>(null);
-    const [activeCategory, setActiveCategory] = useState<CategoryType>("oauth");
+    const [activeCategory, setActiveCategory] =
+      useState<CategoryType>("apikey");
     const [activeTab, setActiveTab] = useState<TabType>("kiro");
     const [deletingCredentials, setDeletingCredentials] = useState<Set<string>>(
       new Set(),
@@ -121,7 +120,6 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
       checkTypeHealth,
       refreshCredentialToken,
       updateCredential,
-      migratePrivateConfig,
     } = useProviderPool();
 
     // API Key Provider Hook
@@ -131,7 +129,7 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
       refresh: refreshApiKeyProviders,
     } = useApiKeyProvider();
 
-    const [migrating, setMigrating] = useState(false);
+    const [_migrating, setMigrating] = useState(false);
 
     // Kiro 本地活跃凭证 UUID
     const [localActiveUuid, setLocalActiveUuid] = useState<string | null>(null);
@@ -241,11 +239,16 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
     };
 
     // 迁移 Private 配置到凭证池
-    const handleMigratePrivateConfig = async () => {
+    const _handleMigratePrivateConfig = async () => {
       setMigrating(true);
       try {
-        const config = await getConfig();
-        const result = await migratePrivateConfig(config);
+        // const config = await getConfig();
+        // const result = await migratePrivateConfig(config);
+        const result = {
+          migrated_count: 0,
+          skipped_count: 0,
+          errors: [] as string[],
+        };
         if (result.migrated_count > 0) {
           showSuccess(
             `成功迁移 ${result.migrated_count} 个凭证${result.skipped_count > 0 ? `，跳过 ${result.skipped_count} 个已存在的凭证` : ""}`,
@@ -351,17 +354,6 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
               Provider 后自动使用对应凭证
             </p>
           </div>
-          <button
-            onClick={handleMigratePrivateConfig}
-            disabled={migrating || loading}
-            className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-            title="从高级设置导入 Private 凭证"
-          >
-            <Download
-              className={`h-4 w-4 ${migrating ? "animate-pulse" : ""}`}
-            />
-            导入配置
-          </button>
         </div>
 
         {error && (
@@ -372,20 +364,6 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
 
         {/* Category Tabs - 第一行：分类选择 */}
         <div className="flex gap-1 mb-2">
-          <button
-            onClick={() => {
-              setActiveCategory("oauth");
-              setActiveTab(oauthProviderTypes[0]);
-            }}
-            className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
-              activeCategory === "oauth"
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted"
-            }`}
-            data-testid="oauth-category-tab"
-          >
-            OAuth 凭证
-          </button>
           <button
             onClick={() => {
               setActiveCategory("apikey");
@@ -438,6 +416,20 @@ export const ProviderPoolPage = forwardRef<ProviderPoolPageRef>(
             data-testid="voice-category-tab"
           >
             语音服务
+          </button>
+          <button
+            onClick={() => {
+              setActiveCategory("oauth");
+              setActiveTab(oauthProviderTypes[0]);
+            }}
+            className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
+              activeCategory === "oauth"
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted"
+            }`}
+            data-testid="oauth-category-tab"
+          >
+            OAuth 凭证
           </button>
         </div>
 

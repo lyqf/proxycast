@@ -425,6 +425,12 @@ pub struct Config {
     /// 实验室功能配置
     #[serde(default)]
     pub experimental: ExperimentalFeatures,
+    /// 内容创作配置
+    #[serde(default)]
+    pub content_creator: ContentCreatorConfig,
+    /// 导航栏配置
+    #[serde(default)]
+    pub navigation: NavigationConfig,
 }
 
 // ============ Native Agent 配置类型 ============
@@ -483,6 +489,67 @@ impl Default for NativeAgentConfig {
             default_model: default_agent_model(),
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
+        }
+    }
+}
+
+// ============ 内容创作配置类型 ============
+
+/// 内容创作主题配置
+///
+/// 配置内容创作模式中显示的主题标签
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContentCreatorConfig {
+    /// 启用的主题列表
+    #[serde(default = "default_enabled_themes")]
+    pub enabled_themes: Vec<String>,
+}
+
+fn default_enabled_themes() -> Vec<String> {
+    vec![
+        "general".to_string(),
+        "social-media".to_string(),
+        "poster".to_string(),
+        "music".to_string(),
+        "video".to_string(),
+        "novel".to_string(),
+    ]
+}
+
+impl Default for ContentCreatorConfig {
+    fn default() -> Self {
+        Self {
+            enabled_themes: default_enabled_themes(),
+        }
+    }
+}
+
+// ============ 导航栏配置类型 ============
+
+/// 导航栏模块配置
+///
+/// 配置左侧导航栏中显示的功能模块
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NavigationConfig {
+    /// 启用的导航模块列表
+    #[serde(default = "default_enabled_nav_items")]
+    pub enabled_items: Vec<String>,
+}
+
+fn default_enabled_nav_items() -> Vec<String> {
+    vec![
+        "agent".to_string(),
+        "projects".to_string(),
+        "image-gen".to_string(),
+        "api-server".to_string(),
+        "provider-pool".to_string(),
+    ]
+}
+
+impl Default for NavigationConfig {
+    fn default() -> Self {
+        Self {
+            enabled_items: default_enabled_nav_items(),
         }
     }
 }
@@ -1653,6 +1720,8 @@ impl Default for Config {
             models: ModelsConfig::default(),
             agent: NativeAgentConfig::default(),
             experimental: ExperimentalFeatures::default(),
+            content_creator: ContentCreatorConfig::default(),
+            navigation: NavigationConfig::default(),
         }
     }
 }

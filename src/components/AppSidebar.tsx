@@ -4,7 +4,7 @@
  * 类似 cherry-studio 的图标导航栏，始终显示在应用左侧
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import styled from "styled-components";
 import {
   Tooltip,
@@ -30,6 +30,7 @@ import {
 import * as LucideIcons from "lucide-react";
 import { getPluginsForSurface, PluginUIInfo } from "@/lib/api/pluginUI";
 import { Page, PageParams } from "@/types/page";
+import { getConfig } from "@/hooks/useTauri";
 
 interface AppSidebarProps {
   currentPage: Page;
@@ -143,6 +144,15 @@ function getIconByName(iconName: string): LucideIcon {
   return IconComponent || Activity;
 }
 
+/** 默认启用的导航模块 */
+const DEFAULT_ENABLED_NAV_ITEMS = [
+  "agent",
+  "projects",
+  "image-gen",
+  "api-server",
+  "provider-pool",
+];
+
 export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window !== "undefined") {
@@ -153,10 +163,45 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
     return "light";
   });
 
+  // 启用的导航模块
+  const [enabledNavItems, setEnabledNavItems] = useState<string[]>(
+    DEFAULT_ENABLED_NAV_ITEMS,
+  );
+
   // 已安装的侧边栏插件列表
   const [sidebarPlugins, setSidebarPlugins] = useState<PluginUIInfo[]>([]);
   // 刷新触发器
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // 加载导航配置
+  useEffect(() => {
+    const loadNavConfig = async () => {
+      try {
+        const config = await getConfig();
+        setEnabledNavItems(
+          config.navigation?.enabled_items || DEFAULT_ENABLED_NAV_ITEMS,
+        );
+      } catch (error) {
+        console.error("加载导航配置失败:", error);
+      }
+    };
+    loadNavConfig();
+
+    // 监听导航配置变更事件
+    const handleNavConfigChange = () => {
+      loadNavConfig();
+    };
+    window.addEventListener("nav-config-changed", handleNavConfigChange);
+
+    return () => {
+      window.removeEventListener("nav-config-changed", handleNavConfigChange);
+    };
+  }, []);
+
+  // 过滤后的导航项
+  const filteredMenuItems = useMemo(() => {
+    return mainMenuItems.filter((item) => enabledNavItems.includes(item.id));
+  }, [enabledNavItems]);
 
   // 加载侧边栏插件
   useEffect(() => {
@@ -221,7 +266,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
         </Tooltip>
 
         <MenusContainer>
-          {mainMenuItems.map((item) => (
+          {filteredMenuItems.map((item) => (
             <Tooltip key={item.id}>
               <TooltipTrigger asChild>
                 <IconButton

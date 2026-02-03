@@ -129,6 +129,22 @@ export interface ExperimentalFeatures {
   screenshot_chat: SmartInputConfig;
 }
 
+/**
+ * 内容创作配置
+ */
+export interface ContentCreatorConfig {
+  /** 启用的主题列表 */
+  enabled_themes: string[];
+}
+
+/**
+ * 导航栏配置
+ */
+export interface NavigationConfig {
+  /** 启用的导航模块列表 */
+  enabled_items: string[];
+}
+
 export interface Config {
   server: {
     host: string;
@@ -173,6 +189,10 @@ export interface Config {
   language: string;
   /** 实验室功能配置 */
   experimental?: ExperimentalFeatures;
+  /** 内容创作配置 */
+  content_creator?: ContentCreatorConfig;
+  /** 导航栏配置 */
+  navigation?: NavigationConfig;
 }
 
 export interface LogEntry {

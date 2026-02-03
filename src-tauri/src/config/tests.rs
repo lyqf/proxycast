@@ -2,6 +2,7 @@
 //!
 //! 使用 proptest 进行属性测试
 
+use crate::config::types::{ContentCreatorConfig, NavigationConfig};
 use crate::config::{
     collapse_tilde, contains_tilde, expand_tilde, Config, ConfigManager, CustomProviderConfig,
     HotReloadManager, InjectionSettings, LoggingConfig, ProviderConfig, ProvidersConfig,
@@ -189,6 +190,8 @@ fn arb_config() -> impl Strategy<Value = Config> {
             agent: crate::config::NativeAgentConfig::default(),
             language: "zh".to_string(),
             experimental: crate::config::ExperimentalFeatures::default(),
+            content_creator: ContentCreatorConfig::default(),
+            navigation: NavigationConfig::default(),
         })
 }
 
@@ -427,6 +430,8 @@ fn arb_valid_config() -> impl Strategy<Value = Config> {
             agent: crate::config::NativeAgentConfig::default(),
             language: "zh".to_string(),
             experimental: crate::config::ExperimentalFeatures::default(),
+            content_creator: ContentCreatorConfig::default(),
+            navigation: NavigationConfig::default(),
         })
 }
 
@@ -476,6 +481,8 @@ fn arb_invalid_config() -> impl Strategy<Value = Config> {
                     agent: crate::config::NativeAgentConfig::default(),
                     language: "zh".to_string(),
                     experimental: crate::config::ExperimentalFeatures::default(),
+                    content_creator: ContentCreatorConfig::default(),
+                    navigation: NavigationConfig::default(),
                 };
                 // 根据类型使配置无效
                 match invalid_type {

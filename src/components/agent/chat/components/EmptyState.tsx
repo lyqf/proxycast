@@ -1,5 +1,4 @@
-/* eslint-disable react-refresh/only-export-components */
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import styled, { keyframes, css } from "styled-components";
 import {
   ArrowRight,
@@ -12,61 +11,11 @@ import {
   ChevronDown,
   Search,
   Globe,
-  GraduationCap,
-  Zap,
-  RefreshCw,
-  LayoutTemplate,
   Music,
 } from "lucide-react";
-
-/**
- * 创作模式类型
- * 不同模式下 AI 的角色和用户参与度不同
- */
-export type CreationMode = "guided" | "fast" | "hybrid" | "framework";
-
-/**
- * 模式配置
- */
-export const CREATION_MODE_CONFIG: Record<
-  CreationMode,
-  {
-    name: string;
-    icon: React.ReactNode;
-    aiRole: string;
-    userInvolvement: "high" | "medium" | "low";
-    description: string;
-  }
-> = {
-  guided: {
-    name: "引导模式",
-    icon: <GraduationCap className="w-4 h-4" />,
-    aiRole: "教练（提问引导）",
-    userInvolvement: "high",
-    description: "追求真实性、个人经历类内容",
-  },
-  fast: {
-    name: "快速模式",
-    icon: <Zap className="w-4 h-4" />,
-    aiRole: "助手（生成初稿）",
-    userInvolvement: "low",
-    description: "信息整理、快速产出",
-  },
-  hybrid: {
-    name: "混合模式",
-    icon: <RefreshCw className="w-4 h-4" />,
-    aiRole: "协作者（写框架）",
-    userInvolvement: "medium",
-    description: "平衡质量和效率",
-  },
-  framework: {
-    name: "框架模式",
-    icon: <LayoutTemplate className="w-4 h-4" />,
-    aiRole: "填充者（按框架生成）",
-    userInvolvement: "medium",
-    description: "固定格式文档（报告、标书）",
-  },
-};
+import { getConfig } from "@/hooks/useTauri";
+import type { CreationMode } from "./types";
+import { CREATION_MODE_CONFIG } from "./constants";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -351,7 +300,7 @@ interface EmptyStateProps {
 }
 
 // Scenarios Configuration - 与 ProjectType 统一
-const CATEGORIES = [
+const ALL_CATEGORIES = [
   {
     id: "general",
     label: "通用对话",
@@ -377,6 +326,16 @@ const CATEGORIES = [
   { id: "document", label: "办公文档", icon: <FileText className="w-4 h-4" /> },
   { id: "video", label: "短视频", icon: <Video className="w-4 h-4" /> },
   { id: "novel", label: "小说创作", icon: <PenTool className="w-4 h-4" /> },
+];
+
+/** 默认启用的主题 */
+const DEFAULT_ENABLED_THEMES = [
+  "general",
+  "social-media",
+  "poster",
+  "music",
+  "video",
+  "novel",
 ];
 
 // 需要显示创作模式选择器的主题
@@ -537,6 +496,44 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   onThemeChange,
   onRecommendationClick,
 }) => {
+  // 从配置中读取启用的主题
+  const [enabledThemes, setEnabledThemes] = useState<string[]>(
+    DEFAULT_ENABLED_THEMES,
+  );
+
+  // 加载配置
+  useEffect(() => {
+    const loadEnabledThemes = async () => {
+      try {
+        const config = await getConfig();
+        if (config.content_creator?.enabled_themes) {
+          setEnabledThemes(config.content_creator.enabled_themes);
+        }
+      } catch (e) {
+        console.error("加载主题配置失败:", e);
+      }
+    };
+    loadEnabledThemes();
+
+    // 监听主题配置变更事件
+    const handleThemeConfigChange = () => {
+      loadEnabledThemes();
+    };
+    window.addEventListener("theme-config-changed", handleThemeConfigChange);
+
+    return () => {
+      window.removeEventListener(
+        "theme-config-changed",
+        handleThemeConfigChange,
+      );
+    };
+  }, []);
+
+  // 过滤后的主题列表
+  const categories = ALL_CATEGORIES.filter((cat) =>
+    enabledThemes.includes(cat.id),
+  );
+
   // 使用外部传入的 activeTheme，如果有 onThemeChange 则使用受控模式
   const handleThemeChange = (theme: string) => {
     if (onThemeChange) {
@@ -552,6 +549,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const [ratio, setRatio] = useState("3:4");
   const [style, setStyle] = useState("minimal");
   const [depth, setDepth] = useState("deep");
+  // Popover 打开状态
+  const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false);
+  const [stylePopoverOpen, setStylePopoverOpen] = useState(false);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -635,7 +635,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         </Header>
 
         <TabsContainer>
-          {CATEGORIES.map((cat) => (
+          {categories.map((cat) => (
             <TabItem
               key={cat.id}
               $active={activeTheme === cat.id}
@@ -682,7 +682,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                         <span>{getPlatformLabel(platform)}</span>
                       </div>
                     </SelectTrigger>
-                    <SelectContent className="p-1">
+                    <SelectContent className="p-1" side="top">
                       <div className="px-2 py-1.5 text-xs text-muted-foreground font-medium">
                         选择要创作的内容平台
                       </div>
@@ -753,7 +753,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                       <span>{CREATION_MODE_CONFIG[creationMode].name}</span>
                     </div>
                   </SelectTrigger>
-                  <SelectContent className="p-1 min-w-[200px]">
+                  <SelectContent className="p-1 min-w-[200px]" side="top">
                     <div className="px-2 py-1.5 text-xs text-muted-foreground font-medium">
                       选择创作模式
                     </div>
@@ -788,7 +788,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                       <BrainCircuit className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                       <SelectValue placeholder="深度" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent side="top">
                       <SelectItem value="deep">深度解析</SelectItem>
                       <SelectItem value="quick">快速概览</SelectItem>
                     </SelectContent>
@@ -808,7 +808,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
               {activeTheme === "poster" && (
                 <>
-                  <Popover>
+                  <Popover
+                    open={ratioPopoverOpen}
+                    onOpenChange={(open) => {
+                      setRatioPopoverOpen(open);
+                      if (open) setStylePopoverOpen(false);
+                    }}
+                  >
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
@@ -822,7 +828,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                         <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-64 p-2" align="start">
+                    <PopoverContent
+                      className="w-64 p-2 bg-background border shadow-lg"
+                      align="start"
+                      side="top"
+                    >
                       <div className="text-xs font-medium mb-2 px-2 text-muted-foreground">
                         宽高比
                       </div>
@@ -832,7 +842,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                             <GridItem
                               key={r}
                               $active={ratio === r}
-                              onClick={() => setRatio(r)}
+                              onClick={() => {
+                                setRatio(r);
+                                setRatioPopoverOpen(false);
+                              }}
                             >
                               <div className="w-5 h-5 border-2 border-current rounded-sm mb-1 opacity-50"></div>
                               <span className="text-xs">{r}</span>
@@ -843,7 +856,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                     </PopoverContent>
                   </Popover>
 
-                  <Popover>
+                  <Popover
+                    open={stylePopoverOpen}
+                    onOpenChange={(open) => {
+                      setStylePopoverOpen(open);
+                      if (open) setRatioPopoverOpen(false);
+                    }}
+                  >
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
@@ -859,13 +878,20 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                         <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-48 p-1" align="start">
+                    <PopoverContent
+                      className="w-48 p-1 bg-background border shadow-lg"
+                      align="start"
+                      side="top"
+                    >
                       <div className="p-1">
                         <Button
                           variant="ghost"
                           size="sm"
                           className="w-full justify-start h-8"
-                          onClick={() => setStyle("minimal")}
+                          onClick={() => {
+                            setStyle("minimal");
+                            setStylePopoverOpen(false);
+                          }}
                         >
                           <ColorDot $color="#e2e8f0" className="mr-2" />{" "}
                           极简风格
@@ -874,7 +900,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                           variant="ghost"
                           size="sm"
                           className="w-full justify-start h-8"
-                          onClick={() => setStyle("tech")}
+                          onClick={() => {
+                            setStyle("tech");
+                            setStylePopoverOpen(false);
+                          }}
                         >
                           <ColorDot $color="#3b82f6" className="mr-2" />{" "}
                           科技质感
@@ -883,7 +912,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                           variant="ghost"
                           size="sm"
                           className="w-full justify-start h-8"
-                          onClick={() => setStyle("warm")}
+                          onClick={() => {
+                            setStyle("warm");
+                            setStylePopoverOpen(false);
+                          }}
                         >
                           <ColorDot $color="#f59e0b" className="mr-2" />{" "}
                           温暖治愈

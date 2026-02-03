@@ -4,8 +4,10 @@
  * 显示项目类型过滤标签
  */
 
+import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { TYPE_CONFIGS, type UserType } from "@/lib/api/project";
+import { getConfig } from "@/hooks/useTauri";
 
 export type ProjectFilter = "all" | UserType | "favorites" | "archived";
 
@@ -15,7 +17,17 @@ interface ProjectCategoriesProps {
   counts?: Record<ProjectFilter, number>;
 }
 
-const filterItems: { id: ProjectFilter; label: string; icon?: string }[] = [
+/** 默认启用的主题 */
+const DEFAULT_ENABLED_THEMES = [
+  "general",
+  "social-media",
+  "poster",
+  "music",
+  "video",
+  "novel",
+];
+
+const allFilterItems: { id: ProjectFilter; label: string; icon?: string }[] = [
   { id: "all", label: "全部" },
   {
     id: "general",
@@ -71,6 +83,51 @@ export function ProjectCategories({
   onFilterChange,
   counts,
 }: ProjectCategoriesProps) {
+  // 从配置中读取启用的主题
+  const [enabledThemes, setEnabledThemes] = useState<string[]>(
+    DEFAULT_ENABLED_THEMES,
+  );
+
+  // 加载配置
+  useEffect(() => {
+    const loadEnabledThemes = async () => {
+      try {
+        const config = await getConfig();
+        if (config.content_creator?.enabled_themes) {
+          setEnabledThemes(config.content_creator.enabled_themes);
+        }
+      } catch (e) {
+        console.error("加载主题配置失败:", e);
+      }
+    };
+    loadEnabledThemes();
+
+    // 监听主题配置变更事件
+    const handleThemeConfigChange = () => {
+      loadEnabledThemes();
+    };
+    window.addEventListener("theme-config-changed", handleThemeConfigChange);
+
+    return () => {
+      window.removeEventListener(
+        "theme-config-changed",
+        handleThemeConfigChange,
+      );
+    };
+  }, []);
+
+  // 过滤后的标签列表
+  const filterItems = useMemo(() => {
+    return allFilterItems.filter((item) => {
+      // all, favorites, archived 始终显示
+      if (["all", "favorites", "archived"].includes(item.id)) {
+        return true;
+      }
+      // 其他根据配置过滤
+      return enabledThemes.includes(item.id);
+    });
+  }, [enabledThemes]);
+
   return (
     <div className="flex items-center gap-2 flex-wrap">
       {filterItems.map((item) => {

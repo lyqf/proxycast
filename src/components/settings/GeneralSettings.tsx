@@ -11,6 +11,7 @@ import {
   Info,
   RotateCcw,
   Volume2,
+  Palette,
 } from "lucide-react";
 import { cn, validateProxyUrl } from "@/lib/utils";
 import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
@@ -21,11 +22,61 @@ import { useSoundContext } from "@/contexts/useSoundContext";
 
 type Theme = "light" | "dark" | "system";
 
+/** 所有可用的内容创作主题 */
+const ALL_CONTENT_THEMES = [
+  { id: "general", label: "通用" },
+  { id: "social-media", label: "社媒内容" },
+  { id: "poster", label: "图文海报" },
+  { id: "music", label: "歌词曲谱" },
+  { id: "video", label: "短视频" },
+  { id: "novel", label: "小说" },
+  { id: "knowledge", label: "知识探索" },
+  { id: "planning", label: "计划规划" },
+  { id: "document", label: "办公文档" },
+] as const;
+
+/** 默认启用的主题 */
+const DEFAULT_ENABLED_THEMES = [
+  "general",
+  "social-media",
+  "poster",
+  "music",
+  "video",
+  "novel",
+];
+
+/** 所有可用的导航模块 */
+const ALL_NAV_ITEMS = [
+  { id: "agent", label: "AI Agent" },
+  { id: "projects", label: "项目" },
+  { id: "image-gen", label: "图片生成" },
+  { id: "api-server", label: "API Server" },
+  { id: "provider-pool", label: "凭证池" },
+  { id: "terminal", label: "终端" },
+  { id: "tools", label: "工具" },
+  { id: "plugins", label: "插件中心" },
+] as const;
+
+/** 默认启用的导航模块 */
+const DEFAULT_ENABLED_NAV_ITEMS = [
+  "agent",
+  "projects",
+  "image-gen",
+  "api-server",
+  "provider-pool",
+];
+
 export function GeneralSettings() {
   const [theme, setTheme] = useState<Theme>("system");
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [language, setLanguageState] = useState<Language>("zh");
+  const [enabledThemes, setEnabledThemes] = useState<string[]>(
+    DEFAULT_ENABLED_THEMES,
+  );
+  const [enabledNavItems, setEnabledNavItems] = useState<string[]>(
+    DEFAULT_ENABLED_NAV_ITEMS,
+  );
   const { resetOnboarding } = useOnboardingState();
   const { setLanguage: setI18nLanguage } = useI18nPatch();
   const { soundEnabled, setSoundEnabled, playToolcallSound } =
@@ -64,6 +115,12 @@ export function GeneralSettings() {
       setProxyUrl(c.proxy_url || "");
       setMinimizeToTray(c.minimize_to_tray ?? true);
       setLanguageState((c.language || "zh") as Language);
+      setEnabledThemes(
+        c.content_creator?.enabled_themes || DEFAULT_ENABLED_THEMES,
+      );
+      setEnabledNavItems(
+        c.navigation?.enabled_items || DEFAULT_ENABLED_NAV_ITEMS,
+      );
     } catch (e) {
       console.error("加载配置失败:", e);
     } finally {
@@ -127,6 +184,60 @@ export function GeneralSettings() {
       setI18nLanguage(newLanguage);
     } catch (err) {
       console.error("保存语言设置失败:", err);
+    }
+  };
+
+  // 切换内容创作主题
+  const handleThemeToggle = async (themeId: string) => {
+    if (!config) return;
+    const newThemes = enabledThemes.includes(themeId)
+      ? enabledThemes.filter((t) => t !== themeId)
+      : [...enabledThemes, themeId];
+
+    // 至少保留一个主题
+    if (newThemes.length === 0) return;
+
+    setEnabledThemes(newThemes);
+    try {
+      const newConfig = {
+        ...config,
+        content_creator: { enabled_themes: newThemes },
+      };
+      await saveConfig(newConfig);
+      setConfig(newConfig);
+      // 触发内容创作主题更新
+      window.dispatchEvent(new CustomEvent("theme-config-changed"));
+    } catch (err) {
+      console.error("保存主题设置失败:", err);
+      // 回滚
+      setEnabledThemes(enabledThemes);
+    }
+  };
+
+  // 切换导航模块
+  const handleNavItemToggle = async (itemId: string) => {
+    if (!config) return;
+    const newItems = enabledNavItems.includes(itemId)
+      ? enabledNavItems.filter((i) => i !== itemId)
+      : [...enabledNavItems, itemId];
+
+    // 至少保留一个模块
+    if (newItems.length === 0) return;
+
+    setEnabledNavItems(newItems);
+    try {
+      const newConfig = {
+        ...config,
+        navigation: { enabled_items: newItems },
+      };
+      await saveConfig(newConfig);
+      setConfig(newConfig);
+      // 触发侧边栏更新
+      window.dispatchEvent(new CustomEvent("nav-config-changed"));
+    } catch (err) {
+      console.error("保存导航设置失败:", err);
+      // 回滚
+      setEnabledNavItems(enabledNavItems);
     }
   };
 
@@ -289,6 +400,64 @@ export function GeneralSettings() {
             className="w-4 h-4 rounded border-gray-300"
           />
         </label>
+      </div>
+
+      {/* 内容创作主题 */}
+      <div className="rounded-lg border p-3">
+        <div className="flex items-center gap-2 mb-3">
+          <Palette className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <h3 className="text-sm font-medium">内容创作主题</h3>
+            <p className="text-xs text-muted-foreground">
+              选择在内容创作模式中显示的主题标签
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {ALL_CONTENT_THEMES.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => handleThemeToggle(t.id)}
+              className={cn(
+                "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                enabledThemes.includes(t.id)
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 导航模块 */}
+      <div className="rounded-lg border p-3">
+        <div className="flex items-center gap-2 mb-3">
+          <Palette className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <h3 className="text-sm font-medium">导航模块</h3>
+            <p className="text-xs text-muted-foreground">
+              选择在左侧导航栏中显示的功能模块
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {ALL_NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => handleNavItemToggle(item.id)}
+              className={cn(
+                "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                enabledNavItems.includes(item.id)
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* 重新运行引导 */}
