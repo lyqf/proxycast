@@ -7,38 +7,53 @@ use serde::{Deserialize, Serialize};
 /// 单个路由信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteInfo {
+    /// 路由选择器 (provider 类型或凭证名称)
     pub selector: String,
+    /// Provider 类型
     pub provider_type: String,
+    /// 关联的凭证数量
     pub credential_count: usize,
+    /// 可用的端点列表
     pub endpoints: Vec<RouteEndpoint>,
+    /// 标签 (如 "突破限制", "官方API/三方")
     pub tags: Vec<String>,
+    /// 是否启用
     pub enabled: bool,
 }
 
 /// 路由端点
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteEndpoint {
+    /// 端点路径
     pub path: String,
-    pub protocol: String,
+    /// 协议类型
+    pub protocol: String, // "openai" 或 "claude"
+    /// 完整 URL
     pub url: String,
 }
 
 /// 路由列表响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteListResponse {
+    /// 服务器基础 URL
     pub base_url: String,
+    /// 默认 Provider
     pub default_provider: String,
+    /// 所有可用路由
     pub routes: Vec<RouteInfo>,
 }
 
 /// curl 示例
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurlExample {
+    /// 描述
     pub description: String,
+    /// curl 命令
     pub command: String,
 }
 
 impl RouteInfo {
+    /// 创建新的路由信息
     pub fn new(selector: String, provider_type: String) -> Self {
         Self {
             selector,
@@ -50,6 +65,7 @@ impl RouteInfo {
         }
     }
 
+    /// 添加端点
     pub fn add_endpoint(&mut self, base_url: &str, protocol: &str) {
         let path = match protocol {
             "claude" => format!("/{}/v1/messages", self.selector),
@@ -64,6 +80,7 @@ impl RouteInfo {
         });
     }
 
+    /// 生成 curl 示例
     pub fn generate_curl_examples(&self, api_key: &str) -> Vec<CurlExample> {
         let mut examples = Vec::new();
 

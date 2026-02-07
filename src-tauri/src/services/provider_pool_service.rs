@@ -14,10 +14,28 @@ use crate::models::provider_pool_model::{
 use crate::models::route_model::RouteInfo;
 use crate::providers::antigravity::TokenRefreshError;
 use crate::providers::kiro::KiroProvider;
+use crate::server::client_detector::ClientType;
 use crate::services::api_key_provider_service::ApiKeyProviderService;
 use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+
+/// 扩展 ProviderCredential 的客户端兼容性检查
+/// （此方法依赖 server::client_detector，不适合放在 core crate）
+trait ProviderCredentialClientCompat {
+    fn is_compatible_with_client(&self, client_type: Option<&ClientType>) -> bool;
+}
+
+impl ProviderCredentialClientCompat for ProviderCredential {
+    fn is_compatible_with_client(&self, client_type: Option<&ClientType>) -> bool {
+        if let Some(error_msg) = &self.last_error_message {
+            if error_msg.contains("only authorized for use with Claude Code") {
+                return matches!(client_type, Some(ClientType::ClaudeCode));
+            }
+        }
+        true
+    }
+}
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;

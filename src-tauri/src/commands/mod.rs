@@ -4,14 +4,13 @@ pub mod api_key_provider_cmd;
 pub mod asr_cmd;
 pub mod aster_agent_cmd;
 pub mod auto_fix_cmd;
-pub mod browser_interceptor_cmd;
 pub mod config_cmd;
 pub mod connect_cmd;
 pub mod connection_cmd;
 pub mod content_cmd;
 pub mod context_memory;
 pub mod external_tools_cmd;
-pub mod flow_monitor_cmd;
+
 pub mod general_chat_cmd;
 pub mod injection_cmd;
 pub mod kiro_local;

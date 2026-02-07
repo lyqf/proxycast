@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.59.0"
+version = "0.60.0"
 edition = "2021"
 authors = ["you"]
 repository = "https://github.com/aiclientproxy/proxycast"
@@ -13,6 +13,7 @@ homepage = "https://github.com/aiclientproxy/proxycast"
 # 项目内 crate 依赖
 proxycast-core = { path = "crates/core" }
 proxycast-infra = { path = "crates/infra" }
+proxycast-providers = { path = "crates/providers" }
 voice-core = { path = "crates/voice-core" }
 
 # 序列化
@@ -167,7 +168,7 @@ version = "2.4"
 
 [package]
 name = "proxycast"
-version = "0.59.0"
+version = "0.60.0"
 description = "AI API Proxy Desktop App"
 authors = ["you"]
 edition = "2021"
@@ -185,6 +186,7 @@ tauri-build.workspace = true
 # 项目内 crate
 proxycast-core.workspace = true
 proxycast-infra.workspace = true
+proxycast-providers.workspace = true
 voice-core.workspace = true
 
 # Tauri

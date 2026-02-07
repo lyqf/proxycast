@@ -30,7 +30,7 @@ use crate::providers::{
 use crate::server::AppState;
 use crate::server_utils::parse_cw_response;
 use crate::websocket::{
-    WsApiRequest, WsApiResponse, WsEndpoint, WsError, WsFlowEvent, WsMessage as WsProtoMessage,
+    WsApiRequest, WsApiResponse, WsEndpoint, WsError, WsMessage as WsProtoMessage,
 };
 
 /// WebSocket 查询参数
@@ -125,60 +125,6 @@ pub async fn handle_websocket(
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
 
-    // Flow 事件订阅状态
-    let flow_subscribed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    // 启动 Flow 事件转发任务
-    let flow_sender = sender.clone();
-    let flow_subscribed_clone = flow_subscribed.clone();
-    let flow_monitor = state.flow_monitor.clone();
-    let conn_id_clone = conn_id.clone();
-    let _logs_clone = state.logs.clone();
-
-    let flow_task = tokio::spawn(async move {
-        let mut flow_receiver = flow_monitor.subscribe();
-
-        loop {
-            match flow_receiver.recv().await {
-                Ok(event) => {
-                    // 只有在订阅状态下才转发事件
-                    if !flow_subscribed_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                        continue;
-                    }
-
-                    // 转换为 WebSocket 消息
-                    let ws_event: WsFlowEvent = event.into();
-                    let ws_msg = WsProtoMessage::FlowEvent(ws_event);
-
-                    if let Ok(msg_text) = serde_json::to_string(&ws_msg) {
-                        let mut sender_guard = flow_sender.lock().await;
-                        if sender_guard.send(WsMessage::Text(msg_text)).await.is_err() {
-                            tracing::debug!(
-                                "[WS] Flow event send failed for connection {}",
-                                &conn_id_clone[..8]
-                            );
-                            break;
-                        }
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        "[WS] Flow event receiver lagged by {} messages for connection {}",
-                        n,
-                        &conn_id_clone[..8]
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    tracing::debug!(
-                        "[WS] Flow event channel closed for connection {}",
-                        &conn_id_clone[..8]
-                    );
-                    break;
-                }
-            }
-        }
-    });
-
     // 消息处理循环
     while let Some(msg) = receiver.next().await {
         match msg {
@@ -188,8 +134,7 @@ pub async fn handle_websocket(
 
                 match serde_json::from_str::<WsProtoMessage>(&text) {
                     Ok(ws_msg) => {
-                        let response =
-                            handle_ws_message(&state, &conn_id, ws_msg, &flow_subscribed).await;
+                        let response = handle_ws_message(&state, &conn_id, ws_msg).await;
                         if let Some(resp) = response {
                             let resp_text = serde_json::to_string(&resp).unwrap_or_default();
                             let mut sender_guard = sender.lock().await;
@@ -252,9 +197,6 @@ pub async fn handle_websocket(
         }
     }
 
-    // 取消 Flow 事件转发任务
-    flow_task.abort();
-
     // 清理连接
     state.ws_manager.unregister(&conn_id);
     state.logs.write().await.add(
@@ -268,56 +210,10 @@ async fn handle_ws_message(
     state: &AppState,
     conn_id: &str,
     msg: WsProtoMessage,
-    flow_subscribed: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<WsProtoMessage> {
     match msg {
         WsProtoMessage::Ping { timestamp } => Some(WsProtoMessage::Pong { timestamp }),
         WsProtoMessage::Pong { .. } => None,
-        WsProtoMessage::SubscribeFlowEvents => {
-            // 订阅 Flow 事件
-            flow_subscribed.store(true, std::sync::atomic::Ordering::Relaxed);
-            state.logs.write().await.add(
-                "info",
-                &format!(
-                    "[WS] Connection {} subscribed to flow events",
-                    &conn_id[..8]
-                ),
-            );
-            // 返回确认消息
-            Some(WsProtoMessage::Response(WsApiResponse {
-                request_id: "subscribe_flow_events".to_string(),
-                payload: serde_json::json!({
-                    "status": "subscribed",
-                    "message": "Successfully subscribed to flow events"
-                }),
-            }))
-        }
-        WsProtoMessage::UnsubscribeFlowEvents => {
-            // 取消订阅 Flow 事件
-            flow_subscribed.store(false, std::sync::atomic::Ordering::Relaxed);
-            state.logs.write().await.add(
-                "info",
-                &format!(
-                    "[WS] Connection {} unsubscribed from flow events",
-                    &conn_id[..8]
-                ),
-            );
-            // 返回确认消息
-            Some(WsProtoMessage::Response(WsApiResponse {
-                request_id: "unsubscribe_flow_events".to_string(),
-                payload: serde_json::json!({
-                    "status": "unsubscribed",
-                    "message": "Successfully unsubscribed from flow events"
-                }),
-            }))
-        }
-        WsProtoMessage::FlowEvent(_) => {
-            // 客户端不应该发送 FlowEvent 消息
-            Some(WsProtoMessage::Error(WsError::invalid_request(
-                None,
-                "FlowEvent messages are server-to-client only",
-            )))
-        }
         WsProtoMessage::Request(request) => {
             state.logs.write().await.add(
                 "info",

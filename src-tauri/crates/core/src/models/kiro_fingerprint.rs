@@ -37,6 +37,7 @@ impl KiroFingerprintStore {
             .ok_or_else(|| "无法获取应用数据目录".to_string())?
             .join("proxycast");
 
+        // 确保目录存在
         if !app_data_dir.exists() {
             fs::create_dir_all(&app_data_dir).map_err(|e| format!("创建应用数据目录失败: {e}"))?;
         }
@@ -73,6 +74,8 @@ impl KiroFingerprintStore {
     }
 
     /// 获取或创建凭证的指纹绑定
+    ///
+    /// 如果凭证没有绑定指纹，会基于凭证信息生成一个新的 Machine ID
     pub fn get_or_create_binding(
         &mut self,
         credential_uuid: &str,
@@ -80,6 +83,7 @@ impl KiroFingerprintStore {
         client_id: Option<&str>,
     ) -> Result<&KiroFingerprintBinding, String> {
         if !self.bindings.contains_key(credential_uuid) {
+            // 生成基于凭证的 Machine ID
             let machine_id = generate_stable_machine_id(credential_uuid, profile_arn, client_id);
 
             let binding = KiroFingerprintBinding {
@@ -113,6 +117,9 @@ impl KiroFingerprintStore {
 }
 
 /// 生成稳定的 Machine ID
+///
+/// 基于凭证信息生成一个稳定的 UUID 格式 Machine ID。
+/// 同一凭证每次生成的 Machine ID 相同，确保账号身份一致。
 fn generate_stable_machine_id(
     credential_uuid: &str,
     profile_arn: Option<&str>,
@@ -120,6 +127,7 @@ fn generate_stable_machine_id(
 ) -> String {
     use sha2::{Digest, Sha256};
 
+    // 使用凭证相关信息作为种子
     let seed = format!(
         "kiro_fingerprint:{}:{}:{}",
         credential_uuid,
@@ -131,6 +139,7 @@ fn generate_stable_machine_id(
     hasher.update(seed.as_bytes());
     let result = hasher.finalize();
 
+    // 将哈希结果转换为 UUID 格式
     let hex = format!("{result:x}");
     format!(
         "{}-{}-{}-{}-{}",
@@ -145,10 +154,15 @@ fn generate_stable_machine_id(
 /// 切换到本地的结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwitchToLocalResult {
+    /// 是否成功
     pub success: bool,
+    /// 结果消息
     pub message: String,
+    /// 是否需要用户操作（如需管理员权限）
     pub requires_action: bool,
+    /// 切换的 Machine ID
     pub machine_id: Option<String>,
+    /// 是否需要重启 Kiro IDE
     pub requires_kiro_restart: bool,
 }
 

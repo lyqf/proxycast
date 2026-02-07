@@ -1,7 +1,15 @@
 //! OpenAI API 数据模型
 //!
 //! 支持标准 OpenAI 格式以及扩展的工具类型（如 web_search）。
-
+//!
+//! # 工具类型支持
+//!
+//! - `function`: 标准函数调用工具
+//! - `web_search`: 联网搜索工具（Claude Code 使用 `web_search_20250305`）
+//!
+//! # 更新日志
+//!
+//! - 2025-12-27: 添加 web_search 工具支持，修复 Issue #49
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +58,8 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 推理内容（DeepSeek R1 等模型的思维链内容）
+    /// DeepSeek Reasoner 在 Tool Calls 场景下要求此字段
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
 }
@@ -74,21 +84,25 @@ impl ChatMessage {
     }
 
     /// 提取消息中的图片 URL 列表
+    /// 返回 (format, base64_data) 元组列表
     pub fn get_images(&self) -> Vec<(String, String)> {
         match &self.content {
             Some(MessageContent::Parts(parts)) => parts
                 .iter()
                 .filter_map(|p| {
                     if let ContentPart::ImageUrl { image_url } = p {
+                        // 解析 data URL: data:image/jpeg;base64,xxxxx
                         if image_url.url.starts_with("data:") {
                             let parts: Vec<&str> = image_url.url.splitn(2, ',').collect();
                             if parts.len() == 2 {
+                                // 提取 media_type: data:image/jpeg;base64 -> image/jpeg
                                 let header = parts[0];
                                 let data = parts[1];
                                 let media_type = header
                                     .strip_prefix("data:")
                                     .and_then(|s| s.split(';').next())
                                     .unwrap_or("image/jpeg");
+                                // 提取格式: image/jpeg -> jpeg
                                 let format =
                                     media_type.split('/').nth(1).unwrap_or("jpeg").to_string();
                                 return Some((format, data.to_string()));
@@ -115,13 +129,21 @@ pub struct FunctionDef {
 }
 
 /// 工具定义
+///
+/// 支持多种工具类型：
+/// - `function`: 标准函数调用工具，包含 function 字段
+/// - `web_search`: 联网搜索工具，无需额外字段
+/// - `web_search_20250305`: Claude Code 的联网搜索工具类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Tool {
+    /// 标准函数调用工具
     #[serde(rename = "function")]
     Function { function: FunctionDef },
+    /// 联网搜索工具（Codex/Kiro 格式）
     #[serde(rename = "web_search")]
     WebSearch,
+    /// 联网搜索工具（Claude Code 格式）
     #[serde(rename = "web_search_20250305")]
     WebSearch20250305,
 }
@@ -142,6 +164,7 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    /// 思维链强度：none, low, medium, high
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
 }
@@ -206,24 +229,43 @@ pub struct ChatCompletionChunk {
     pub choices: Vec<StreamChoice>,
 }
 
+// ============================================================================
 // 图像生成 API 数据模型
+// ============================================================================
 
 /// OpenAI 图像生成请求
+///
+/// 兼容 OpenAI Images API，支持通过 Antigravity 生成图像。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageGenerationRequest {
+    /// 图像生成提示词
     pub prompt: String,
+
+    /// 模型名称 (默认: gemini-3-pro-image-preview)
     #[serde(default = "default_image_model")]
     pub model: String,
+
+    /// 生成图像数量 (默认: 1)
     #[serde(default = "default_n")]
     pub n: u32,
+
+    /// 图像尺寸 (可选，Antigravity 可能忽略)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+
+    /// 响应格式: "url" 或 "b64_json" (默认: "url")
     #[serde(default = "default_response_format")]
     pub response_format: String,
+
+    /// 图像质量 (可选，Antigravity 可能忽略)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<String>,
+
+    /// 图像风格 (可选，Antigravity 可能忽略)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub style: Option<String>,
+
+    /// 用户标识 (可选)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
 }
@@ -243,17 +285,25 @@ fn default_response_format() -> String {
 /// OpenAI 图像生成响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageGenerationResponse {
+    /// 创建时间戳 (Unix epoch seconds)
     pub created: i64,
+
+    /// 生成的图像数组
     pub data: Vec<ImageData>,
 }
 
 /// 单个图像数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageData {
+    /// Base64 编码的图像数据 (当 response_format="b64_json")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub b64_json: Option<String>,
+
+    /// 图像 URL (当 response_format="url"，返回 data URL)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+
+    /// 修订后的提示词 (如果 Antigravity 返回了文本)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revised_prompt: Option<String>,
 }

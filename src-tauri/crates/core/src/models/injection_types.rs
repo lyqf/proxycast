@@ -72,6 +72,43 @@ impl InjectionRule {
     pub fn is_exact(&self) -> bool {
         !self.pattern.contains('*')
     }
+
+    /// 检查模型是否匹配此规则
+    ///
+    /// 支持的通配符模式：
+    /// - 精确匹配: `claude-sonnet-4-5`
+    /// - 前缀匹配: `claude-*`
+    /// - 后缀匹配: `*-preview`
+    /// - 包含匹配: `*flash*`
+    pub fn matches(&self, model: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        pattern_matches(&self.pattern, model)
+    }
+}
+
+/// 检查模式是否匹配模型名
+///
+/// 支持的通配符模式：
+/// - 精确匹配: `claude-sonnet-4-5`
+/// - 前缀匹配: `claude-*`
+/// - 后缀匹配: `*-preview`
+/// - 包含匹配: `*flash*`
+pub fn pattern_matches(pattern: &str, model: &str) -> bool {
+    if !pattern.contains('*') {
+        return pattern == model;
+    }
+
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    match parts.as_slice() {
+        [prefix, ""] => model.starts_with(prefix),
+        ["", suffix] => model.ends_with(suffix),
+        ["", middle, ""] => model.contains(middle),
+        [prefix, suffix] => model.starts_with(prefix) && model.ends_with(suffix),
+        _ => false,
+    }
 }
 
 /// 规则排序：精确匹配优先，然后按优先级

@@ -8,7 +8,6 @@ use tauri::{App, Manager};
 // use crate::agent::tools::{set_term_scrollback_tool_app_handle, set_terminal_tool_app_handle};
 use crate::agent::AsterAgentState;
 use crate::database;
-use crate::flow_monitor::FlowInterceptor;
 use crate::services::aster_session_store::ProxyCastSessionStore;
 use crate::services::provider_pool_service::ProviderPoolService;
 use crate::services::token_cache_service::TokenCacheService;
@@ -30,8 +29,6 @@ pub fn setup_app(
     shared_stats: Arc<parking_lot::RwLock<telemetry::StatsAggregator>>,
     shared_tokens: Arc<parking_lot::RwLock<telemetry::TokenTracker>>,
     shared_logger: Arc<telemetry::RequestLogger>,
-    flow_monitor: Arc<crate::flow_monitor::FlowMonitor>,
-    flow_interceptor: Arc<FlowInterceptor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 注册全局 SessionStore（作为后备方案）
     // 注意：主要的 SessionStore 注入在 AsterAgentState::init_agent_with_db() 中完成
@@ -92,8 +89,6 @@ pub fn setup_app(
             shared_stats,
             shared_tokens,
             shared_logger,
-            flow_monitor,
-            flow_interceptor,
             app_handle,
         )
         .await;
@@ -112,8 +107,6 @@ async fn start_server_async(
     shared_stats: Arc<parking_lot::RwLock<telemetry::StatsAggregator>>,
     shared_tokens: Arc<parking_lot::RwLock<telemetry::TokenTracker>>,
     shared_logger: Arc<telemetry::RequestLogger>,
-    shared_flow_monitor: Arc<crate::flow_monitor::FlowMonitor>,
-    flow_interceptor: Arc<FlowInterceptor>,
     app_handle: tauri::AppHandle,
 ) {
     // 先加载凭证池中的凭证
@@ -181,7 +174,7 @@ async fn start_server_async(
             .await
             .add("info", "[启动] 正在自动启动服务器...");
         match s
-            .start_with_telemetry_and_flow_monitor(
+            .start_with_telemetry(
                 logs.clone(),
                 pool_service,
                 token_cache,
@@ -189,8 +182,6 @@ async fn start_server_async(
                 Some(shared_stats),
                 Some(shared_tokens),
                 Some(shared_logger),
-                Some(shared_flow_monitor),
-                Some(flow_interceptor),
             )
             .await
         {

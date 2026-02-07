@@ -17,7 +17,7 @@ mod types;
 pub use processor::MessageProcessor;
 pub use types::{
     KiroTokenInfo, WsApiRequest, WsApiResponse, WsConfig, WsConnection, WsEndpoint, WsError,
-    WsFlowEvent, WsKiroEvent, WsMessage, WsStats, WsStatsSnapshot, WsStreamChunk, WsStreamEnd,
+    WsKiroEvent, WsMessage, WsStats, WsStatsSnapshot, WsStreamChunk, WsStreamEnd,
 };
 
 use dashmap::DashMap;

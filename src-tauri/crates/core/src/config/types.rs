@@ -1,0 +1,2119 @@
+//! 配置类型定义
+//!
+//! 定义 ProxyCast 的配置结构，支持 YAML 和 JSON 序列化/反序列化
+//! 保持与旧版 JSON 配置的向后兼容性
+
+use crate::models::injection_types::{InjectionMode, InjectionRule};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+// ============ 凭证池配置类型 ============
+
+/// 凭证池配置
+///
+/// 管理多个 Provider 的多个凭证，支持负载均衡
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CredentialPoolConfig {
+    /// Kiro 凭证列表（OAuth）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kiro: Vec<CredentialEntry>,
+    /// Gemini 凭证列表（OAuth）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gemini: Vec<CredentialEntry>,
+    /// Qwen 凭证列表（OAuth）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qwen: Vec<CredentialEntry>,
+    /// OpenAI 凭证列表（API Key）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub openai: Vec<ApiKeyEntry>,
+    /// Claude 凭证列表（API Key）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claude: Vec<ApiKeyEntry>,
+    /// Gemini API Key 凭证列表（多账号负载均衡）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gemini_api_keys: Vec<GeminiApiKeyEntry>,
+    /// Vertex AI 凭证列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vertex_api_keys: Vec<VertexApiKeyEntry>,
+    /// Codex OAuth 凭证列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub codex: Vec<CredentialEntry>,
+    /// ASR 语音服务凭证列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asr: Vec<AsrCredentialEntry>,
+}
+
+// ============ ASR 语音服务配置类型 ============
+
+/// ASR Provider 类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsrProviderType {
+    /// 本地 Whisper（离线）
+    WhisperLocal,
+    /// 讯飞语音识别
+    Xunfei,
+    /// 百度语音识别
+    Baidu,
+    /// OpenAI Whisper API
+    OpenAI,
+}
+
+impl Default for AsrProviderType {
+    fn default() -> Self {
+        Self::WhisperLocal
+    }
+}
+
+/// Whisper 模型大小
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WhisperModelSize {
+    /// tiny - 最小，最快（~75MB）
+    Tiny,
+    /// base - 基础（~142MB）
+    Base,
+    /// small - 小型（~466MB）
+    Small,
+    /// medium - 中型（~1.5GB）
+    Medium,
+}
+
+impl Default for WhisperModelSize {
+    fn default() -> Self {
+        Self::Base
+    }
+}
+
+/// ASR 凭证条目
+///
+/// 用于语音识别服务的凭证管理
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AsrCredentialEntry {
+    /// 凭证 ID
+    pub id: String,
+    /// Provider 类型
+    pub provider: AsrProviderType,
+    /// 显示名称
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 是否为默认凭证
+    #[serde(default)]
+    pub is_default: bool,
+    /// 是否禁用
+    #[serde(default)]
+    pub disabled: bool,
+    /// 识别语言（如 "zh", "en", "auto"）
+    #[serde(default = "default_asr_language")]
+    pub language: String,
+    /// Whisper 本地配置（仅 WhisperLocal）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whisper_config: Option<WhisperLocalConfig>,
+    /// 讯飞配置（仅 Xunfei）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xunfei_config: Option<XunfeiConfig>,
+    /// 百度配置（仅 Baidu）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baidu_config: Option<BaiduConfig>,
+    /// OpenAI 配置（仅 OpenAI）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai_config: Option<OpenAIAsrConfig>,
+}
+
+fn default_asr_language() -> String {
+    "zh".to_string()
+}
+
+/// Whisper 本地配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct WhisperLocalConfig {
+    /// 模型大小
+    #[serde(default)]
+    pub model: WhisperModelSize,
+    /// 模型文件路径（可选，默认自动下载）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_path: Option<String>,
+}
+
+/// 讯飞语音配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct XunfeiConfig {
+    /// App ID
+    pub app_id: String,
+    /// API Key
+    pub api_key: String,
+    /// API Secret
+    pub api_secret: String,
+}
+
+/// 百度语音配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BaiduConfig {
+    /// API Key
+    pub api_key: String,
+    /// Secret Key
+    pub secret_key: String,
+}
+
+/// OpenAI ASR 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OpenAIAsrConfig {
+    /// API Key
+    pub api_key: String,
+    /// 自定义 Base URL（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// 代理 URL（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+}
+
+/// Gemini API Key 凭证条目
+///
+/// 用于 Gemini API Key 多账号负载均衡
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeminiApiKeyEntry {
+    /// 凭证 ID
+    pub id: String,
+    /// API Key
+    pub api_key: String,
+    /// 自定义 Base URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// 单独的代理 URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+    /// 排除的模型列表（支持通配符）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_models: Vec<String>,
+    /// 是否禁用
+    #[serde(default)]
+    pub disabled: bool,
+}
+
+/// Vertex AI 模型别名映射
+// Vertex AI 类型从 core crate 重新导出
+pub use crate::models::vertex_model::{VertexApiKeyEntry, VertexModelAlias};
+
+#[allow(dead_code)]
+fn default_auth_type() -> String {
+    "oauth".to_string()
+}
+
+/// OAuth 凭证条目
+///
+/// 用于 Kiro、Gemini、Qwen 等 OAuth 认证的 Provider
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CredentialEntry {
+    /// 凭证 ID
+    pub id: String,
+    /// Token 文件路径（相对于 auth_dir）
+    pub token_file: String,
+    /// 是否禁用
+    #[serde(default)]
+    pub disabled: bool,
+    /// 单独的代理 URL（覆盖全局代理）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+}
+
+/// API Key 凭证条目
+///
+/// 用于 OpenAI、Claude 等 API Key 认证的 Provider
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApiKeyEntry {
+    /// 凭证 ID
+    pub id: String,
+    /// API Key
+    pub api_key: String,
+    /// 自定义 Base URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// 是否禁用
+    #[serde(default)]
+    pub disabled: bool,
+    /// 单独的代理 URL（覆盖全局代理）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+}
+
+/// 默认 auth_dir 路径
+fn default_auth_dir() -> String {
+    "~/.proxycast/auth".to_string()
+}
+
+/// 端点 Provider 配置
+///
+/// 允许为不同的客户端端点配置不同的 Provider
+/// 例如：Cursor 使用 Qwen，Claude Code 使用 Kiro，Codex 使用 Codex
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct EndpointProvidersConfig {
+    /// Cursor 客户端使用的 Provider
+    /// 如果为空，则使用 default_provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Claude Code 客户端使用的 Provider
+    /// 如果为空，则使用 default_provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_code: Option<String>,
+    /// Codex 客户端使用的 Provider
+    /// 如果为空，则使用 default_provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<String>,
+    /// Windsurf 客户端使用的 Provider
+    /// 如果为空，则使用 default_provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windsurf: Option<String>,
+    /// Kiro 客户端使用的 Provider
+    /// 如果为空，则使用 default_provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kiro: Option<String>,
+    /// 其他客户端使用的 Provider
+    /// 如果为空，则使用 default_provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
+}
+
+impl EndpointProvidersConfig {
+    /// 根据客户端类型获取配置的 Provider
+    ///
+    /// # 参数
+    /// - `client_type`: 客户端类型的配置键名（cursor, claude_code, codex, windsurf, kiro, other）
+    ///
+    /// # 返回
+    /// 如果配置了对应的 Provider，返回 Some(&String)；否则返回 None
+    pub fn get_provider(&self, client_type: &str) -> Option<&String> {
+        match client_type {
+            "cursor" => self.cursor.as_ref(),
+            "claude_code" => self.claude_code.as_ref(),
+            "codex" => self.codex.as_ref(),
+            "windsurf" => self.windsurf.as_ref(),
+            "kiro" => self.kiro.as_ref(),
+            "other" => self.other.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// 设置客户端类型的 Provider
+    ///
+    /// # 参数
+    /// - `client_type`: 客户端类型的配置键名（cursor, claude_code, codex, windsurf, kiro, other）
+    /// - `provider`: 要设置的 Provider 名称，None 或空字符串表示清除配置
+    ///
+    /// # 返回
+    /// 如果客户端类型有效，返回 true；否则返回 false
+    pub fn set_provider(&mut self, client_type: &str, provider: Option<String>) -> bool {
+        let provider = provider.filter(|p| !p.is_empty());
+        match client_type {
+            "cursor" => {
+                self.cursor = provider;
+                true
+            }
+            "claude_code" => {
+                self.claude_code = provider;
+                true
+            }
+            "codex" => {
+                self.codex = provider;
+                true
+            }
+            "windsurf" => {
+                self.windsurf = provider;
+                true
+            }
+            "kiro" => {
+                self.kiro = provider;
+                true
+            }
+            "other" => {
+                self.other = provider;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// 主配置结构
+///
+/// 支持两种格式：
+/// - 旧版 JSON 格式：`default_provider` 在顶层
+/// - 新版 YAML 格式：`default_provider` 在 `routing` 中
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Config {
+    /// 服务器配置
+    #[serde(default)]
+    pub server: ServerConfig,
+    /// Provider 配置
+    #[serde(default)]
+    pub providers: ProvidersConfig,
+    /// 默认 Provider（向后兼容旧版 JSON 配置）
+    #[serde(default = "default_provider")]
+    pub default_provider: String,
+    /// 路由配置（新版 YAML 配置）
+    #[serde(default)]
+    pub routing: RoutingConfig,
+    /// 重试配置
+    #[serde(default)]
+    pub retry: RetrySettings,
+    /// 日志配置
+    #[serde(default)]
+    pub logging: LoggingConfig,
+    /// 参数注入配置
+    #[serde(default)]
+    pub injection: InjectionSettings,
+    /// 认证目录路径（存储 OAuth Token 文件，支持 ~ 展开）
+    #[serde(default = "default_auth_dir")]
+    pub auth_dir: String,
+    /// 凭证池配置
+    #[serde(default)]
+    pub credential_pool: CredentialPoolConfig,
+    /// 远程管理配置
+    #[serde(default)]
+    pub remote_management: RemoteManagementConfig,
+    /// 配额超限配置
+    #[serde(default)]
+    pub quota_exceeded: QuotaExceededConfig,
+    /// 全局代理 URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+    /// Amp CLI 配置
+    #[serde(default)]
+    pub ampcode: AmpConfig,
+    /// 端点 Provider 配置
+    /// 允许为不同的客户端端点（CC/Codex）配置不同的 Provider
+    #[serde(default)]
+    pub endpoint_providers: EndpointProvidersConfig,
+    /// 关闭时最小化到托盘（而不是退出应用）
+    #[serde(default = "default_minimize_to_tray")]
+    pub minimize_to_tray: bool,
+    /// 用户界面语言 ("zh" 或 "en")
+    #[serde(default = "default_language")]
+    pub language: String,
+    /// 模型配置（动态加载 Provider 和模型列表）
+    #[serde(default)]
+    pub models: ModelsConfig,
+    /// Native Agent 配置
+    #[serde(default)]
+    pub agent: NativeAgentConfig,
+    /// 实验室功能配置
+    #[serde(default)]
+    pub experimental: ExperimentalFeatures,
+    /// 内容创作配置
+    #[serde(default)]
+    pub content_creator: ContentCreatorConfig,
+    /// 导航栏配置
+    #[serde(default)]
+    pub navigation: NavigationConfig,
+}
+
+// ============ Native Agent 配置类型 ============
+
+/// Native Agent 配置
+///
+/// 配置内置 Agent 的行为，包括系统提示词、工具使用规则等
+/// 参考 Manus Agent 的模块化设计，支持灵活配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NativeAgentConfig {
+    /// 是否使用默认系统提示词
+    /// 当 custom_system_prompt 为空时，如果此项为 true 则使用内置默认提示词
+    #[serde(default = "default_use_default_prompt")]
+    pub use_default_system_prompt: bool,
+    /// 自定义系统提示词
+    /// 如果设置了此项，将覆盖默认系统提示词
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_system_prompt: Option<String>,
+    /// 系统提示词模板文件路径（支持 ~ 展开）
+    /// 可以将系统提示词存储在外部文件中，便于管理和版本控制
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt_file: Option<String>,
+    /// 默认模型
+    #[serde(default = "default_agent_model")]
+    pub default_model: String,
+    /// 默认温度参数
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    /// 默认最大 token 数
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+}
+
+fn default_use_default_prompt() -> bool {
+    true
+}
+
+fn default_agent_model() -> String {
+    "claude-sonnet-4-20250514".to_string()
+}
+
+fn default_temperature() -> f32 {
+    0.7
+}
+
+fn default_max_tokens() -> u32 {
+    4096
+}
+
+impl Default for NativeAgentConfig {
+    fn default() -> Self {
+        Self {
+            use_default_system_prompt: default_use_default_prompt(),
+            custom_system_prompt: None,
+            system_prompt_file: None,
+            default_model: default_agent_model(),
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
+        }
+    }
+}
+
+// ============ 内容创作配置类型 ============
+
+/// 内容创作主题配置
+///
+/// 配置内容创作模式中显示的主题标签
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContentCreatorConfig {
+    /// 启用的主题列表
+    #[serde(default = "default_enabled_themes")]
+    pub enabled_themes: Vec<String>,
+}
+
+fn default_enabled_themes() -> Vec<String> {
+    vec![
+        "general".to_string(),
+        "social-media".to_string(),
+        "poster".to_string(),
+        "music".to_string(),
+        "video".to_string(),
+        "novel".to_string(),
+    ]
+}
+
+impl Default for ContentCreatorConfig {
+    fn default() -> Self {
+        Self {
+            enabled_themes: default_enabled_themes(),
+        }
+    }
+}
+
+// ============ 导航栏配置类型 ============
+
+/// 导航栏模块配置
+///
+/// 配置左侧导航栏中显示的功能模块
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NavigationConfig {
+    /// 启用的导航模块列表
+    #[serde(default = "default_enabled_nav_items")]
+    pub enabled_items: Vec<String>,
+}
+
+fn default_enabled_nav_items() -> Vec<String> {
+    vec![
+        "agent".to_string(),
+        "projects".to_string(),
+        "image-gen".to_string(),
+        "api-server".to_string(),
+        "provider-pool".to_string(),
+    ]
+}
+
+impl Default for NavigationConfig {
+    fn default() -> Self {
+        Self {
+            enabled_items: default_enabled_nav_items(),
+        }
+    }
+}
+
+// ============ 实验室功能配置类型 ============
+
+/// 截图对话功能配置
+///
+/// 配置截图对话功能的开关和快捷键
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScreenshotChatConfig {
+    /// 是否启用截图对话功能
+    #[serde(default)]
+    pub enabled: bool,
+    /// 触发截图的全局快捷键
+    #[serde(default = "default_screenshot_shortcut")]
+    pub shortcut: String,
+}
+
+fn default_screenshot_shortcut() -> String {
+    "CommandOrControl+Alt+Q".to_string()
+}
+
+/// 自动更新检查配置
+///
+/// 配置自动检查更新的行为，符合 macOS/Windows 平台规范
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UpdateCheckConfig {
+    /// 是否启用自动检查更新
+    #[serde(default = "default_update_check_enabled")]
+    pub enabled: bool,
+    /// 检查间隔（小时），默认 24 小时
+    #[serde(default = "default_check_interval_hours")]
+    pub check_interval_hours: u32,
+    /// 是否显示系统通知
+    #[serde(default = "default_show_notification")]
+    pub show_notification: bool,
+    /// 上次检查时间（Unix 时间戳，秒）
+    #[serde(default)]
+    pub last_check_timestamp: u64,
+    /// 已跳过的版本（用户选择"跳过此版本"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_version: Option<String>,
+}
+
+fn default_update_check_enabled() -> bool {
+    true
+}
+
+fn default_check_interval_hours() -> u32 {
+    24
+}
+
+fn default_show_notification() -> bool {
+    true
+}
+
+impl Default for UpdateCheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_update_check_enabled(),
+            check_interval_hours: default_check_interval_hours(),
+            show_notification: default_show_notification(),
+            last_check_timestamp: 0,
+            skipped_version: None,
+        }
+    }
+}
+
+impl Default for ScreenshotChatConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shortcut: default_screenshot_shortcut(),
+        }
+    }
+}
+
+/// 实验室功能配置
+///
+/// 管理所有实验性功能的开关和配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ExperimentalFeatures {
+    /// 截图对话功能配置
+    #[serde(default)]
+    pub screenshot_chat: ScreenshotChatConfig,
+    /// 自动更新检查配置
+    #[serde(default)]
+    pub update_check: UpdateCheckConfig,
+    /// 语音输入功能配置
+    #[serde(default)]
+    pub voice_input: VoiceInputConfig,
+}
+
+// ============ 语音输入功能配置类型 ============
+
+/// 语音输入功能配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceInputConfig {
+    /// 是否启用语音输入功能
+    #[serde(default)]
+    pub enabled: bool,
+    /// 触发语音输入的全局快捷键
+    #[serde(default = "default_voice_shortcut")]
+    pub shortcut: String,
+    /// 语音处理配置
+    #[serde(default)]
+    pub processor: VoiceProcessorConfig,
+    /// 输出配置
+    #[serde(default)]
+    pub output: VoiceOutputConfig,
+    /// 自定义指令列表
+    #[serde(default)]
+    pub instructions: Vec<VoiceInstruction>,
+    /// 选择的麦克风设备 ID（为空时使用系统默认设备）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_device_id: Option<String>,
+    /// 是否启用交互音效
+    #[serde(default = "default_sound_enabled")]
+    pub sound_enabled: bool,
+    /// 翻译模式快捷键（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate_shortcut: Option<String>,
+    /// 翻译模式使用的指令 ID
+    #[serde(default = "default_translate_instruction_id")]
+    pub translate_instruction_id: String,
+}
+
+fn default_voice_shortcut() -> String {
+    "CommandOrControl+Shift+V".to_string()
+}
+
+fn default_sound_enabled() -> bool {
+    true
+}
+
+fn default_translate_instruction_id() -> String {
+    "translate_en".to_string()
+}
+
+impl Default for VoiceInputConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shortcut: default_voice_shortcut(),
+            processor: VoiceProcessorConfig::default(),
+            output: VoiceOutputConfig::default(),
+            instructions: default_instructions(),
+            selected_device_id: None,
+            sound_enabled: default_sound_enabled(),
+            translate_shortcut: None,
+            translate_instruction_id: default_translate_instruction_id(),
+        }
+    }
+}
+
+/// 语音处理配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceProcessorConfig {
+    /// 是否启用 AI 润色
+    #[serde(default = "default_polish_enabled")]
+    pub polish_enabled: bool,
+    /// 润色使用的 LLM Provider（使用现有 Provider 系统）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polish_provider: Option<String>,
+    /// 润色使用的模型
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polish_model: Option<String>,
+    /// 默认指令 ID
+    #[serde(default = "default_instruction_id")]
+    pub default_instruction_id: String,
+}
+
+fn default_polish_enabled() -> bool {
+    true
+}
+
+fn default_instruction_id() -> String {
+    "default".to_string()
+}
+
+impl Default for VoiceProcessorConfig {
+    fn default() -> Self {
+        Self {
+            polish_enabled: default_polish_enabled(),
+            polish_provider: None,
+            polish_model: None,
+            default_instruction_id: default_instruction_id(),
+        }
+    }
+}
+
+/// 语音输出配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceOutputConfig {
+    /// 输出模式
+    #[serde(default)]
+    pub mode: VoiceOutputMode,
+    /// 输入延迟（毫秒），用于模拟键盘输入
+    #[serde(default = "default_type_delay_ms")]
+    pub type_delay_ms: u32,
+}
+
+fn default_type_delay_ms() -> u32 {
+    10
+}
+
+impl Default for VoiceOutputConfig {
+    fn default() -> Self {
+        Self {
+            mode: VoiceOutputMode::default(),
+            type_delay_ms: default_type_delay_ms(),
+        }
+    }
+}
+
+/// 语音输出模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceOutputMode {
+    /// 模拟键盘输入
+    Type,
+    /// 复制到剪贴板
+    Clipboard,
+    /// 两者都做
+    Both,
+}
+
+impl Default for VoiceOutputMode {
+    fn default() -> Self {
+        Self::Type
+    }
+}
+
+/// 语音处理指令
+///
+/// 定义不同的文本处理模式，如默认润色、翻译、邮件格式等
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoiceInstruction {
+    /// 指令 ID
+    pub id: String,
+    /// 显示名称
+    pub name: String,
+    /// 指令描述
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Prompt 模板（使用 {{text}} 作为占位符）
+    pub prompt: String,
+    /// 快捷键（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut: Option<String>,
+    /// 是否为系统预设（不可删除）
+    #[serde(default)]
+    pub is_preset: bool,
+    /// 图标（可选，用于 UI 显示）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+/// 默认指令列表
+fn default_instructions() -> Vec<VoiceInstruction> {
+    vec![
+        VoiceInstruction {
+            id: "default".to_string(),
+            name: "默认润色".to_string(),
+            description: Some("去除语气词、添加标点、修正语法".to_string()),
+            prompt: "请对以下语音转文字内容进行润色，去除语气词（如「嗯」「啊」「那个」等），添加合适的标点符号，修正明显的语法错误，但保持原意不变。只输出润色后的文本，不要添加任何解释：\n\n{{text}}".to_string(),
+            shortcut: None,
+            is_preset: true,
+            icon: Some("sparkles".to_string()),
+        },
+        VoiceInstruction {
+            id: "translate_en".to_string(),
+            name: "翻译为英文".to_string(),
+            description: Some("将中文翻译为英文".to_string()),
+            prompt: "请将以下中文内容翻译为英文，保持专业、自然的表达。只输出翻译结果，不要添加任何解释：\n\n{{text}}".to_string(),
+            shortcut: None,
+            is_preset: true,
+            icon: Some("globe".to_string()),
+        },
+        VoiceInstruction {
+            id: "email".to_string(),
+            name: "邮件格式".to_string(),
+            description: Some("整理为正式邮件格式".to_string()),
+            prompt: "请将以下内容整理为正式的邮件格式，包含适当的问候语和结束语，语气专业礼貌。只输出邮件内容，不要添加任何解释：\n\n{{text}}".to_string(),
+            shortcut: None,
+            is_preset: true,
+            icon: Some("mail".to_string()),
+        },
+        VoiceInstruction {
+            id: "summary".to_string(),
+            name: "总结要点".to_string(),
+            description: Some("提取关键信息，生成简洁要点".to_string()),
+            prompt: "请总结以下内容的要点，用简洁的条目列出关键信息：\n\n{{text}}".to_string(),
+            shortcut: None,
+            is_preset: true,
+            icon: Some("list".to_string()),
+        },
+        VoiceInstruction {
+            id: "raw".to_string(),
+            name: "原始输出".to_string(),
+            description: Some("不做任何处理，直接输出识别结果".to_string()),
+            prompt: "{{text}}".to_string(),
+            shortcut: None,
+            is_preset: true,
+            icon: Some("type".to_string()),
+        },
+    ]
+}
+
+impl NativeAgentConfig {
+    /// 获取有效的系统提示词
+    ///
+    /// 优先级：
+    /// 1. system_prompt_file（外部文件）
+    /// 2. custom_system_prompt（配置中的自定义提示词）
+    /// 3. 如果 use_default_system_prompt 为 true，返回 None 让调用方使用默认提示词
+    /// 4. 否则返回 None（不使用任何系统提示词）
+    pub fn get_effective_system_prompt(&self) -> Option<String> {
+        // 优先从文件加载
+        if let Some(file_path) = &self.system_prompt_file {
+            let expanded_path = super::path_utils::expand_tilde(file_path);
+            if let Ok(content) = std::fs::read_to_string(&expanded_path) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+
+        // 其次使用配置中的自定义提示词
+        if let Some(prompt) = &self.custom_system_prompt {
+            let trimmed = prompt.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        // 返回 None，让调用方根据 use_default_system_prompt 决定是否使用默认提示词
+        None
+    }
+}
+
+fn default_minimize_to_tray() -> bool {
+    true
+}
+
+fn default_language() -> String {
+    "zh".to_string()
+}
+
+/// 服务器配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ServerConfig {
+    /// 监听地址
+    #[serde(default = "default_host")]
+    pub host: String,
+    /// 监听端口
+    #[serde(default = "default_port")]
+    pub port: u16,
+    /// API 密钥
+    #[serde(default = "default_api_key")]
+    pub api_key: String,
+    /// TLS 配置
+    #[serde(default)]
+    pub tls: TlsConfig,
+}
+
+/// TLS 配置
+///
+/// 用于启用 HTTPS 支持
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TlsConfig {
+    /// 是否启用 TLS
+    #[serde(default)]
+    pub enable: bool,
+    /// 证书文件路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_path: Option<String>,
+    /// 私钥文件路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+}
+
+/// 远程管理配置
+///
+/// 用于配置远程管理 API 的访问控制
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RemoteManagementConfig {
+    /// 是否允许远程访问（非 localhost）
+    #[serde(default)]
+    pub allow_remote: bool,
+    /// 管理 API 密钥（为空时禁用管理 API）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_key: Option<String>,
+    /// 是否禁用控制面板
+    #[serde(default)]
+    pub disable_control_panel: bool,
+}
+
+/// 配额超限配置
+///
+/// 用于配置配额超限时的自动切换策略
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QuotaExceededConfig {
+    /// 是否自动切换到下一个凭证
+    #[serde(default = "default_switch_project")]
+    pub switch_project: bool,
+    /// 是否尝试使用预览模型
+    #[serde(default = "default_switch_preview_model")]
+    pub switch_preview_model: bool,
+    /// 冷却时间（秒）
+    #[serde(default = "default_cooldown_seconds")]
+    pub cooldown_seconds: u64,
+}
+
+fn default_switch_project() -> bool {
+    true
+}
+
+fn default_switch_preview_model() -> bool {
+    true
+}
+
+fn default_cooldown_seconds() -> u64 {
+    300
+}
+
+impl Default for QuotaExceededConfig {
+    fn default() -> Self {
+        Self {
+            switch_project: default_switch_project(),
+            switch_preview_model: default_switch_preview_model(),
+            cooldown_seconds: default_cooldown_seconds(),
+        }
+    }
+}
+
+/// Amp CLI 模型映射
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AmpModelMapping {
+    /// 源模型名称
+    pub from: String,
+    /// 目标模型名称
+    pub to: String,
+}
+
+/// Amp CLI 配置
+///
+/// 用于 Amp CLI 集成
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AmpConfig {
+    /// 上游 URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_url: Option<String>,
+    /// 模型映射列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_mappings: Vec<AmpModelMapping>,
+    /// 是否限制管理端点只能从 localhost 访问
+    #[serde(default)]
+    pub restrict_management_to_localhost: bool,
+}
+
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_port() -> u16 {
+    8999
+}
+
+pub const DEFAULT_API_KEY: &str = "proxy_cast";
+
+fn default_api_key() -> String {
+    DEFAULT_API_KEY.to_string()
+}
+
+/// 生成安全 API Key（32 字节随机）
+pub fn generate_secure_api_key() -> String {
+    use rand::distributions::Alphanumeric;
+    use rand::Rng;
+
+    let token: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+    format!("pc_{token}")
+}
+
+/// 是否为默认 API Key
+pub fn is_default_api_key(api_key: &str) -> bool {
+    api_key == DEFAULT_API_KEY
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_port(),
+            api_key: default_api_key(),
+            tls: TlsConfig::default(),
+        }
+    }
+}
+
+/// Provider 配置集合
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProvidersConfig {
+    /// Kiro Provider 配置
+    #[serde(default)]
+    pub kiro: ProviderConfig,
+    /// Gemini Provider 配置
+    #[serde(default)]
+    pub gemini: ProviderConfig,
+    /// Qwen Provider 配置
+    #[serde(default)]
+    pub qwen: ProviderConfig,
+    /// OpenAI 自定义 Provider 配置
+    #[serde(default)]
+    pub openai: CustomProviderConfig,
+    /// Claude 自定义 Provider 配置
+    #[serde(default)]
+    pub claude: CustomProviderConfig,
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            kiro: ProviderConfig {
+                enabled: true,
+                credentials_path: Some("~/.aws/sso/cache/kiro-auth-token.json".to_string()),
+                region: Some("us-east-1".to_string()),
+                project_id: None,
+            },
+            gemini: ProviderConfig {
+                enabled: false,
+                credentials_path: Some("~/.gemini/oauth_creds.json".to_string()),
+                region: None,
+                project_id: None,
+            },
+            qwen: ProviderConfig {
+                enabled: false,
+                credentials_path: Some("~/.qwen/oauth_creds.json".to_string()),
+                region: None,
+                project_id: None,
+            },
+            openai: CustomProviderConfig {
+                enabled: false,
+                api_key: None,
+                base_url: Some("https://api.openai.com/v1".to_string()),
+            },
+            claude: CustomProviderConfig {
+                enabled: false,
+                api_key: None,
+                base_url: Some("https://api.anthropic.com".to_string()),
+            },
+        }
+    }
+}
+
+/// OAuth Provider 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ProviderConfig {
+    /// 是否启用
+    #[serde(default)]
+    pub enabled: bool,
+    /// 凭证文件路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_path: Option<String>,
+    /// 区域
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// 项目 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+}
+
+/// 自定义 Provider 配置（API Key 方式）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CustomProviderConfig {
+    /// 是否启用
+    #[serde(default)]
+    pub enabled: bool,
+    /// API 密钥
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// 基础 URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
+/// 路由配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RoutingConfig {
+    /// 默认 Provider
+    #[serde(default = "default_provider")]
+    pub default_provider: String,
+    /// 模型别名映射
+    #[serde(default)]
+    pub model_aliases: HashMap<String, String>,
+}
+
+fn default_provider() -> String {
+    "kiro".to_string()
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            default_provider: default_provider(),
+            model_aliases: HashMap::new(),
+        }
+    }
+}
+
+/// 重试配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RetrySettings {
+    /// 最大重试次数
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// 基础延迟（毫秒）
+    #[serde(default = "default_base_delay_ms")]
+    pub base_delay_ms: u64,
+    /// 最大延迟（毫秒）
+    #[serde(default = "default_max_delay_ms")]
+    pub max_delay_ms: u64,
+    /// 是否自动切换 Provider
+    #[serde(default = "default_auto_switch")]
+    pub auto_switch_provider: bool,
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+fn default_base_delay_ms() -> u64 {
+    1000
+}
+
+fn default_max_delay_ms() -> u64 {
+    30000
+}
+
+fn default_auto_switch() -> bool {
+    true
+}
+
+impl Default for RetrySettings {
+    fn default() -> Self {
+        Self {
+            max_retries: default_max_retries(),
+            base_delay_ms: default_base_delay_ms(),
+            max_delay_ms: default_max_delay_ms(),
+            auto_switch_provider: default_auto_switch(),
+        }
+    }
+}
+
+/// 日志配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LoggingConfig {
+    /// 是否启用日志
+    #[serde(default = "default_logging_enabled")]
+    pub enabled: bool,
+    /// 日志级别
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// 日志保留天数
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    /// 是否包含请求体
+    #[serde(default)]
+    pub include_request_body: bool,
+}
+
+fn default_logging_enabled() -> bool {
+    true
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_retention_days() -> u32 {
+    7
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_logging_enabled(),
+            level: default_log_level(),
+            retention_days: default_retention_days(),
+            include_request_body: false,
+        }
+    }
+}
+
+// ============ 模型配置类型 ============
+
+/// 模型信息
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelInfo {
+    /// 模型 ID
+    pub id: String,
+    /// 模型显示名称（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 是否启用
+    #[serde(default = "default_model_enabled")]
+    pub enabled: bool,
+}
+
+fn default_model_enabled() -> bool {
+    true
+}
+
+/// Provider 模型配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderModelsConfig {
+    /// Provider 显示标签
+    pub label: String,
+    /// 模型列表
+    #[serde(default)]
+    pub models: Vec<ModelInfo>,
+}
+
+/// 模型配置（顶层）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelsConfig {
+    /// 是否从 models.dev 获取模型列表（预留功能）
+    #[serde(default)]
+    pub fetch_from_models_dev: bool,
+    /// models.dev 缓存 TTL（秒）
+    #[serde(default = "default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+    /// Provider 模型配置
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderModelsConfig>,
+}
+
+fn default_cache_ttl_secs() -> u64 {
+    3600
+}
+
+impl Default for ModelsConfig {
+    fn default() -> Self {
+        let mut providers = HashMap::new();
+
+        // Claude (直连 Anthropic API)
+        providers.insert(
+            "claude".to_string(),
+            ProviderModelsConfig {
+                label: "Claude".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-opus-4-5-20251101".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-20250514".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Anthropic (API Key Provider)
+        providers.insert(
+            "anthropic".to_string(),
+            ProviderModelsConfig {
+                label: "Anthropic".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-opus-4-5-20251101".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-20250514".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Kiro
+        providers.insert(
+            "kiro".to_string(),
+            ProviderModelsConfig {
+                label: "Kiro".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-sonnet-4-20250514".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // OpenAI
+        providers.insert(
+            "openai".to_string(),
+            ProviderModelsConfig {
+                label: "OpenAI".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "gpt-4o".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gpt-4o-mini".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gpt-4-turbo".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o1".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o1-mini".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o3".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "o3-mini".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Gemini
+        providers.insert(
+            "gemini".to_string(),
+            ProviderModelsConfig {
+                label: "Gemini".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "gemini-2.0-flash-exp".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-1.5-pro".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-1.5-flash".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Qwen
+        providers.insert(
+            "qwen".to_string(),
+            ProviderModelsConfig {
+                label: "通义千问".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "qwen-max".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "qwen-plus".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "qwen-turbo".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // DeepSeek
+        providers.insert(
+            "deepseek".to_string(),
+            ProviderModelsConfig {
+                label: "DeepSeek".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "deepseek-reasoner".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "deepseek-chat".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Codex - 模型列表从别名配置动态加载
+        providers.insert(
+            "codex".to_string(),
+            ProviderModelsConfig {
+                label: "Codex".to_string(),
+                models: vec![], // 从 aliases/codex.json 动态加载
+            },
+        );
+
+        // Claude OAuth
+        providers.insert(
+            "claude_oauth".to_string(),
+            ProviderModelsConfig {
+                label: "Claude OAuth".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "claude-sonnet-4-5-20250929".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "claude-3-5-sonnet-20241022".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Antigravity
+        providers.insert(
+            "antigravity".to_string(),
+            ProviderModelsConfig {
+                label: "Antigravity".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "gemini-3-pro-preview".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-3-pro-image-preview".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-3-flash-preview".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-2.5-computer-use-preview-10-2025".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-claude-sonnet-4-5".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-claude-sonnet-4-5-thinking".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "gemini-claude-opus-4-5-thinking".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        // Submodel
+        providers.insert(
+            "submodel".to_string(),
+            ProviderModelsConfig {
+                label: "Submodel".to_string(),
+                models: vec![
+                    ModelInfo {
+                        id: "openai/gpt-oss-120b".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "Qwen/Qwen3-235B-A22B-Instruct-2507".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "Qwen/Qwen3-235B-A22B-Thinking-2507".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "deepseek-ai/DeepSeek-R1-0528".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "deepseek-ai/DeepSeek-V3.1".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "deepseek-ai/DeepSeek-V3-0324".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "zai-org/GLM-4.5-FP8".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                    ModelInfo {
+                        id: "zai-org/GLM-4.5-Air".to_string(),
+                        name: None,
+                        enabled: true,
+                    },
+                ],
+            },
+        );
+
+        Self {
+            fetch_from_models_dev: false,
+            cache_ttl_secs: default_cache_ttl_secs(),
+            providers,
+        }
+    }
+}
+
+/// 参数注入配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InjectionSettings {
+    /// 是否启用参数注入
+    #[serde(default = "default_injection_enabled")]
+    pub enabled: bool,
+    /// 注入规则列表
+    #[serde(default)]
+    pub rules: Vec<InjectionRuleConfig>,
+}
+
+fn default_injection_enabled() -> bool {
+    false
+}
+
+impl Default for InjectionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_injection_enabled(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+/// 注入规则配置（用于 YAML/JSON 序列化）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InjectionRuleConfig {
+    /// 规则 ID
+    pub id: String,
+    /// 模型匹配模式（支持通配符）
+    pub pattern: String,
+    /// 要注入的参数
+    pub parameters: serde_json::Value,
+    /// 注入模式
+    #[serde(default)]
+    pub mode: InjectionMode,
+    /// 优先级（数字越小优先级越高）
+    #[serde(default = "default_priority")]
+    pub priority: i32,
+    /// 是否启用
+    #[serde(default = "default_rule_enabled")]
+    pub enabled: bool,
+}
+
+fn default_rule_enabled() -> bool {
+    true
+}
+
+fn default_priority() -> i32 {
+    100
+}
+
+impl From<InjectionRuleConfig> for InjectionRule {
+    fn from(config: InjectionRuleConfig) -> Self {
+        let mut rule = InjectionRule::new(&config.id, &config.pattern, config.parameters);
+        rule.mode = config.mode;
+        rule.priority = config.priority;
+        rule.enabled = config.enabled;
+        rule
+    }
+}
+
+impl From<&InjectionRule> for InjectionRuleConfig {
+    fn from(rule: &InjectionRule) -> Self {
+        Self {
+            id: rule.id.clone(),
+            pattern: rule.pattern.clone(),
+            parameters: rule.parameters.clone(),
+            mode: rule.mode,
+            priority: rule.priority,
+            enabled: rule.enabled,
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            providers: ProvidersConfig::default(),
+            default_provider: default_provider(),
+            routing: RoutingConfig::default(),
+            retry: RetrySettings::default(),
+            logging: LoggingConfig::default(),
+            injection: InjectionSettings::default(),
+            auth_dir: default_auth_dir(),
+            credential_pool: CredentialPoolConfig::default(),
+            remote_management: RemoteManagementConfig::default(),
+            quota_exceeded: QuotaExceededConfig::default(),
+            proxy_url: None,
+            ampcode: AmpConfig::default(),
+            endpoint_providers: EndpointProvidersConfig::default(),
+            minimize_to_tray: default_minimize_to_tray(),
+            language: default_language(),
+            models: ModelsConfig::default(),
+            agent: NativeAgentConfig::default(),
+            experimental: ExperimentalFeatures::default(),
+            content_creator: ContentCreatorConfig::default(),
+            navigation: NavigationConfig::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.server.host, "127.0.0.1");
+        assert_eq!(config.server.port, 8999);
+        assert_eq!(config.server.api_key, "proxy_cast");
+        assert!(config.providers.kiro.enabled);
+        assert!(!config.providers.gemini.enabled);
+        assert_eq!(config.default_provider, "kiro");
+        assert_eq!(config.routing.default_provider, "kiro");
+        assert_eq!(config.retry.max_retries, 3);
+        assert!(config.logging.enabled);
+        assert!(!config.injection.enabled);
+        assert!(config.injection.rules.is_empty());
+        // 新增字段测试
+        assert_eq!(config.auth_dir, "~/.proxycast/auth");
+        assert!(config.credential_pool.kiro.is_empty());
+        assert!(config.credential_pool.openai.is_empty());
+    }
+
+    #[test]
+    fn test_credential_pool_config_default() {
+        let pool = CredentialPoolConfig::default();
+        assert!(pool.kiro.is_empty());
+        assert!(pool.gemini.is_empty());
+        assert!(pool.qwen.is_empty());
+        assert!(pool.openai.is_empty());
+        assert!(pool.claude.is_empty());
+    }
+
+    #[test]
+    fn test_credential_entry_serialization() {
+        let entry = CredentialEntry {
+            id: "kiro-main".to_string(),
+            token_file: "kiro/main-token.json".to_string(),
+            disabled: false,
+            proxy_url: None,
+        };
+        let yaml = serde_yaml::to_string(&entry).unwrap();
+        assert!(yaml.contains("id: kiro-main"));
+        assert!(yaml.contains("token_file: kiro/main-token.json"));
+
+        let parsed: CredentialEntry = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, entry);
+    }
+
+    #[test]
+    fn test_api_key_entry_serialization() {
+        let entry = ApiKeyEntry {
+            id: "openai-main".to_string(),
+            api_key: "sk-test-key".to_string(),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            disabled: false,
+            proxy_url: None,
+        };
+        let yaml = serde_yaml::to_string(&entry).unwrap();
+        assert!(yaml.contains("id: openai-main"));
+        assert!(yaml.contains("api_key: sk-test-key"));
+
+        let parsed: ApiKeyEntry = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, entry);
+    }
+
+    #[test]
+    fn test_api_key_entry_without_base_url() {
+        let entry = ApiKeyEntry {
+            id: "claude-main".to_string(),
+            api_key: "sk-ant-test".to_string(),
+            base_url: None,
+            disabled: true,
+            proxy_url: None,
+        };
+        let yaml = serde_yaml::to_string(&entry).unwrap();
+        // base_url should be skipped when None
+        assert!(!yaml.contains("base_url"));
+        assert!(yaml.contains("disabled: true"));
+
+        let parsed: ApiKeyEntry = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, entry);
+    }
+
+    #[test]
+    fn test_credential_pool_config_serialization() {
+        let pool = CredentialPoolConfig {
+            kiro: vec![CredentialEntry {
+                id: "kiro-1".to_string(),
+                token_file: "kiro/token-1.json".to_string(),
+                disabled: false,
+                proxy_url: None,
+            }],
+            gemini: vec![],
+            qwen: vec![],
+            openai: vec![ApiKeyEntry {
+                id: "openai-1".to_string(),
+                api_key: "sk-xxx".to_string(),
+                base_url: None,
+                disabled: false,
+                proxy_url: None,
+            }],
+            claude: vec![],
+            gemini_api_keys: vec![],
+            vertex_api_keys: vec![],
+            codex: vec![],
+            asr: vec![],
+        };
+
+        let yaml = serde_yaml::to_string(&pool).unwrap();
+        // Empty vecs should be skipped
+        assert!(!yaml.contains("gemini"));
+        assert!(!yaml.contains("qwen"));
+        assert!(!yaml.contains("claude"));
+        assert!(yaml.contains("kiro"));
+        assert!(yaml.contains("openai"));
+
+        let parsed: CredentialPoolConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, pool);
+    }
+
+    #[test]
+    fn test_server_config_default() {
+        let config = ServerConfig::default();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8999);
+        assert_eq!(config.api_key, "proxy_cast");
+    }
+
+    #[test]
+    fn test_retry_settings_default() {
+        let config = RetrySettings::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.base_delay_ms, 1000);
+        assert_eq!(config.max_delay_ms, 30000);
+        assert!(config.auto_switch_provider);
+    }
+
+    #[test]
+    fn test_logging_config_default() {
+        let config = LoggingConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.level, "info");
+        assert_eq!(config.retention_days, 7);
+        assert!(!config.include_request_body);
+    }
+
+    #[test]
+    fn test_routing_config_default() {
+        let config = RoutingConfig::default();
+        assert_eq!(config.default_provider, "kiro");
+        assert!(config.model_aliases.is_empty());
+    }
+
+    #[test]
+    fn test_endpoint_providers_config_default() {
+        let config = EndpointProvidersConfig::default();
+        assert!(config.cursor.is_none());
+        assert!(config.claude_code.is_none());
+        assert!(config.codex.is_none());
+        assert!(config.windsurf.is_none());
+        assert!(config.kiro.is_none());
+        assert!(config.other.is_none());
+    }
+
+    #[test]
+    fn test_endpoint_providers_config_get_provider() {
+        let config = EndpointProvidersConfig {
+            cursor: Some("qwen".to_string()),
+            claude_code: Some("kiro".to_string()),
+            codex: Some("codex".to_string()),
+            windsurf: None,
+            kiro: Some("gemini".to_string()),
+            other: None,
+        };
+
+        assert_eq!(config.get_provider("cursor"), Some(&"qwen".to_string()));
+        assert_eq!(
+            config.get_provider("claude_code"),
+            Some(&"kiro".to_string())
+        );
+        assert_eq!(config.get_provider("codex"), Some(&"codex".to_string()));
+        assert_eq!(config.get_provider("windsurf"), None);
+        assert_eq!(config.get_provider("kiro"), Some(&"gemini".to_string()));
+        assert_eq!(config.get_provider("other"), None);
+        assert_eq!(config.get_provider("invalid"), None);
+    }
+
+    #[test]
+    fn test_endpoint_providers_config_set_provider() {
+        let mut config = EndpointProvidersConfig::default();
+
+        // 设置有效的客户端类型
+        assert!(config.set_provider("cursor", Some("qwen".to_string())));
+        assert_eq!(config.cursor, Some("qwen".to_string()));
+
+        assert!(config.set_provider("claude_code", Some("kiro".to_string())));
+        assert_eq!(config.claude_code, Some("kiro".to_string()));
+
+        assert!(config.set_provider("codex", Some("codex".to_string())));
+        assert_eq!(config.codex, Some("codex".to_string()));
+
+        assert!(config.set_provider("windsurf", Some("gemini".to_string())));
+        assert_eq!(config.windsurf, Some("gemini".to_string()));
+
+        assert!(config.set_provider("kiro", Some("openai".to_string())));
+        assert_eq!(config.kiro, Some("openai".to_string()));
+
+        assert!(config.set_provider("other", Some("claude".to_string())));
+        assert_eq!(config.other, Some("claude".to_string()));
+
+        // 设置无效的客户端类型
+        assert!(!config.set_provider("invalid", Some("test".to_string())));
+    }
+
+    #[test]
+    fn test_endpoint_providers_config_set_provider_clear() {
+        let mut config = EndpointProvidersConfig {
+            cursor: Some("qwen".to_string()),
+            claude_code: Some("kiro".to_string()),
+            codex: None,
+            windsurf: None,
+            kiro: None,
+            other: None,
+        };
+
+        // 使用 None 清除配置
+        assert!(config.set_provider("cursor", None));
+        assert_eq!(config.cursor, None);
+
+        // 使用空字符串清除配置
+        assert!(config.set_provider("claude_code", Some("".to_string())));
+        assert_eq!(config.claude_code, None);
+    }
+
+    #[test]
+    fn test_endpoint_providers_config_serialization() {
+        let config = EndpointProvidersConfig {
+            cursor: Some("qwen".to_string()),
+            claude_code: Some("kiro".to_string()),
+            codex: None,
+            windsurf: None,
+            kiro: None,
+            other: None,
+        };
+
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("cursor: qwen"));
+        assert!(yaml.contains("claude_code: kiro"));
+        // None 值应该被跳过
+        assert!(!yaml.contains("codex"));
+        assert!(!yaml.contains("windsurf"));
+        assert!(!yaml.contains("kiro:"));
+        assert!(!yaml.contains("other"));
+
+        let parsed: EndpointProvidersConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn test_endpoint_providers_config_json_serialization() {
+        let config = EndpointProvidersConfig {
+            cursor: Some("qwen".to_string()),
+            claude_code: None,
+            codex: Some("codex".to_string()),
+            windsurf: None,
+            kiro: None,
+            other: Some("openai".to_string()),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: EndpointProvidersConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn test_screenshot_chat_config_default() {
+        let config = ScreenshotChatConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.shortcut, "CommandOrControl+Alt+Q");
+    }
+
+    #[test]
+    fn test_experimental_features_default() {
+        let config = ExperimentalFeatures::default();
+        assert!(!config.screenshot_chat.enabled);
+        assert_eq!(config.screenshot_chat.shortcut, "CommandOrControl+Alt+Q");
+    }
+
+    #[test]
+    fn test_experimental_features_serialization() {
+        let config = ExperimentalFeatures {
+            screenshot_chat: ScreenshotChatConfig {
+                enabled: true,
+                shortcut: "CommandOrControl+Alt+X".to_string(),
+            },
+            ..Default::default()
+        };
+
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("enabled: true"));
+        assert!(yaml.contains("shortcut: CommandOrControl+Alt+X"));
+
+        let parsed: ExperimentalFeatures = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn test_config_with_experimental() {
+        let config = Config::default();
+        assert!(!config.experimental.screenshot_chat.enabled);
+        assert_eq!(
+            config.experimental.screenshot_chat.shortcut,
+            "CommandOrControl+Alt+Q"
+        );
+        // 语音输入测试
+        assert!(!config.experimental.voice_input.enabled);
+        assert_eq!(
+            config.experimental.voice_input.shortcut,
+            "CommandOrControl+Shift+V"
+        );
+    }
+
+    #[test]
+    fn test_asr_credential_entry_serialization() {
+        let entry = AsrCredentialEntry {
+            id: "whisper-local".to_string(),
+            provider: AsrProviderType::WhisperLocal,
+            name: Some("本地 Whisper".to_string()),
+            is_default: true,
+            disabled: false,
+            language: "zh".to_string(),
+            whisper_config: Some(WhisperLocalConfig {
+                model: WhisperModelSize::Base,
+                model_path: None,
+            }),
+            xunfei_config: None,
+            baidu_config: None,
+            openai_config: None,
+        };
+        let yaml = serde_yaml::to_string(&entry).unwrap();
+        assert!(yaml.contains("provider: whisper_local"));
+        assert!(yaml.contains("is_default: true"));
+
+        let parsed: AsrCredentialEntry = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, entry);
+    }
+
+    #[test]
+    fn test_voice_input_config_default() {
+        let config = VoiceInputConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.shortcut, "CommandOrControl+Shift+V");
+        assert!(config.processor.polish_enabled);
+        assert_eq!(config.processor.default_instruction_id, "default");
+        assert_eq!(config.output.mode, VoiceOutputMode::Type);
+        assert!(!config.instructions.is_empty());
+    }
+
+    #[test]
+    fn test_voice_instruction_serialization() {
+        let instruction = VoiceInstruction {
+            id: "custom".to_string(),
+            name: "自定义指令".to_string(),
+            description: Some("测试指令".to_string()),
+            prompt: "处理: {{text}}".to_string(),
+            shortcut: Some("CommandOrControl+1".to_string()),
+            is_preset: false,
+            icon: None,
+        };
+        let yaml = serde_yaml::to_string(&instruction).unwrap();
+        assert!(yaml.contains("id: custom"));
+        assert!(yaml.contains("{{text}}"));
+
+        let parsed: VoiceInstruction = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, instruction);
+    }
+
+    #[test]
+    fn test_credential_pool_with_asr() {
+        let pool = CredentialPoolConfig {
+            kiro: vec![],
+            gemini: vec![],
+            qwen: vec![],
+            openai: vec![],
+            claude: vec![],
+            gemini_api_keys: vec![],
+            vertex_api_keys: vec![],
+            codex: vec![],
+            asr: vec![AsrCredentialEntry {
+                id: "xunfei-1".to_string(),
+                provider: AsrProviderType::Xunfei,
+                name: Some("讯飞语音".to_string()),
+                is_default: false,
+                disabled: false,
+                language: "zh".to_string(),
+                whisper_config: None,
+                xunfei_config: Some(XunfeiConfig {
+                    app_id: "test_app_id".to_string(),
+                    api_key: "test_api_key".to_string(),
+                    api_secret: "test_api_secret".to_string(),
+                }),
+                baidu_config: None,
+                openai_config: None,
+            }],
+        };
+
+        let yaml = serde_yaml::to_string(&pool).unwrap();
+        assert!(yaml.contains("asr:"));
+        assert!(yaml.contains("provider: xunfei"));
+
+        let parsed: CredentialPoolConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed.asr.len(), 1);
+        assert_eq!(parsed.asr[0].provider, AsrProviderType::Xunfei);
+    }
+}

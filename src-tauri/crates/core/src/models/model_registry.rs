@@ -1,25 +1,38 @@
 //! 模型注册表数据结构
+//!
+//! 借鉴 opencode 的模型管理方式，定义增强的模型元数据结构
 
 use serde::{Deserialize, Serialize};
 
 /// 模型能力
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelCapabilities {
+    /// 是否支持视觉输入
     pub vision: bool,
+    /// 是否支持工具调用
     pub tools: bool,
+    /// 是否支持流式输出
     pub streaming: bool,
+    /// 是否支持 JSON 模式
     pub json_mode: bool,
+    /// 是否支持函数调用
     pub function_calling: bool,
+    /// 是否支持推理/思考
     pub reasoning: bool,
 }
 
 /// 模型定价
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
+    /// 输入价格（每百万 token）
     pub input_per_million: Option<f64>,
+    /// 输出价格（每百万 token）
     pub output_per_million: Option<f64>,
+    /// 缓存读取价格（每百万 token）
     pub cache_read_per_million: Option<f64>,
+    /// 缓存写入价格（每百万 token）
     pub cache_write_per_million: Option<f64>,
+    /// 货币单位 ("USD" | "CNY")
     pub currency: String,
 }
 
@@ -38,9 +51,13 @@ impl Default for ModelPricing {
 /// 模型限制
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelLimits {
+    /// 上下文长度
     pub context_length: Option<u32>,
+    /// 最大输出 token 数
     pub max_output_tokens: Option<u32>,
+    /// 每分钟请求数限制
     pub requests_per_minute: Option<u32>,
+    /// 每分钟 token 数限制
     pub tokens_per_minute: Option<u32>,
 }
 
@@ -48,11 +65,17 @@ pub struct ModelLimits {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelStatus {
+    /// 活跃可用
     Active,
+    /// 预览版
     Preview,
+    /// Alpha 测试
     Alpha,
+    /// Beta 测试
     Beta,
+    /// 已弃用
     Deprecated,
+    /// 旧版本
     Legacy,
 }
 
@@ -95,8 +118,11 @@ impl std::str::FromStr for ModelStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTier {
+    /// 快速响应，适合简单任务
     Mini,
+    /// 均衡性能，适合大多数任务
     Pro,
+    /// 最强能力，适合复杂任务
     Max,
 }
 
@@ -133,10 +159,16 @@ impl std::str::FromStr for ModelTier {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelSource {
+    /// 从内嵌资源加载（构建时打包）
     Embedded,
+    /// 从 models.dev API 获取（已弃用）
     ModelsDev,
+    /// 本地硬编码（国内模型等）
     Local,
+    /// 用户自定义
     Custom,
+    /// 从 Provider API 获取
+    Api,
 }
 
 impl Default for ModelSource {
@@ -152,6 +184,7 @@ impl std::fmt::Display for ModelSource {
             Self::ModelsDev => write!(f, "models.dev"),
             Self::Local => write!(f, "local"),
             Self::Custom => write!(f, "custom"),
+            Self::Api => write!(f, "api"),
         }
     }
 }
@@ -165,6 +198,7 @@ impl std::str::FromStr for ModelSource {
             "models.dev" | "modelsdev" => Ok(Self::ModelsDev),
             "local" => Ok(Self::Local),
             "custom" => Ok(Self::Custom),
+            "api" => Ok(Self::Api),
             _ => Err(format!("Unknown model source: {s}")),
         }
     }
@@ -173,25 +207,42 @@ impl std::str::FromStr for ModelSource {
 /// 增强的模型元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedModelMetadata {
+    /// 模型 ID (如 "claude-sonnet-4-5-20250514")
     pub id: String,
+    /// 显示名称 (如 "Claude Sonnet 4.5")
     pub display_name: String,
+    /// Provider ID (如 "anthropic", "openai", "dashscope")
     pub provider_id: String,
+    /// Provider 显示名称
     pub provider_name: String,
+    /// 模型家族 (如 "sonnet", "gpt-4", "qwen")
     pub family: Option<String>,
+    /// 服务等级
     pub tier: ModelTier,
+    /// 模型能力
     pub capabilities: ModelCapabilities,
+    /// 定价信息
     pub pricing: Option<ModelPricing>,
+    /// 限制信息
     pub limits: ModelLimits,
+    /// 模型状态
     pub status: ModelStatus,
+    /// 发布日期
     pub release_date: Option<String>,
+    /// 是否为最新版本
     pub is_latest: bool,
+    /// 描述
     pub description: Option<String>,
+    /// 数据来源
     pub source: ModelSource,
+    /// 创建时间 (Unix 时间戳)
     pub created_at: i64,
+    /// 最后更新时间 (Unix 时间戳)
     pub updated_at: i64,
 }
 
 impl EnhancedModelMetadata {
+    /// 创建新的模型元数据
     pub fn new(
         id: String,
         display_name: String,
@@ -219,51 +270,61 @@ impl EnhancedModelMetadata {
         }
     }
 
+    /// 设置模型家族
     pub fn with_family(mut self, family: impl Into<String>) -> Self {
         self.family = Some(family.into());
         self
     }
 
+    /// 设置服务等级
     pub fn with_tier(mut self, tier: ModelTier) -> Self {
         self.tier = tier;
         self
     }
 
+    /// 设置模型能力
     pub fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
         self.capabilities = capabilities;
         self
     }
 
+    /// 设置定价信息
     pub fn with_pricing(mut self, pricing: ModelPricing) -> Self {
         self.pricing = Some(pricing);
         self
     }
 
+    /// 设置限制信息
     pub fn with_limits(mut self, limits: ModelLimits) -> Self {
         self.limits = limits;
         self
     }
 
+    /// 设置模型状态
     pub fn with_status(mut self, status: ModelStatus) -> Self {
         self.status = status;
         self
     }
 
+    /// 设置发布日期
     pub fn with_release_date(mut self, date: impl Into<String>) -> Self {
         self.release_date = Some(date.into());
         self
     }
 
+    /// 设置是否为最新版本
     pub fn with_is_latest(mut self, is_latest: bool) -> Self {
         self.is_latest = is_latest;
         self
     }
 
+    /// 设置描述
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
 
+    /// 设置数据来源
     pub fn with_source(mut self, source: ModelSource) -> Self {
         self.source = source;
         self
@@ -273,17 +334,26 @@ impl EnhancedModelMetadata {
 /// 用户模型偏好
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelPreference {
+    /// 模型 ID
     pub model_id: String,
+    /// 是否收藏
     pub is_favorite: bool,
+    /// 是否隐藏
     pub is_hidden: bool,
+    /// 自定义别名
     pub custom_alias: Option<String>,
+    /// 使用次数
     pub usage_count: u32,
+    /// 最后使用时间 (Unix 时间戳)
     pub last_used_at: Option<i64>,
+    /// 创建时间 (Unix 时间戳)
     pub created_at: i64,
+    /// 更新时间 (Unix 时间戳)
     pub updated_at: i64,
 }
 
 impl UserModelPreference {
+    /// 创建新的用户偏好
     pub fn new(model_id: String) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
@@ -302,45 +372,63 @@ impl UserModelPreference {
 /// 模型同步状态
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelSyncState {
+    /// 最后同步时间 (Unix 时间戳)
     pub last_sync_at: Option<i64>,
+    /// 同步的模型数量
     pub model_count: u32,
+    /// 是否正在同步
     pub is_syncing: bool,
+    /// 最后同步错误
     pub last_error: Option<String>,
 }
 
-// Provider Alias 相关类型
+// ============================================================================
+// Provider Alias 相关类型（用于 Kiro、Antigravity 等中转服务）
+// ============================================================================
 
 /// 单个模型别名映射
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelAlias {
+    /// 实际模型 ID（如 "claude-sonnet-4-5-20250929"）
     pub actual: String,
+    /// 内部 API 名称（如 "CLAUDE_SONNET_4_5_20250929_V1_0"）
     pub internal_name: Option<String>,
+    /// 原始 Provider（如 "anthropic"）
     pub provider: Option<String>,
+    /// 描述
     pub description: Option<String>,
 }
 
 /// Provider 的别名配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderAliasConfig {
+    /// Provider ID（如 "kiro"、"antigravity"）
     pub provider: String,
+    /// 描述
     pub description: Option<String>,
+    /// 支持的模型列表
     #[serde(default)]
     pub models: Vec<String>,
+    /// 别名映射（模型名 -> 别名配置）
     pub aliases: std::collections::HashMap<String, ModelAlias>,
+    /// 更新时间
     pub updated_at: Option<String>,
 }
 
 impl ProviderAliasConfig {
+    /// 检查是否支持指定模型
     pub fn supports_model(&self, model: &str) -> bool {
         self.models.contains(&model.to_string()) || self.aliases.contains_key(model)
     }
 
+    /// 获取模型的内部名称
     pub fn get_internal_name(&self, model: &str) -> Option<&str> {
         self.aliases
             .get(model)
             .and_then(|a| a.internal_name.as_deref())
     }
 
+    /// 获取模型的实际 ID
     pub fn get_actual_model(&self, model: &str) -> Option<&str> {
         self.aliases.get(model).map(|a| a.actual.as_str())
     }
@@ -421,6 +509,8 @@ pub struct ModelsDevModalities {
 }
 
 impl ModelsDevModel {
+    /// 转换为 EnhancedModelMetadata
+    /// 预留：用于从 models.dev API 导入模型数据
     #[allow(dead_code)]
     pub fn to_enhanced_metadata(
         &self,
@@ -429,6 +519,7 @@ impl ModelsDevModel {
     ) -> EnhancedModelMetadata {
         let now = chrono::Utc::now().timestamp();
 
+        // 判断是否支持视觉
         let supports_vision = self
             .modalities
             .as_ref()
@@ -436,14 +527,17 @@ impl ModelsDevModel {
             .unwrap_or(false)
             || self.attachment;
 
+        // 根据模型名称推断服务等级
         let tier = infer_model_tier(&self.id, &self.name);
 
+        // 解析状态
         let status = self
             .status
             .as_ref()
             .and_then(|s| s.parse().ok())
             .unwrap_or(ModelStatus::Active);
 
+        // 判断是否为最新版本
         let is_latest = self.id.contains("latest");
 
         EnhancedModelMetadata {
@@ -456,8 +550,8 @@ impl ModelsDevModel {
             capabilities: ModelCapabilities {
                 vision: supports_vision,
                 tools: self.tool_call,
-                streaming: true,
-                json_mode: true,
+                streaming: true, // 大多数模型都支持流式
+                json_mode: true, // 大多数模型都支持 JSON 模式
                 function_calling: self.tool_call,
                 reasoning: self.reasoning,
             },
@@ -486,28 +580,13 @@ impl ModelsDevModel {
 }
 
 /// 根据模型 ID 和名称推断服务等级
+/// 用于 to_enhanced_metadata 和测试
 #[allow(dead_code)]
 fn infer_model_tier(model_id: &str, model_name: &str) -> ModelTier {
     let id_lower = model_id.to_lowercase();
     let name_lower = model_name.to_lowercase();
 
-    let max_patterns = [
-        "opus",
-        "gpt-4o",
-        "gpt-4-turbo",
-        "gemini-2.5-pro",
-        "gemini-ultra",
-        "claude-3-opus",
-        "qwen-max",
-        "glm-4-plus",
-        "deepseek-v3",
-    ];
-    for pattern in max_patterns {
-        if id_lower.contains(pattern) || name_lower.contains(pattern) {
-            return ModelTier::Max;
-        }
-    }
-
+    // Mini 等级模型（优先检查，因为 gpt-4o-mini 包含 gpt-4o）
     let mini_patterns = [
         "mini",
         "nano",
@@ -525,6 +604,25 @@ fn infer_model_tier(model_id: &str, model_name: &str) -> ModelTier {
         }
     }
 
+    // Max 等级模型
+    let max_patterns = [
+        "opus",
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gemini-2.5-pro",
+        "gemini-ultra",
+        "claude-3-opus",
+        "qwen-max",
+        "glm-4-plus",
+        "deepseek-v3",
+    ];
+    for pattern in max_patterns {
+        if id_lower.contains(pattern) || name_lower.contains(pattern) {
+            return ModelTier::Max;
+        }
+    }
+
+    // 默认为 Pro 等级
     ModelTier::Pro
 }
 

@@ -1,71 +1,15 @@
 //! 配置管理模块
 //!
-//! 提供 YAML 配置文件支持、热重载和配置导入导出功能
-//! 同时保持与旧版 JSON 配置的向后兼容性
+//! 核心配置类型、YAML 支持、热重载和导入导出功能已迁移到 proxycast-core crate。
+//! 本模块保留 observer（依赖 Tauri）和集成测试。
 
 #![allow(unused_imports)]
 
-mod export;
-mod hot_reload;
-mod import;
-pub mod observer;
-mod path_utils;
-mod types;
-mod yaml;
+// 从 core crate 重新导出所有配置类型
+pub use proxycast_core::config::*;
 
-pub use export::{ExportBundle, ExportOptions, ExportService, REDACTED_PLACEHOLDER};
-pub use hot_reload::{
-    ConfigChangeEvent as FileChangeEvent, ConfigChangeKind, FileWatcher, HotReloadManager,
-    ReloadResult,
-};
-pub use import::{ImportOptions, ImportService, ValidationResult};
-pub use path_utils::{collapse_tilde, contains_tilde, expand_tilde};
-pub use types::{
-    generate_secure_api_key,
-    AmpConfig,
-    AmpModelMapping,
-    ApiKeyEntry,
-    AsrCredentialEntry,
-    // ASR 和语音输入相关类型
-    AsrProviderType,
-    BaiduConfig,
-    Config,
-    CredentialEntry,
-    CredentialPoolConfig,
-    CustomProviderConfig,
-    EndpointProvidersConfig,
-    ExperimentalFeatures,
-    GeminiApiKeyEntry,
-    InjectionRuleConfig,
-    InjectionSettings,
-    LoggingConfig,
-    ModelInfo,
-    ModelsConfig,
-    NativeAgentConfig,
-    OpenAIAsrConfig,
-    ProviderConfig,
-    ProviderModelsConfig,
-    ProvidersConfig,
-    QuotaExceededConfig,
-    RemoteManagementConfig,
-    RetrySettings,
-    RoutingConfig,
-    ScreenshotChatConfig,
-    ServerConfig,
-    TlsConfig,
-    VertexApiKeyEntry,
-    VertexModelAlias,
-    VoiceInputConfig,
-    VoiceInstruction,
-    VoiceOutputConfig,
-    VoiceOutputMode,
-    VoiceProcessorConfig,
-    WhisperLocalConfig,
-    WhisperModelSize,
-    XunfeiConfig,
-    DEFAULT_API_KEY,
-};
-pub use yaml::{load_config, save_config, ConfigError, ConfigManager, YamlService};
+// observer 模块保留在主 crate（依赖 Tauri）
+pub mod observer;
 
 // 重新导出观察者模块的核心类型
 pub use observer::{

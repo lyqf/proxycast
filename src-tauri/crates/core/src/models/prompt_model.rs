@@ -1,5 +1,3 @@
-//! Prompt 数据模型
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,6 +8,7 @@ pub struct Prompt {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Whether this prompt is currently enabled (synced to live file)
     #[serde(default)]
     pub enabled: bool,
     #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none")]

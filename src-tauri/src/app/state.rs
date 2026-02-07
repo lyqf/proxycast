@@ -7,11 +7,6 @@ use tokio::sync::RwLock;
 
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::context_memory::ContextMemoryServiceState;
-use crate::commands::flow_monitor_cmd::{
-    BatchOperationsState, BookmarkManagerState, EnhancedStatsServiceState, FlowInterceptorState,
-    FlowMonitorState, FlowQueryServiceState, FlowReplayerState, QuickFilterManagerState,
-    SessionManagerState,
-};
 use crate::commands::machine_id_cmd::MachineIdState;
 use crate::commands::orchestrator_cmd::OrchestratorState;
 use crate::commands::plugin_cmd::PluginManagerState;
@@ -22,11 +17,6 @@ use crate::commands::skill_cmd::SkillServiceState;
 use crate::commands::tool_hooks::ToolHooksServiceState;
 use crate::config::{Config, ConfigManager, GlobalConfigManager, GlobalConfigManagerState};
 use crate::database;
-use crate::flow_monitor::{
-    BatchOperations, BookmarkManager, EnhancedStatsService, FlowFileStore, FlowInterceptor,
-    FlowMonitor, FlowMonitorConfig, FlowQueryService, FlowReplayer, InterceptConfig,
-    QuickFilterManager, RotationConfig, SessionManager,
-};
 use crate::plugin;
 use crate::services::api_key_provider_service::ApiKeyProviderService;
 use crate::services::context_memory_service::{ContextMemoryConfig, ContextMemoryService};
@@ -214,143 +204,5 @@ pub fn init_telemetry_states(config: &Config) -> TelemetryStates {
         tokens: shared_tokens,
         logger: shared_logger,
         telemetry_state,
-    }
-}
-
-/// Flow Monitor 状态
-pub struct FlowMonitorStates {
-    pub flow_monitor: Arc<FlowMonitor>,
-    pub flow_monitor_state: FlowMonitorState,
-    pub flow_interceptor: Arc<FlowInterceptor>,
-    pub flow_interceptor_state: FlowInterceptorState,
-    pub flow_replayer_state: FlowReplayerState,
-    pub flow_query_service_state: FlowQueryServiceState,
-    pub session_manager_state: SessionManagerState,
-    pub quick_filter_manager_state: QuickFilterManagerState,
-    pub bookmark_manager_state: BookmarkManagerState,
-    pub enhanced_stats_service_state: EnhancedStatsServiceState,
-    pub batch_operations_state: BatchOperationsState,
-}
-
-/// 初始化 Flow Monitor 状态
-///
-/// 如果 flow-monitor 插件已安装，则启用监控功能；否则禁用。
-pub fn init_flow_monitor_states(
-    provider_pool_service: Arc<ProviderPoolService>,
-    db: database::DbConnection,
-    plugin_installer_state: &PluginInstallerState,
-) -> FlowMonitorStates {
-    // 检查 flow-monitor 插件是否已安装
-    let is_plugin_installed = {
-        let installer = plugin_installer_state.0.blocking_read();
-        installer.is_installed("flow-monitor").unwrap_or(false)
-    };
-
-    // 根据插件安装状态设置 enabled
-    let mut flow_monitor_config = FlowMonitorConfig::default();
-    flow_monitor_config.enabled = is_plugin_installed;
-
-    if is_plugin_installed {
-        tracing::info!("[启动] flow-monitor 插件已安装，启用 Flow 监控");
-    } else {
-        tracing::info!("[启动] flow-monitor 插件未安装，禁用 Flow 监控");
-    }
-
-    let flow_file_store = init_flow_file_store();
-
-    let flow_monitor = Arc::new(FlowMonitor::new(
-        flow_monitor_config,
-        flow_file_store.clone(),
-    ));
-    let flow_monitor_state = FlowMonitorState(flow_monitor.clone());
-
-    // 初始化 Flow 拦截器
-    let flow_interceptor = Arc::new(FlowInterceptor::new(InterceptConfig::default()));
-    let flow_interceptor_state = FlowInterceptorState(flow_interceptor.clone());
-
-    // 初始化 Flow 重放器
-    let flow_replayer = Arc::new(FlowReplayer::new(
-        flow_monitor.clone(),
-        provider_pool_service,
-        db,
-    ));
-    let flow_replayer_state = FlowReplayerState(flow_replayer);
-
-    // 初始化会话管理器
-    let db_path = database::get_db_path().expect("Failed to get database path");
-    let session_manager =
-        Arc::new(SessionManager::new(db_path.clone()).expect("Failed to create SessionManager"));
-    let session_manager_state = SessionManagerState(session_manager.clone());
-
-    // 初始化快速过滤器管理器
-    let quick_filter_manager = Arc::new(
-        QuickFilterManager::new(db_path.clone()).expect("Failed to create QuickFilterManager"),
-    );
-    let quick_filter_manager_state = QuickFilterManagerState(quick_filter_manager);
-
-    // 初始化书签管理器
-    let bookmark_manager =
-        Arc::new(BookmarkManager::new(db_path).expect("Failed to create BookmarkManager"));
-    let bookmark_manager_state = BookmarkManagerState(bookmark_manager);
-
-    // 初始化增强统计服务
-    let enhanced_stats_service = Arc::new(EnhancedStatsService::new(flow_monitor.memory_store()));
-    let enhanced_stats_service_state = EnhancedStatsServiceState(enhanced_stats_service);
-
-    // 初始化批量操作服务
-    let batch_operations = Arc::new(BatchOperations::new(
-        flow_monitor.clone(),
-        Some(session_manager_state.0.clone()),
-    ));
-    let batch_operations_state = BatchOperationsState(batch_operations);
-
-    // FlowQueryService
-    let flow_query_service_state = if let Some(file_store) = flow_file_store {
-        let query_service = FlowQueryService::new(flow_monitor.memory_store(), file_store);
-        FlowQueryServiceState(Arc::new(query_service))
-    } else {
-        let temp_dir = std::env::temp_dir().join("proxycast_flows");
-        let _ = std::fs::create_dir_all(&temp_dir);
-        let rotation_config = RotationConfig::default();
-        let temp_store = FlowFileStore::new(temp_dir, rotation_config)
-            .expect("Failed to create temp FlowFileStore");
-        let query_service =
-            FlowQueryService::new(flow_monitor.memory_store(), Arc::new(temp_store));
-        FlowQueryServiceState(Arc::new(query_service))
-    };
-
-    FlowMonitorStates {
-        flow_monitor,
-        flow_monitor_state,
-        flow_interceptor,
-        flow_interceptor_state,
-        flow_replayer_state,
-        flow_query_service_state,
-        session_manager_state,
-        quick_filter_manager_state,
-        bookmark_manager_state,
-        enhanced_stats_service_state,
-        batch_operations_state,
-    }
-}
-
-/// 初始化 Flow 文件存储
-fn init_flow_file_store() -> Option<Arc<FlowFileStore>> {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("proxycast")
-        .join("flows");
-
-    if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        tracing::warn!("无法创建 Flow 存储目录: {}", e);
-    }
-
-    let rotation_config = RotationConfig::default();
-    match FlowFileStore::new(data_dir, rotation_config) {
-        Ok(store) => Some(Arc::new(store)),
-        Err(e) => {
-            tracing::warn!("无法初始化 Flow 文件存储: {}", e);
-            None
-        }
     }
 }

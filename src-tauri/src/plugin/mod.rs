@@ -1,38 +1,26 @@
 //! 插件系统模块
 //!
-//! 提供插件扩展功能，支持：
-//! - 插件加载和初始化
-//! - 请求前/响应后钩子
-//! - 插件隔离和错误处理
-//! - 插件配置管理
-//! - 二进制组件下载和管理
-//! - 声明式插件 UI 系统
-//! - 插件安装和卸载
+//! 核心逻辑从 proxycast-core 重新导出，
+//! ui_events 依赖 Tauri 保留在主 crate
 
-pub mod binary_downloader;
-pub mod examples;
-pub mod installer;
-mod loader;
-mod manager;
-mod types;
-pub mod ui_builder;
-pub mod ui_events;
-pub mod ui_trait;
-pub mod ui_types;
+// 从 core 重新导出所有插件类型和模块
+pub use proxycast_core::plugin::binary_downloader;
+pub use proxycast_core::plugin::examples;
+pub use proxycast_core::plugin::installer;
+pub use proxycast_core::plugin::ui_builder;
+pub use proxycast_core::plugin::ui_trait;
+pub use proxycast_core::plugin::ui_types;
 
-pub use binary_downloader::BinaryDownloader;
-pub use loader::PluginLoader;
-pub use manager::PluginManager;
-pub use types::{
-    BinaryComponentStatus, BinaryManifest, HookResult, PlatformBinaries, Plugin, PluginConfig,
-    PluginContext, PluginError, PluginInfo, PluginManifest, PluginState, PluginStatus, PluginType,
-};
-pub use ui_events::{PluginUIEmitter, PluginUIEmitterState, PluginUIEventPayload};
-pub use ui_trait::{NoUI, PluginUI};
-pub use ui_types::{
+pub use proxycast_core::plugin::{
     Action, BoundValue, ChildrenDef, ComponentDef, ComponentType, DataEntry, DataModelUpdate,
     SurfaceDefinition, SurfaceUpdate, UIMessage, UserAction,
 };
+pub use proxycast_core::plugin::{
+    BinaryComponentStatus, BinaryDownloader, BinaryManifest, HookResult, NoUI, PlatformBinaries,
+    Plugin, PluginConfig, PluginContext, PluginError, PluginInfo, PluginLoader, PluginManager,
+    PluginManifest, PluginState, PluginStatus, PluginType, PluginUI,
+};
 
-#[cfg(test)]
-mod tests;
+// Tauri 依赖的 UI 事件模块保留在主 crate
+pub mod ui_events;
+pub use ui_events::{PluginUIEmitter, PluginUIEmitterState, PluginUIEventPayload};

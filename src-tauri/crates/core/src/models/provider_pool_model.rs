@@ -27,7 +27,7 @@ pub enum CredentialSource {
 ///
 /// 为了向后兼容，PoolProviderType 是 crate::ProviderType 的类型别名。
 /// 所有 Provider 类型定义已统一到 lib.rs 中的 ProviderType。
-pub type PoolProviderType = crate::ProviderType;
+pub type PoolProviderType = super::provider_type::ProviderType;
 
 /// 凭证数据，根据 Provider 类型不同而不同
 #[derive(Debug, Clone, Serialize, Deserialize)]

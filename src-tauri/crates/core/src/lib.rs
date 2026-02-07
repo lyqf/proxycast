@@ -1,12 +1,35 @@
-//! 核心类型模块
+//! ProxyCast Core Crate
 //!
-//! 包含纯数据类型（models）、静态数据（data）、日志配置（logger）
+//! 包含纯数据类型、基础模块和无外部业务依赖的独立模块。
 //!
-//! 本 crate 不包含任何业务逻辑，只提供基础类型定义。
+//! ## 模块结构
+//! - `models`: 核心数据模型定义
+//! - `data`: 静态数据
+//! - `logger`: 日志配置
+//! - `errors`: 错误类型定义
+//! - `backends`: 后端调用层 Trait
+//! - `config`: 配置管理（类型、YAML、热重载、导入导出）
+//! - `connect`: Deep Link 协议和中转商注册表
+//! - `middleware`: HTTP 中间件（认证、限速）
+//! - `orchestrator`: 模型选择编排器
+//! - `plugin`: 插件系统（加载、管理、UI、安装）
+//! - `session`: 会话管理（限速、粘性路由）
+//! - `session_files`: 会话文件存储
 
 pub mod data;
 pub mod logger;
 pub mod models;
+
+// 独立业务模块（无主 crate 依赖）
+pub mod backends;
+pub mod config;
+pub mod connect;
+pub mod errors;
+pub mod middleware;
+pub mod orchestrator;
+pub mod plugin;
+pub mod session;
+pub mod session_files;
 
 // 重新导出常用类型
 pub use logger::{LogEntry, LogStore, LogStoreConfig, SharedLogStore};

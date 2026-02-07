@@ -2,12 +2,12 @@
 //!
 //! 使用 proptest 进行属性测试
 
-use crate::config::types::{ContentCreatorConfig, NavigationConfig};
 use crate::config::{
     collapse_tilde, contains_tilde, expand_tilde, Config, ConfigManager, CustomProviderConfig,
     HotReloadManager, InjectionSettings, LoggingConfig, ProviderConfig, ProvidersConfig,
     ReloadResult, RetrySettings, RoutingConfig, ServerConfig, YamlService,
 };
+use crate::config::{ContentCreatorConfig, NavigationConfig};
 use proptest::prelude::*;
 use std::io::Write;
 use tempfile::NamedTempFile;

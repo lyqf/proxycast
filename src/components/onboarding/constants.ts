@@ -2,7 +2,7 @@
  * 初次安装引导 - 常量配置
  */
 
-import { Code, User, FileCode, Activity } from "lucide-react";
+import { Code, User, FileCode } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /**
@@ -41,7 +41,7 @@ export const userProfiles: UserProfileConfig[] = [
     name: "程序员",
     description: "使用 Claude Code、Codex、Gemini 等 AI 编程工具",
     icon: Code,
-    defaultPlugins: ["config-switch", "flow-monitor"],
+    defaultPlugins: ["config-switch"],
   },
   {
     id: "general",
@@ -63,14 +63,6 @@ export const onboardingPlugins: OnboardingPlugin[] = [
     icon: FileCode,
     downloadUrl:
       "https://github.com/aiclientproxy/config-switch/releases/latest/download/config-switch-plugin.zip",
-  },
-  {
-    id: "flow-monitor",
-    name: "Flow Monitor",
-    description: "监控和分析 LLM API 请求，提供详细的流量分析和调试功能",
-    icon: Activity,
-    downloadUrl:
-      "https://github.com/aiclientproxy/flow-monitor/releases/latest/download/flow-monitor-plugin.zip",
   },
 ];
 

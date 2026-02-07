@@ -1,5 +1,3 @@
-//! Provider 数据模型
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

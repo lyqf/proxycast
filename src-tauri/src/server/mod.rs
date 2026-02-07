@@ -10,7 +10,6 @@ use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
 use crate::credential::CredentialSyncService;
 use crate::database::dao::provider_pool::ProviderPoolDao;
 use crate::database::DbConnection;
-use crate::flow_monitor::{FlowInterceptor, FlowMonitor, FlowMonitorConfig};
 use crate::injection::Injector;
 use crate::logger::LogStore;
 use crate::models::anthropic::*;
@@ -259,17 +258,14 @@ impl ServerState {
             shared_stats,
             shared_tokens,
             shared_logger,
-            None,
-            None,
         )
         .await
     }
 
-    /// 启动服务器（使用共享的遥测实例和 Flow Monitor）
+    /// 启动服务器（使用共享的遥测实例）
     ///
     /// 这允许服务器与 TelemetryState 共享同一个 StatsAggregator、TokenTracker 和 RequestLogger，
-    /// 以及与 FlowMonitorState 共享同一个 FlowMonitor，
-    /// 使得请求处理过程中记录的统计数据和 Flow 数据能够在前端监控页面中显示。
+    /// 使得请求处理过程中记录的统计数据能够在前端监控页面中显示。
     pub async fn start_with_telemetry_and_flow_monitor(
         &mut self,
         logs: Arc<RwLock<LogStore>>,
@@ -279,8 +275,6 @@ impl ServerState {
         shared_stats: Option<Arc<parking_lot::RwLock<crate::telemetry::StatsAggregator>>>,
         shared_tokens: Option<Arc<parking_lot::RwLock<crate::telemetry::TokenTracker>>>,
         shared_logger: Option<Arc<crate::telemetry::RequestLogger>>,
-        shared_flow_monitor: Option<Arc<FlowMonitor>>,
-        shared_flow_interceptor: Option<Arc<FlowInterceptor>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.running {
             return Ok(());
@@ -391,8 +385,6 @@ impl ServerState {
                 shared_stats,
                 shared_tokens,
                 shared_logger,
-                shared_flow_monitor,
-                shared_flow_interceptor,
                 Some(config),
                 Some(config_path),
                 Some(processor),
@@ -421,16 +413,6 @@ impl ServerState {
         self.running_api_key = None;
         self.running_host = None;
         self.router_ref = None;
-    }
-}
-
-impl Clone for KiroProvider {
-    fn clone(&self) -> Self {
-        Self {
-            credentials: self.credentials.clone(),
-            client: reqwest::Client::new(),
-            creds_path: self.creds_path.clone(),
-        }
     }
 }
 
@@ -465,10 +447,6 @@ pub struct AppState {
     pub request_logger: Option<Arc<crate::telemetry::RequestLogger>>,
     /// Amp CLI 路由器
     pub amp_router: Arc<crate::router::AmpRouter>,
-    /// Flow 监控服务
-    pub flow_monitor: Arc<FlowMonitor>,
-    /// Flow 拦截器
-    pub flow_interceptor: Arc<FlowInterceptor>,
     /// 端点 Provider 配置
     pub endpoint_providers: Arc<RwLock<EndpointProvidersConfig>>,
     /// Kiro 事件服务
@@ -754,8 +732,6 @@ async fn run_server(
     shared_stats: Option<Arc<parking_lot::RwLock<crate::telemetry::StatsAggregator>>>,
     shared_tokens: Option<Arc<parking_lot::RwLock<crate::telemetry::TokenTracker>>>,
     shared_logger: Option<Arc<crate::telemetry::RequestLogger>>,
-    shared_flow_monitor: Option<Arc<FlowMonitor>>,
-    shared_flow_interceptor: Option<Arc<FlowInterceptor>>,
     config: Option<Config>,
     config_path: Option<PathBuf>,
     processor: Option<Arc<RequestProcessor>>,
@@ -841,14 +817,6 @@ async fn run_server(
             .unwrap_or_default(),
     ));
 
-    // 使用共享的 Flow 监控服务，如果没有则创建新的
-    let flow_monitor = shared_flow_monitor
-        .unwrap_or_else(|| Arc::new(FlowMonitor::new(FlowMonitorConfig::default(), None)));
-
-    // 使用共享的 Flow 拦截器，如果没有则创建新的
-    let flow_interceptor =
-        shared_flow_interceptor.unwrap_or_else(|| Arc::new(FlowInterceptor::default()));
-
     // 初始化端点 Provider 配置
     let endpoint_providers = Arc::new(RwLock::new(
         config
@@ -883,8 +851,6 @@ async fn run_server(
         hot_reload_manager: hot_reload_manager.clone(),
         request_logger: shared_logger,
         amp_router,
-        flow_monitor,
-        flow_interceptor,
         endpoint_providers,
         kiro_event_service,
         api_key_service,

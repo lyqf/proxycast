@@ -1,7 +1,10 @@
 //! CodeWhisperer/Kiro API 数据模型
 //!
 //! 支持标准工具和特殊工具类型（如 web_search）。
-
+//!
+//! # 更新日志
+//!
+//! - 2025-12-27: 添加 CWWebSearchTool 支持，修复 Issue #49
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +53,10 @@ pub struct UserInputMessageContext {
 }
 
 /// CodeWhisperer 工具项
+///
+/// 支持两种类型：
+/// - 标准工具（带 tool_specification）
+/// - 联网搜索工具（仅 type 字段）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CWToolItem {
@@ -67,6 +74,9 @@ pub struct CWTool {
 }
 
 /// 联网搜索工具
+///
+/// Codex/Kiro API 支持的特殊工具类型，用于联网搜索。
+/// 格式：`{"type": "web_search"}`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CWWebSearchTool {
     #[serde(rename = "type")]
@@ -145,6 +155,7 @@ pub struct CWToolUse {
     pub tool_use_id: String,
 }
 
+// Response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CWStreamEvent {

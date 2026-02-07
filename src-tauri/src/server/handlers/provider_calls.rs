@@ -53,8 +53,6 @@ use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
 use crate::converter::openai_to_antigravity::{
     convert_antigravity_to_openai_response, convert_openai_to_antigravity_with_context,
 };
-use crate::flow_monitor::models::{FlowError, FlowErrorType};
-use crate::flow_monitor::stream_rebuilder::StreamFormat;
 use crate::models::anthropic::AnthropicMessagesRequest;
 use crate::models::openai::ChatCompletionRequest;
 use crate::models::provider_pool_model::{CredentialData, ProviderCredential};
@@ -88,21 +86,6 @@ pub async fn call_provider_anthropic(
     request: &AnthropicMessagesRequest,
     flow_id: Option<&str>,
 ) -> Response {
-    // 如果是流式请求且有 flow_id，设置流式状态
-    if request.stream {
-        if let Some(fid) = flow_id {
-            // 根据凭证类型确定流格式
-            // 注意：Kiro 凭证虽然原始返回 AWS Event Stream，但 handle_kiro_stream 会将其转换为 Anthropic SSE 格式
-            let format = match &credential.credential {
-                CredentialData::KiroOAuth { .. } => StreamFormat::Anthropic, // Kiro 流式响应被转换为 Anthropic SSE 格式
-                CredentialData::ClaudeKey { .. } => StreamFormat::Anthropic,
-                CredentialData::AntigravityOAuth { .. } => StreamFormat::Gemini,
-                _ => StreamFormat::Unknown,
-            };
-            state.flow_monitor.set_streaming(fid, format).await;
-        }
-    }
-
     match &credential.credential {
         CredentialData::KiroOAuth { creds_file_path } => {
             // 如果是流式请求，使用真正的流式处理（需求 1.1, 6.1）
@@ -2192,55 +2175,9 @@ pub async fn handle_streaming_response(
     );
 
     // 获取 flow_id 的克隆用于回调
-    let flow_id_for_callback = flow_id.map(|s| s.to_string());
-    let flow_monitor = state.flow_monitor.clone();
 
-    // 创建带回调的流式处理
-    let managed_stream = if let Some(fid) = flow_id_for_callback {
-        // 使用带回调的流式处理，集成 Flow Monitor
-        let on_chunk = move |event: &str, _metrics: &crate::streaming::StreamMetrics| {
-            // 解析 SSE 事件并调用 process_chunk
-            // SSE 格式: "event: xxx\ndata: {...}\n\n"
-            let lines: Vec<&str> = event.lines().collect();
-            let mut event_type: Option<&str> = None;
-            let mut data: Option<&str> = None;
-
-            for line in lines {
-                if line.starts_with("event: ") {
-                    event_type = Some(&line[7..]);
-                } else if line.starts_with("data: ") {
-                    data = Some(&line[6..]);
-                }
-            }
-
-            if let Some(d) = data {
-                // 使用 tokio::spawn 异步调用 process_chunk
-                let flow_monitor_clone = flow_monitor.clone();
-                let fid_clone = fid.clone();
-                let event_type_owned = event_type.map(|s| s.to_string());
-                let data_owned = d.to_string();
-
-                tokio::spawn(async move {
-                    flow_monitor_clone
-                        .process_chunk(&fid_clone, event_type_owned.as_deref(), &data_owned)
-                        .await;
-                });
-            }
-        };
-
-        let stream = manager.handle_stream_with_callback(context, source_stream, on_chunk);
-
-        // 转换为 Body 流
-        let body_stream = stream.map(|result| -> Result<axum::body::Bytes, std::io::Error> {
-            match result {
-                Ok(event) => Ok(axum::body::Bytes::from(event)),
-                Err(e) => Ok(axum::body::Bytes::from(e.to_sse_error())),
-            }
-        });
-
-        Body::from_stream(body_stream)
-    } else {
-        // 没有 flow_id，使用普通流式处理
+    // 创建流式处理
+    let managed_stream = {
         let stream = manager.handle_stream(context, source_stream);
 
         let body_stream = stream.map(|result| -> Result<axum::body::Bytes, std::io::Error> {
@@ -2318,45 +2255,12 @@ pub async fn handle_streaming_response_with_timeout(
     );
 
     // 获取 flow_id 的克隆用于回调
-    let flow_id_for_callback = flow_id.map(|s| s.to_string());
-    let flow_monitor = state.flow_monitor.clone();
 
     // 创建带超时的流式处理，使用 BoxStream 统一类型
-    let timeout_stream: BoxStream<'static, Result<String, crate::streaming::StreamError>> =
-        if let Some(fid) = flow_id_for_callback {
-            let on_chunk = move |event: &str, _metrics: &crate::streaming::StreamMetrics| {
-                let lines: Vec<&str> = event.lines().collect();
-                let mut event_type: Option<&str> = None;
-                let mut data: Option<&str> = None;
-
-                for line in lines {
-                    if line.starts_with("event: ") {
-                        event_type = Some(&line[7..]);
-                    } else if line.starts_with("data: ") {
-                        data = Some(&line[6..]);
-                    }
-                }
-
-                if let Some(d) = data {
-                    let flow_monitor_clone = flow_monitor.clone();
-                    let fid_clone = fid.clone();
-                    let event_type_owned = event_type.map(|s| s.to_string());
-                    let data_owned = d.to_string();
-
-                    tokio::spawn(async move {
-                        flow_monitor_clone
-                            .process_chunk(&fid_clone, event_type_owned.as_deref(), &data_owned)
-                            .await;
-                    });
-                }
-            };
-
-            let stream = manager.handle_stream_with_callback(context, source_stream, on_chunk);
-            Box::pin(crate::streaming::with_timeout(stream, &config))
-        } else {
-            let stream = manager.handle_stream(context, source_stream);
-            Box::pin(crate::streaming::with_timeout(stream, &config))
-        };
+    let timeout_stream: BoxStream<'static, Result<String, crate::streaming::StreamError>> = {
+        let stream = manager.handle_stream(context, source_stream);
+        Box::pin(crate::streaming::with_timeout(stream, &config))
+    };
 
     // 转换为 Body 流
     let body_stream = timeout_stream.map(|result| -> Result<axum::body::Bytes, std::io::Error> {
@@ -2446,49 +2350,13 @@ pub async fn handle_streaming_with_disconnect_detection(
     );
 
     // 获取 flow_id 的克隆
-    let flow_id_for_callback = flow_id.map(|s| s.to_string());
     let flow_id_for_cancel = flow_id.map(|s| s.to_string());
-    let flow_monitor = state.flow_monitor.clone();
-    let flow_monitor_for_cancel = state.flow_monitor.clone();
 
-    // 创建带回调的流式处理
-    // 使用 BoxStream 统一类型
+    // 创建流式处理
     let managed_stream: futures::stream::BoxStream<
         'static,
         Result<String, crate::streaming::StreamError>,
-    > = if let Some(fid) = flow_id_for_callback {
-        let on_chunk = move |event: &str, _metrics: &crate::streaming::StreamMetrics| {
-            let lines: Vec<&str> = event.lines().collect();
-            let mut event_type: Option<&str> = None;
-            let mut data: Option<&str> = None;
-
-            for line in lines {
-                if line.starts_with("event: ") {
-                    event_type = Some(&line[7..]);
-                } else if line.starts_with("data: ") {
-                    data = Some(&line[6..]);
-                }
-            }
-
-            if let Some(d) = data {
-                let flow_monitor_clone = flow_monitor.clone();
-                let fid_clone = fid.clone();
-                let event_type_owned = event_type.map(|s| s.to_string());
-                let data_owned = d.to_string();
-
-                tokio::spawn(async move {
-                    flow_monitor_clone
-                        .process_chunk(&fid_clone, event_type_owned.as_deref(), &data_owned)
-                        .await;
-                });
-            }
-        };
-
-        Box::pin(manager.handle_stream_with_callback(context, source_stream, on_chunk))
-    } else {
-        // 没有 flow_id，使用普通流式处理
-        Box::pin(manager.handle_stream(context, source_stream))
-    };
+    > = Box::pin(manager.handle_stream(context, source_stream));
 
     // 如果有取消令牌，创建一个可取消的流
     let body_stream = if let Some(token) = cancel_token {
@@ -2502,7 +2370,6 @@ pub async fn handle_streaming_with_disconnect_detection(
             async move {
                 token.cancelled().await;
                 if let Some(fid) = flow_id {
-                    flow_monitor_for_cancel.cancel_flow(&fid).await;
                     tracing::info!("[STREAM] 客户端断开，已取消 Flow: {}", fid);
                 }
             }
@@ -2851,18 +2718,8 @@ pub async fn handle_kiro_stream(
     let config = PipelineConfig::kiro_to_anthropic(request.model.clone());
     let pipeline = std::sync::Arc::new(tokio::sync::Mutex::new(StreamPipeline::new(config)));
 
-    // 获取 flow_id 的克隆用于回调
-    let flow_id_owned = flow_id.map(|s| s.to_string());
-    let flow_monitor = state.flow_monitor.clone();
-
-    // 创建转换流
     let pipeline_clone = pipeline.clone();
-    let flow_id_for_stream = flow_id_owned.clone();
-    let flow_monitor_for_stream = flow_monitor.clone();
-
     let pipeline_for_finalize = pipeline.clone();
-    let flow_id_for_finalize = flow_id_owned.clone();
-    let flow_monitor_for_finalize = flow_monitor.clone();
 
     let final_stream = async_stream::stream! {
         use futures::StreamExt;
@@ -2872,89 +2729,27 @@ pub async fn handle_kiro_stream(
         while let Some(chunk_result) = stream_response.next().await {
             match chunk_result {
                 Ok(bytes) => {
-                    // 调试日志：记录接收到的字节数
                     tracing::info!(
                         "[KIRO_STREAM] 收到 {} 字节数据",
                         bytes.len()
                     );
 
-                    // 使用 Pipeline 处理字节块
                     let sse_strings = {
                         let mut pipeline_guard = pipeline_clone.lock().await;
                         pipeline_guard.process_chunk(&bytes)
                     };
 
-                    // 调试日志：记录生成的 SSE 事件数量
                     tracing::info!(
                         "[KIRO_STREAM] 生成 {} 个 SSE 事件",
                         sse_strings.len()
                     );
 
                     for sse_str in sse_strings {
-                        // 调用 FlowMonitor.process_chunk()（需求 3.2）
-                        if let Some(ref fid) = flow_id_for_stream {
-                            // 解析 SSE 事件类型和数据
-                            let lines: Vec<&str> = sse_str.lines().collect();
-                            let mut event_type: Option<&str> = None;
-                            let mut data: Option<&str> = None;
-
-                            for line in &lines {
-                                if line.starts_with("event: ") {
-                                    event_type = Some(&line[7..]);
-                                } else if line.starts_with("data: ") {
-                                    data = Some(&line[6..]);
-                                }
-                            }
-
-                            if let Some(d) = data {
-                                let flow_monitor_clone = flow_monitor_for_stream.clone();
-                                let fid_clone = fid.clone();
-                                let event_type_owned = event_type.map(|s| s.to_string());
-                                let data_owned = d.to_string();
-
-                                tokio::spawn(async move {
-                                    flow_monitor_clone
-                                        .process_chunk(
-                                            &fid_clone,
-                                            event_type_owned.as_deref(),
-                                            &data_owned,
-                                        )
-                                        .await;
-                                });
-                            }
-                        }
-
-                        // 立即 yield SSE 事件
                         yield Ok::<String, StreamError>(sse_str);
                     }
                 }
                 Err(e) => {
-                    // 需求 5.1, 5.3: 流式传输期间发生错误时，发出错误事件并以失败状态完成 flow
                     tracing::error!("[KIRO_STREAM] 流式传输期间发生错误: {}", e);
-
-                    // 根据 StreamError 类型映射到 FlowErrorType
-                    let flow_error_type = match &e {
-                        StreamError::Network(_) => FlowErrorType::Network,
-                        StreamError::Timeout => FlowErrorType::Timeout,
-                        StreamError::ProviderError { status, .. } => {
-                            FlowErrorType::from_status_code(*status)
-                        }
-                        StreamError::ParseError(_) => FlowErrorType::Other,
-                        StreamError::ClientDisconnected => FlowErrorType::Cancelled,
-                        StreamError::BufferOverflow => FlowErrorType::Other,
-                        StreamError::Internal(_) => FlowErrorType::ServerError,
-                    };
-
-                    // 调用 FlowMonitor.fail_flow() 标记失败
-                    if let Some(ref fid) = flow_id_for_stream {
-                        let flow_error = FlowError::new(
-                            flow_error_type,
-                            format!("流式传输错误: {e}"),
-                        );
-                        flow_monitor_for_stream.fail_flow(fid, flow_error).await;
-                    }
-
-                    // 发送 SSE 错误事件
                     yield Err(e);
                     return;
                 }
@@ -2963,7 +2758,6 @@ pub async fn handle_kiro_stream(
 
         tracing::info!("[KIRO_STREAM] 流结束，生成 finalize 事件");
 
-        // 流结束，使用 Pipeline 生成 finalize 事件
         let final_events = {
             let mut pipeline_guard = pipeline_for_finalize.lock().await;
             pipeline_guard.finish()
@@ -2972,34 +2766,6 @@ pub async fn handle_kiro_stream(
         tracing::info!("[KIRO_STREAM] finalize 生成 {} 个事件", final_events.len());
 
         for sse_str in final_events {
-            // 调用 FlowMonitor.process_chunk()
-            if let Some(ref fid) = flow_id_for_finalize {
-                let lines: Vec<&str> = sse_str.lines().collect();
-                let mut event_type: Option<&str> = None;
-                let mut data: Option<&str> = None;
-
-                for line in &lines {
-                    if line.starts_with("event: ") {
-                        event_type = Some(&line[7..]);
-                    } else if line.starts_with("data: ") {
-                        data = Some(&line[6..]);
-                    }
-                }
-
-                if let Some(d) = data {
-                    let flow_monitor_clone = flow_monitor_for_finalize.clone();
-                    let fid_clone = fid.clone();
-                    let event_type_owned = event_type.map(|s| s.to_string());
-                    let data_owned = d.to_string();
-
-                    tokio::spawn(async move {
-                        flow_monitor_clone
-                            .process_chunk(&fid_clone, event_type_owned.as_deref(), &data_owned)
-                            .await;
-                    });
-                }
-            }
-
             yield Ok::<String, StreamError>(sse_str);
         }
     };

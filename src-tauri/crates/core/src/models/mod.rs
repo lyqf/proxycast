@@ -17,6 +17,7 @@ pub mod provider_pool_model;
 pub mod provider_type;
 pub mod route_model;
 pub mod skill_model;
+pub mod vertex_model;
 
 #[allow(unused_imports)]
 pub use anthropic::*;
@@ -33,3 +34,4 @@ pub use provider_model::Provider;
 pub use provider_pool_model::*;
 pub use provider_type::ProviderType;
 pub use skill_model::{Skill, SkillMetadata, SkillRepo, SkillState, SkillStates};
+pub use vertex_model::{VertexApiKeyEntry, VertexModelAlias};

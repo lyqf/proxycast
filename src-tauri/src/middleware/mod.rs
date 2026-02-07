@@ -1,10 +1,5 @@
 //! Middleware 模块
 //!
-//! 提供 HTTP 请求处理的中间件组件
+//! 从 proxycast-core 重新导出
 
-pub mod management_auth;
-
-#[cfg(test)]
-mod tests;
-
-pub use management_auth::ManagementAuthLayer;
+pub use proxycast_core::middleware::*;

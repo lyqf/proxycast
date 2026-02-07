@@ -1,4 +1,3 @@
-export { useFlowEvents } from "./useFlowEvents";
 export { useConfigEvents } from "./useConfigEvents";
 export { useDeepLink } from "./useDeepLink";
 export { useModelRegistry } from "./useModelRegistry";

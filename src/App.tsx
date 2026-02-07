@@ -32,7 +32,6 @@ import {
   FileBrowserView,
   WebView,
 } from "./components/terminal";
-import { flowEventManager } from "./lib/flowEventManager";
 import { OnboardingWizard, useOnboardingState } from "./components/onboarding";
 import { ConnectConfirmDialog } from "./components/connect";
 import { showRegistryLoadError } from "./lib/utils/connectError";
@@ -217,11 +216,6 @@ function AppContent() {
     error: registryError,
     refresh: _refreshRegistry, // 保留以供后续错误处理 UI 使用
   } = useRelayRegistry();
-
-  // 在应用启动时初始化 Flow 事件订阅
-  useEffect(() => {
-    flowEventManager.subscribe();
-  }, []);
 
   // 处理 Registry 加载失败
   // _Requirements: 7.2, 7.3_

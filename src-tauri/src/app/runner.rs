@@ -61,15 +61,6 @@ pub fn run() {
         plugin_installer: plugin_installer_state,
         plugin_rpc_manager: plugin_rpc_manager_state,
         telemetry: telemetry_state,
-        flow_monitor: flow_monitor_state,
-        flow_query_service: flow_query_service_state,
-        flow_interceptor: flow_interceptor_state,
-        flow_replayer: flow_replayer_state,
-        session_manager: session_manager_state,
-        quick_filter_manager: quick_filter_manager_state,
-        bookmark_manager: bookmark_manager_state,
-        enhanced_stats_service: enhanced_stats_service_state,
-        batch_operations: batch_operations_state,
         aster_agent: aster_agent_state,
         orchestrator: orchestrator_state,
         connect_state,
@@ -86,8 +77,6 @@ pub fn run() {
         shared_stats,
         shared_tokens,
         shared_logger,
-        flow_monitor_arc: flow_monitor,
-        flow_interceptor_arc: flow_interceptor,
     } = states;
 
     // Clone for setup hook
@@ -99,8 +88,6 @@ pub fn run() {
     let shared_stats_clone = shared_stats.clone();
     let shared_tokens_clone = shared_tokens.clone();
     let shared_logger_clone = shared_logger.clone();
-    let flow_monitor_clone = flow_monitor.clone();
-    let flow_interceptor_clone = flow_interceptor.clone();
     let update_check_service_clone = update_check_service_state.0.clone();
 
     let mut builder = tauri::Builder::default()
@@ -146,15 +133,6 @@ pub fn run() {
         .manage(plugin_manager_state)
         .manage(plugin_installer_state)
         .manage(plugin_rpc_manager_state)
-        .manage(flow_monitor_state)
-        .manage(flow_query_service_state)
-        .manage(flow_interceptor_state)
-        .manage(flow_replayer_state)
-        .manage(session_manager_state)
-        .manage(quick_filter_manager_state)
-        .manage(bookmark_manager_state)
-        .manage(enhanced_stats_service_state)
-        .manage(batch_operations_state)
         .manage(aster_agent_state)
         .manage(orchestrator_state)
         .manage(connect_state)
@@ -469,7 +447,6 @@ pub fn run() {
             let shared_stats = shared_stats_clone.clone();
             let shared_tokens = shared_tokens_clone.clone();
             let shared_logger = shared_logger_clone.clone();
-            let shared_flow_monitor = flow_monitor_clone.clone();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // 先加载凭证池中的凭证
@@ -527,7 +504,7 @@ pub fn run() {
                             .add("debug", &format!("[启动] 旧版 Kiro 凭证加载失败: {e}"));
                     }
                 }
-                // 启动服务器（使用共享的遥测实例和 Flow Monitor）
+                // 启动服务器（使用共享的遥测实例）
                 let server_started;
                 let server_address;
                 {
@@ -536,7 +513,7 @@ pub fn run() {
                         .await
                         .add("info", "[启动] 正在自动启动服务器...");
                     match s
-                        .start_with_telemetry_and_flow_monitor(
+                        .start_with_telemetry(
                             logs.clone(),
                             pool_service,
                             token_cache,
@@ -544,8 +521,6 @@ pub fn run() {
                             Some(shared_stats),
                             Some(shared_tokens),
                             Some(shared_logger),
-                            Some(shared_flow_monitor),
-                            Some(flow_interceptor_clone),
                         )
                         .await
                     {
@@ -923,141 +898,12 @@ pub fn run() {
             commands::plugin_rpc_cmd::plugin_rpc_connect,
             commands::plugin_rpc_cmd::plugin_rpc_disconnect,
             commands::plugin_rpc_cmd::plugin_rpc_call,
-            // Flow Monitor commands
-            commands::flow_monitor_cmd::query_flows,
-            commands::flow_monitor_cmd::get_flow_detail,
-            commands::flow_monitor_cmd::search_flows,
-            commands::flow_monitor_cmd::get_flow_stats,
-            commands::flow_monitor_cmd::export_flows,
-            commands::flow_monitor_cmd::update_flow_annotations,
-            commands::flow_monitor_cmd::toggle_flow_starred,
-            commands::flow_monitor_cmd::add_flow_comment,
-            commands::flow_monitor_cmd::add_flow_tag,
-            commands::flow_monitor_cmd::remove_flow_tag,
-            commands::flow_monitor_cmd::set_flow_marker,
-            commands::flow_monitor_cmd::cleanup_flows,
-            commands::flow_monitor_cmd::get_recent_flows,
-            commands::flow_monitor_cmd::get_flow_monitor_status,
-            commands::flow_monitor_cmd::get_flow_monitor_debug_info,
-            commands::flow_monitor_cmd::create_test_flows,
-            commands::flow_monitor_cmd::enable_flow_monitor,
-            commands::flow_monitor_cmd::disable_flow_monitor,
-            commands::flow_monitor_cmd::subscribe_flow_events,
-            commands::flow_monitor_cmd::get_all_flow_tags,
-            // Flow Monitor filter expression commands
-            commands::flow_monitor_cmd::parse_filter,
-            commands::flow_monitor_cmd::validate_filter,
-            commands::flow_monitor_cmd::get_filter_help_items,
-            commands::flow_monitor_cmd::get_filter_help_text,
-            commands::flow_monitor_cmd::query_flows_with_expression,
-            // Flow Interceptor commands
-            commands::flow_monitor_cmd::intercept_config_get,
-            commands::flow_monitor_cmd::intercept_config_set,
-            commands::flow_monitor_cmd::intercept_continue,
-            commands::flow_monitor_cmd::intercept_cancel,
-            commands::flow_monitor_cmd::intercept_get_flow,
-            commands::flow_monitor_cmd::intercept_list_flows,
-            commands::flow_monitor_cmd::intercept_count,
-            commands::flow_monitor_cmd::intercept_is_enabled,
-            commands::flow_monitor_cmd::intercept_enable,
-            commands::flow_monitor_cmd::intercept_disable,
-            commands::flow_monitor_cmd::intercept_set_editing,
-            commands::flow_monitor_cmd::subscribe_intercept_events,
-            // Flow Monitor realtime enhancement commands
-            commands::flow_monitor_cmd::get_threshold_config,
-            commands::flow_monitor_cmd::update_threshold_config,
-            commands::flow_monitor_cmd::get_request_rate,
-            commands::flow_monitor_cmd::set_rate_window,
-            // Flow Replayer commands
-            commands::flow_monitor_cmd::replay_flow,
-            commands::flow_monitor_cmd::replay_flows_batch,
-            // Flow Diff commands
-            commands::flow_monitor_cmd::diff_flows,
-            // Session Management commands
-            commands::flow_monitor_cmd::create_session,
-            commands::flow_monitor_cmd::get_session,
-            commands::flow_monitor_cmd::list_sessions,
-            commands::flow_monitor_cmd::add_flow_to_session,
-            commands::flow_monitor_cmd::remove_flow_from_session,
-            commands::flow_monitor_cmd::update_session,
-            commands::flow_monitor_cmd::archive_session,
-            commands::flow_monitor_cmd::unarchive_session,
-            commands::flow_monitor_cmd::delete_session,
-            commands::flow_monitor_cmd::export_session,
-            commands::flow_monitor_cmd::get_session_flow_count,
-            commands::flow_monitor_cmd::is_flow_in_session,
-            commands::flow_monitor_cmd::get_sessions_for_flow,
-            commands::flow_monitor_cmd::get_auto_session_config,
-            commands::flow_monitor_cmd::set_auto_session_config,
-            commands::flow_monitor_cmd::register_active_session,
-            // Quick Filter commands
-            commands::flow_monitor_cmd::save_quick_filter,
-            commands::flow_monitor_cmd::get_quick_filter,
-            commands::flow_monitor_cmd::update_quick_filter,
-            commands::flow_monitor_cmd::delete_quick_filter,
-            commands::flow_monitor_cmd::list_quick_filters,
-            commands::flow_monitor_cmd::list_quick_filters_by_group,
-            commands::flow_monitor_cmd::list_quick_filter_groups,
-            commands::flow_monitor_cmd::export_quick_filters,
-            commands::flow_monitor_cmd::import_quick_filters,
-            commands::flow_monitor_cmd::find_quick_filter_by_name,
-            // Code Export commands
-            commands::flow_monitor_cmd::export_flow_as_code,
-            commands::flow_monitor_cmd::export_flows_as_code,
-            commands::flow_monitor_cmd::get_code_export_formats,
-            // Bookmark Management commands
-            commands::flow_monitor_cmd::add_bookmark,
-            commands::flow_monitor_cmd::get_bookmark,
-            commands::flow_monitor_cmd::get_bookmark_by_flow_id,
-            commands::flow_monitor_cmd::remove_bookmark,
-            commands::flow_monitor_cmd::remove_bookmark_by_flow_id,
-            commands::flow_monitor_cmd::update_bookmark,
-            commands::flow_monitor_cmd::list_bookmarks,
-            commands::flow_monitor_cmd::list_bookmark_groups,
-            commands::flow_monitor_cmd::is_flow_bookmarked,
-            commands::flow_monitor_cmd::get_bookmark_count,
-            commands::flow_monitor_cmd::export_bookmarks,
-            commands::flow_monitor_cmd::import_bookmarks,
-            commands::flow_monitor_cmd::toggle_bookmark,
-            // Enhanced Stats commands
-            commands::flow_monitor_cmd::get_enhanced_stats,
-            commands::flow_monitor_cmd::get_request_trend,
-            commands::flow_monitor_cmd::get_token_distribution,
-            commands::flow_monitor_cmd::get_latency_histogram,
-            commands::flow_monitor_cmd::export_stats_report,
-            // Batch Operations commands
-            commands::flow_monitor_cmd::batch_star_flows,
-            commands::flow_monitor_cmd::batch_unstar_flows,
-            commands::flow_monitor_cmd::batch_add_tags,
-            commands::flow_monitor_cmd::batch_remove_tags,
-            commands::flow_monitor_cmd::batch_export_flows,
-            commands::flow_monitor_cmd::batch_delete_flows,
-            commands::flow_monitor_cmd::batch_add_to_session,
             // Window control commands
             commands::window_cmd::get_window_size,
             commands::window_cmd::set_window_size,
             commands::window_cmd::center_window,
             commands::window_cmd::toggle_fullscreen,
             commands::window_cmd::is_fullscreen,
-            // Browser Interceptor commands
-            commands::browser_interceptor_cmd::get_browser_interceptor_state,
-            commands::browser_interceptor_cmd::start_browser_interceptor,
-            commands::browser_interceptor_cmd::stop_browser_interceptor,
-            commands::browser_interceptor_cmd::restore_normal_browser_behavior,
-            commands::browser_interceptor_cmd::temporary_disable_interceptor,
-            commands::browser_interceptor_cmd::get_intercepted_urls,
-            commands::browser_interceptor_cmd::get_interceptor_history,
-            commands::browser_interceptor_cmd::copy_intercepted_url_to_clipboard,
-            commands::browser_interceptor_cmd::open_url_in_fingerprint_browser,
-            commands::browser_interceptor_cmd::dismiss_intercepted_url,
-            commands::browser_interceptor_cmd::update_browser_interceptor_config,
-            commands::browser_interceptor_cmd::get_default_browser_interceptor_config,
-            commands::browser_interceptor_cmd::validate_browser_interceptor_config,
-            commands::browser_interceptor_cmd::is_browser_interceptor_running,
-            commands::browser_interceptor_cmd::get_browser_interceptor_statistics,
-            commands::browser_interceptor_cmd::show_notification,
-            commands::browser_interceptor_cmd::show_url_intercept_notification,
-            commands::browser_interceptor_cmd::show_status_notification,
             // Auto fix commands
             commands::auto_fix_cmd::auto_fix_configuration,
             // Machine ID commands

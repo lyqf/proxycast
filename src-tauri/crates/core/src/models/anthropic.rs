@@ -1,5 +1,4 @@
 //! Anthropic/Claude API 数据模型
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +39,7 @@ pub struct ImageSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnthropicMessage {
     pub role: String,
-    pub content: serde_json::Value,
+    pub content: serde_json::Value, // Can be string or array
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +88,7 @@ pub struct AnthropicMessagesResponse {
     pub usage: AnthropicUsage,
 }
 
+// Streaming events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AnthropicStreamEvent {

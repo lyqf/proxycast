@@ -2,12 +2,13 @@
 //!
 //! 这是一个 Tauri 应用，提供 AI API 的代理和管理功能。
 //!
-//! ## Workspace 结构（方案 A - 最小化拆分）
+//! ## Workspace 结构（渐进式拆分）
 //!
-//! 采用最小化拆分策略，只迁移真正独立的模块：
-//! - ✅ proxycast-core crate（models, data, logger）
+//! - ✅ proxycast-core crate（models, data, logger, errors, backends, config, connect,
+//!   middleware, orchestrator, plugin, session 部分, session_files）
 //! - ✅ proxycast-infra crate（proxy, resilience, injection, telemetry）
-//! - 主 crate 保留所有业务逻辑模块（包括 plugin，因依赖 Tauri）
+//! - ✅ proxycast-providers crate（providers, converter, streaming, translator, stream, session 部分）
+//! - 主 crate 保留 Tauri 相关业务逻辑
 
 // 抑制 objc crate 宏内部的 unexpected_cfgs 警告
 // 该警告来自 cocoa/objc 依赖的 msg_send! 宏，是已知的 issue
@@ -26,26 +27,31 @@ pub use proxycast_infra::{
     TimeoutController, TokenSource, TokenStatsSummary, TokenTracker, TokenUsageRecord,
 };
 
+// 从 providers crate 重新导出（保持 crate::xxx 路径兼容）
+pub use proxycast_providers::converter;
+pub use proxycast_providers::providers;
+pub use proxycast_providers::stream;
+pub use proxycast_providers::streaming;
+pub use proxycast_providers::translator;
+
+// 从 core crate 重新导出（保持 crate::xxx 路径兼容）
+pub use proxycast_core::backends;
+pub use proxycast_core::connect;
+pub use proxycast_core::orchestrator;
+pub use proxycast_core::session_files;
+
 // 核心模块
 pub mod agent;
 pub mod app;
-pub mod backends;
-pub mod browser_interceptor;
-pub mod connect;
 pub mod content;
 pub mod credential;
 pub mod database;
-pub mod flow_monitor;
 pub mod memory;
-pub mod orchestrator;
 pub mod plugin;
 pub mod screenshot;
 pub mod services;
 pub mod session;
-pub mod session_files;
-pub mod stream;
 pub mod terminal;
-pub mod translator;
 pub mod tray;
 pub mod voice;
 pub mod workspace;
@@ -59,22 +65,21 @@ pub mod mcp;
 // 内部模块
 mod commands;
 mod config;
-mod converter;
 mod data;
 #[cfg(debug_assertions)]
 mod dev_bridge;
-mod errors;
 mod logger;
 mod models;
-mod providers;
 mod server_utils;
+
+// 从 core crate 重新导出 errors
+pub use proxycast_core::errors;
 
 // 服务器相关模块
 mod middleware;
 mod processor;
 mod router;
 mod server;
-mod streaming;
 mod websocket;
 
 // 重新导出核心类型以保持向后兼容

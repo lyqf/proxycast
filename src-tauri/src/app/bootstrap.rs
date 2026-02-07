@@ -9,11 +9,6 @@ use crate::agent::AsterAgentState;
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::connect_cmd::ConnectStateWrapper;
 use crate::commands::context_memory::ContextMemoryServiceState;
-use crate::commands::flow_monitor_cmd::{
-    BatchOperationsState, BookmarkManagerState, EnhancedStatsServiceState, FlowInterceptorState,
-    FlowMonitorState, FlowQueryServiceState, FlowReplayerState, QuickFilterManagerState,
-    SessionManagerState,
-};
 use crate::commands::machine_id_cmd::MachineIdState;
 use crate::commands::model_registry_cmd::ModelRegistryState;
 use crate::commands::orchestrator_cmd::OrchestratorState;
@@ -28,11 +23,6 @@ use crate::commands::tool_hooks::ToolHooksServiceState;
 use crate::commands::webview_cmd::{WebviewManagerState, WebviewManagerWrapper};
 use crate::config::{self, Config, ConfigManager, GlobalConfigManager, GlobalConfigManagerState};
 use crate::database::{self, DbConnection};
-use crate::flow_monitor::{
-    BatchOperations, BookmarkManager, EnhancedStatsService, FlowFileStore, FlowInterceptor,
-    FlowMonitor, FlowMonitorConfig, FlowQueryService, FlowReplayer, InterceptConfig,
-    QuickFilterManager, RotationConfig, SessionManager,
-};
 use crate::logger;
 use crate::mcp::McpManagerState;
 use crate::plugin;
@@ -131,15 +121,6 @@ pub struct AppStates {
     pub plugin_installer: PluginInstallerState,
     pub plugin_rpc_manager: crate::commands::plugin_rpc_cmd::PluginRpcManagerState,
     pub telemetry: crate::commands::telemetry_cmd::TelemetryState,
-    pub flow_monitor: FlowMonitorState,
-    pub flow_query_service: FlowQueryServiceState,
-    pub flow_interceptor: FlowInterceptorState,
-    pub flow_replayer: FlowReplayerState,
-    pub session_manager: SessionManagerState,
-    pub quick_filter_manager: QuickFilterManagerState,
-    pub bookmark_manager: BookmarkManagerState,
-    pub enhanced_stats_service: EnhancedStatsServiceState,
-    pub batch_operations: BatchOperationsState,
     pub aster_agent: AsterAgentState,
     pub orchestrator: OrchestratorState,
     pub connect_state: ConnectStateWrapper,
@@ -157,8 +138,6 @@ pub struct AppStates {
     pub shared_stats: Arc<parking_lot::RwLock<telemetry::StatsAggregator>>,
     pub shared_tokens: Arc<parking_lot::RwLock<telemetry::TokenTracker>>,
     pub shared_logger: Arc<telemetry::RequestLogger>,
-    pub flow_monitor_arc: Arc<FlowMonitor>,
-    pub flow_interceptor_arc: Arc<FlowInterceptor>,
 }
 
 /// 初始化所有应用状态
@@ -204,21 +183,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
 
     // 遥测系统
     let (telemetry_state, shared_stats, shared_tokens, shared_logger) = init_telemetry(config)?;
-
-    // Flow Monitor 系统（根据插件安装状态启用/禁用）
-    let (
-        flow_monitor_state,
-        flow_query_service_state,
-        flow_interceptor_state,
-        flow_replayer_state,
-        session_manager_state,
-        quick_filter_manager_state,
-        bookmark_manager_state,
-        enhanced_stats_service_state,
-        batch_operations_state,
-        flow_monitor_arc,
-        flow_interceptor_arc,
-    ) = init_flow_monitor(&provider_pool_service_state, &db, &plugin_installer_state)?;
 
     // 其他状态
     // 设置 Aster 全局 session store（使用 ProxyCast 数据库）
@@ -309,15 +273,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         plugin_installer: plugin_installer_state,
         plugin_rpc_manager: plugin_rpc_manager_state,
         telemetry: telemetry_state,
-        flow_monitor: flow_monitor_state,
-        flow_query_service: flow_query_service_state,
-        flow_interceptor: flow_interceptor_state,
-        flow_replayer: flow_replayer_state,
-        session_manager: session_manager_state,
-        quick_filter_manager: quick_filter_manager_state,
-        bookmark_manager: bookmark_manager_state,
-        enhanced_stats_service: enhanced_stats_service_state,
-        batch_operations: batch_operations_state,
         aster_agent: aster_agent_state,
         orchestrator: orchestrator_state,
         connect_state,
@@ -334,8 +289,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         shared_stats,
         shared_tokens,
         shared_logger,
-        flow_monitor_arc,
-        flow_interceptor_arc,
     })
 }
 
@@ -415,133 +368,4 @@ fn init_telemetry(
     .map_err(|e| format!("TelemetryState 初始化失败: {e}"))?;
 
     Ok((telemetry_state, shared_stats, shared_tokens, shared_logger))
-}
-
-/// 初始化 Flow Monitor 系统
-///
-/// 如果 flow-monitor 插件已安装，则启用监控功能；否则禁用。
-#[allow(clippy::type_complexity)]
-fn init_flow_monitor(
-    provider_pool_service_state: &ProviderPoolServiceState,
-    db: &DbConnection,
-    plugin_installer_state: &PluginInstallerState,
-) -> Result<
-    (
-        FlowMonitorState,
-        FlowQueryServiceState,
-        FlowInterceptorState,
-        FlowReplayerState,
-        SessionManagerState,
-        QuickFilterManagerState,
-        BookmarkManagerState,
-        EnhancedStatsServiceState,
-        BatchOperationsState,
-        Arc<FlowMonitor>,
-        Arc<FlowInterceptor>,
-    ),
-    String,
-> {
-    // 检查 flow-monitor 插件是否已安装
-    let is_plugin_installed = {
-        let installer = plugin_installer_state.0.blocking_read();
-        installer.is_installed("flow-monitor").unwrap_or(false)
-    };
-
-    // 根据插件安装状态设置 enabled
-    let mut flow_monitor_config = FlowMonitorConfig::default();
-    flow_monitor_config.enabled = is_plugin_installed;
-
-    if is_plugin_installed {
-        tracing::info!("[启动] flow-monitor 插件已安装，启用 Flow 监控");
-    } else {
-        tracing::info!("[启动] flow-monitor 插件未安装，禁用 Flow 监控");
-    }
-
-    // 初始化文件存储
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("proxycast")
-        .join("flows");
-    let _ = std::fs::create_dir_all(&data_dir);
-
-    let rotation_config = RotationConfig::default();
-    let flow_file_store = match FlowFileStore::new(data_dir, rotation_config.clone()) {
-        Ok(store) => Some(Arc::new(store)),
-        Err(e) => {
-            tracing::warn!("无法初始化 Flow 文件存储: {}", e);
-            None
-        }
-    };
-
-    let flow_monitor = Arc::new(FlowMonitor::new(
-        flow_monitor_config,
-        flow_file_store.clone(),
-    ));
-    let flow_monitor_state = FlowMonitorState(flow_monitor.clone());
-
-    let flow_interceptor = Arc::new(FlowInterceptor::new(InterceptConfig::default()));
-    let flow_interceptor_state = FlowInterceptorState(flow_interceptor.clone());
-
-    let flow_replayer = Arc::new(FlowReplayer::new(
-        flow_monitor.clone(),
-        provider_pool_service_state.0.clone(),
-        db.clone(),
-    ));
-    let flow_replayer_state = FlowReplayerState(flow_replayer);
-
-    let db_path = database::get_db_path().map_err(|e| format!("获取数据库路径失败: {e}"))?;
-
-    let session_manager = Arc::new(
-        SessionManager::new(db_path.clone())
-            .map_err(|e| format!("SessionManager 初始化失败: {e}"))?,
-    );
-    let session_manager_state = SessionManagerState(session_manager.clone());
-
-    let quick_filter_manager = Arc::new(
-        QuickFilterManager::new(db_path.clone())
-            .map_err(|e| format!("QuickFilterManager 初始化失败: {e}"))?,
-    );
-    let quick_filter_manager_state = QuickFilterManagerState(quick_filter_manager);
-
-    let bookmark_manager = Arc::new(
-        BookmarkManager::new(db_path).map_err(|e| format!("BookmarkManager 初始化失败: {e}"))?,
-    );
-    let bookmark_manager_state = BookmarkManagerState(bookmark_manager);
-
-    let enhanced_stats_service = Arc::new(EnhancedStatsService::new(flow_monitor.memory_store()));
-    let enhanced_stats_service_state = EnhancedStatsServiceState(enhanced_stats_service);
-
-    let batch_operations = Arc::new(BatchOperations::new(
-        flow_monitor.clone(),
-        Some(session_manager_state.0.clone()),
-    ));
-    let batch_operations_state = BatchOperationsState(batch_operations);
-
-    // FlowQueryService
-    let flow_query_service_state = if let Some(file_store) = flow_file_store {
-        let query_service = FlowQueryService::new(flow_monitor.memory_store(), file_store);
-        FlowQueryServiceState(Arc::new(query_service))
-    } else {
-        let temp_dir = std::env::temp_dir().join("proxycast_flows");
-        let _ = std::fs::create_dir_all(&temp_dir);
-        let temp_store = FlowFileStore::new(temp_dir, rotation_config)
-            .map_err(|e| format!("临时 FlowFileStore 初始化失败: {e}"))?;
-        let query_service =
-            FlowQueryService::new(flow_monitor.memory_store(), Arc::new(temp_store));
-        FlowQueryServiceState(Arc::new(query_service))
-    };
-
-    Ok((
-        flow_monitor_state,
-        flow_query_service_state,
-        flow_interceptor_state,
-        flow_replayer_state,
-        session_manager_state,
-        quick_filter_manager_state,
-        bookmark_manager_state,
-        enhanced_stats_service_state,
-        batch_operations_state,
-        flow_monitor,
-        flow_interceptor,
-    ))
 }

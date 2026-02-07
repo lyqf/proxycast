@@ -342,32 +342,6 @@ const defaultMocks: Record<string, any> = {
   get_current_switch_provider: () => null,
   read_live_provider_settings: () => ({}),
 
-  // Flow Monitor 相关
-  subscribe_flow_events: () => ({ success: true }),
-  query_flows: () => ({ flows: [], total: 0 }),
-  query_flows_with_expression: () => ({ flows: [], total: 0 }),
-  get_flow_detail: () => ({ flow: null }),
-  search_flows: () => ({ flows: [] }),
-  get_flow_stats: () => ({ stats: {} }),
-  update_flow_annotations: () => ({ success: true }),
-  cleanup_flows: () => ({ deleted_count: 0 }),
-  get_recent_flows: () => [],
-  toggle_flow_starred: () => ({ success: true }),
-  get_all_flow_tags: () => [],
-  delete_flow: () => ({ success: true }),
-  delete_flows: () => ({ success: true }),
-  get_flow_monitor_debug_info: () => ({ info: {} }),
-  create_test_flows: () => ({ created_count: 0 }),
-  get_enhanced_stats: () => ({ stats: {} }),
-  get_request_trend: () => ({ trend: [] }),
-  get_token_distribution: () => ({ distribution: {} }),
-  get_latency_histogram: () => ({ histogram: [] }),
-  export_stats_report: () => ({ report: "" }),
-  get_threshold_config: () => ({ config: {} }),
-  update_threshold_config: () => ({ success: true }),
-  get_request_rate: () => ({ rate: 0 }),
-  set_rate_window: () => ({ success: true }),
-
   // 系统信息相关
   subscribe_sysinfo: () => ({ success: true }),
   unsubscribe_sysinfo: () => ({ success: true }),
@@ -418,28 +392,6 @@ const defaultMocks: Record<string, any> = {
   get_current_prompt_file_content: () => ({ content: "" }),
   auto_import_prompt: () => ({ success: true }),
   switch_prompt: () => ({ success: true }),
-
-  // Browser Interceptor 相关
-  get_browser_interceptor_state: () => ({ running: false }),
-  start_browser_interceptor: () => ({ success: true }),
-  stop_browser_interceptor: () => ({ success: true }),
-  restore_normal_browser_behavior: () => ({ success: true }),
-  temporary_disable_interceptor: () => ({ success: true }),
-  get_intercepted_urls: () => ({ urls: [] }),
-  get_interceptor_history: () => ({ history: [] }),
-  copy_intercepted_url_to_clipboard: () => ({ success: true }),
-  open_url_in_fingerprint_browser: () => ({ success: true }),
-  dismiss_intercepted_url: () => ({ success: true }),
-  update_browser_interceptor_config: () => ({ success: true }),
-  get_default_browser_interceptor_config: () => ({ config: {} }),
-  validate_browser_interceptor_config: () => ({ valid: true }),
-  is_browser_interceptor_running: () => ({ running: false }),
-  get_browser_interceptor_statistics: () => ({ stats: {} }),
-
-  // Notification 相关
-  show_notification: () => ({}),
-  show_url_intercept_notification: () => ({}),
-  show_status_notification: () => ({}),
 
   // Window 相关
   get_window_size: () => ({ width: 1280, height: 800 }),
