@@ -22,7 +22,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use chrono::Utc;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -494,13 +493,13 @@ pub async fn chat_completions(
 
         // 尝试将 selected_provider 解析为 ProviderType
         // 构建 Flow Metadata，同时保存 provider_type 和实际的 provider_id
-        let provider_type = selected_provider
+        let _provider_type = selected_provider
             .parse::<ProviderType>()
             .unwrap_or(ProviderType::OpenAI);
 
         // 从凭证名称中提取 Provider 显示名称
         // 凭证名称格式：Some("[降级] DeepSeek") 或 Some("DeepSeek")
-        let provider_display_name = cred.name.as_ref().map(|name| {
+        let _provider_display_name = cred.name.as_ref().map(|name| {
             // 去掉 "[降级] " 前缀
             if name.starts_with("[降级] ") {
                 &name[9..] // "[降级] " 是 9 个字节
@@ -521,7 +520,7 @@ pub async fn chat_completions(
 
         // 记录请求统计
         let is_success = response.status().is_success();
-        let status_code = response.status().as_u16();
+        let _status_code = response.status().as_u16();
         let status = if is_success {
             crate::telemetry::RequestStatus::Success
         } else {
@@ -564,7 +563,7 @@ pub async fn chat_completions(
     // 启动 Flow 捕获（legacy mode）
 
     // 使用实际的 provider ID 构建 Flow Metadata
-    let provider_type = selected_provider
+    let _provider_type = selected_provider
         .parse::<ProviderType>()
         .unwrap_or(ProviderType::OpenAI);
 
@@ -1113,11 +1112,11 @@ pub async fn anthropic_messages(
 
         // 使用凭证的实际 provider_type（支持自定义 Provider）
         // 对于自定义 Provider ID，凭证的 provider_type 已通过数据库查询正确设置
-        let provider_type = cred.provider_type;
+        let _provider_type = cred.provider_type;
 
         // 从凭证名称中提取 Provider 显示名称
         // 凭证名称格式：Some("[降级] DeepSeek") 或 Some("DeepSeek")
-        let provider_display_name = cred.name.as_ref().map(|name| {
+        let _provider_display_name = cred.name.as_ref().map(|name| {
             // 去掉 "[降级] " 前缀
             if name.starts_with("[降级] ") {
                 &name[9..] // "[降级] " 是 9 个字节
@@ -1205,7 +1204,7 @@ pub async fn anthropic_messages(
     // 启动 Flow 捕获（legacy mode）
 
     // 使用实际的 provider ID 构建 Flow Metadata
-    let provider_type = selected_provider
+    let _provider_type = selected_provider
         .parse::<ProviderType>()
         .unwrap_or(ProviderType::OpenAI);
 

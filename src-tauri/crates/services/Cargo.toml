@@ -1,0 +1,61 @@
+[package]
+name = "proxycast-services"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# 项目内 crate
+proxycast-core.workspace = true
+proxycast-providers.workspace = true
+
+# 序列化
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+# 异步运行时
+tokio.workspace = true
+async-trait.workspace = true
+
+# 错误处理
+thiserror.workspace = true
+anyhow.workspace = true
+
+# 日志
+tracing.workspace = true
+
+# HTTP 客户端
+reqwest.workspace = true
+
+# 时间和 UUID
+chrono.workspace = true
+uuid.workspace = true
+
+# 工具库
+dirs.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true
+indexmap.workspace = true
+glob.workspace = true
+sysinfo.workspace = true
+whoami.workspace = true
+regex.workspace = true
+sha2.workspace = true
+base64.workspace = true
+md5.workspace = true
+once_cell.workspace = true
+url.workspace = true
+urlencoding.workspace = true
+zip.workspace = true
+
+# Aster Agent Framework
+aster.workspace = true
+
+# 数据库
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true

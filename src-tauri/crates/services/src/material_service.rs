@@ -20,9 +20,9 @@ use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::database::dao::material_dao::MaterialDao;
-use crate::errors::project_error::MaterialError;
-use crate::models::project_model::{
+use proxycast_core::database::dao::material_dao::MaterialDao;
+use proxycast_core::errors::project_error::MaterialError;
+use proxycast_core::models::project_model::{
     Material, MaterialFilter, MaterialUpdate, UploadMaterialRequest,
 };
 
@@ -619,7 +619,7 @@ impl MaterialService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::schema::create_tables;
+    use proxycast_core::database::schema::create_tables;
     use std::io::Write;
     use tempfile::TempDir;
 

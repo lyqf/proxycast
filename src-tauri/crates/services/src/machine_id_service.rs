@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use crate::models::machine_id::*;
 use dirs;
+use proxycast_core::models::machine_id::*;
 use serde_json;
 use std::fs;
 use std::path::PathBuf;

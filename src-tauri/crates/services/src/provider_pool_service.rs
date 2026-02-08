@@ -4,19 +4,19 @@
 
 #![allow(dead_code)]
 
-use crate::database::dao::provider_pool::ProviderPoolDao;
-use crate::database::DbConnection;
-use crate::models::provider_pool_model::{
+use crate::api_key_provider_service::ApiKeyProviderService;
+use chrono::Utc;
+use proxycast_core::database::dao::provider_pool::ProviderPoolDao;
+use proxycast_core::database::DbConnection;
+use proxycast_core::models::client_type::ClientType;
+use proxycast_core::models::provider_pool_model::{
     get_default_check_model, get_oauth_creds_path, CredentialData, CredentialDisplay,
     HealthCheckResult, OAuthStatus, PoolProviderType, PoolStats, ProviderCredential,
     ProviderPoolOverview,
 };
-use crate::models::route_model::RouteInfo;
-use crate::providers::antigravity::TokenRefreshError;
-use crate::providers::kiro::KiroProvider;
-use crate::server::client_detector::ClientType;
-use crate::services::api_key_provider_service::ApiKeyProviderService;
-use chrono::Utc;
+use proxycast_core::models::route_model::RouteInfo;
+use proxycast_providers::providers::antigravity::TokenRefreshError;
+use proxycast_providers::providers::kiro::KiroProvider;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +107,7 @@ impl ProviderPoolService {
 
     /// 获取所有凭证概览
     pub fn get_overview(&self, db: &DbConnection) -> Result<Vec<ProviderPoolOverview>, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let grouped = ProviderPoolDao::get_grouped(&conn).map_err(|e| e.to_string())?;
 
         let mut overview = Vec::new();
@@ -141,7 +141,7 @@ impl ProviderPoolService {
         provider_type: &str,
     ) -> Result<Vec<CredentialDisplay>, String> {
         let pt: PoolProviderType = provider_type.parse().map_err(|e: String| e)?;
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let mut credentials =
             ProviderPoolDao::get_by_type(&conn, &pt).map_err(|e| e.to_string())?;
 
@@ -172,7 +172,7 @@ impl ProviderPoolService {
         cred.check_health = check_health.unwrap_or(true);
         cred.check_model_name = check_model_name;
 
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::insert(&conn, &cred).map_err(|e| e.to_string())?;
 
         Ok(cred)
@@ -190,7 +190,7 @@ impl ProviderPoolService {
         not_supported_models: Option<Vec<String>>,
         proxy_url: Option<String>,
     ) -> Result<ProviderCredential, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let mut cred = ProviderPoolDao::get_by_uuid(&conn, uuid)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Credential not found: {uuid}"))?;
@@ -224,7 +224,7 @@ impl ProviderPoolService {
 
     /// 删除凭证
     pub fn delete_credential(&self, db: &DbConnection, uuid: &str) -> Result<bool, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::delete(&conn, uuid).map_err(|e| e.to_string())
     }
 
@@ -252,7 +252,7 @@ impl ProviderPoolService {
         db: &DbConnection,
         provider_type: &str,
         model: Option<&str>,
-        client_type: Option<&crate::server::client_detector::ClientType>,
+        client_type: Option<&proxycast_core::models::client_type::ClientType>,
     ) -> Result<Option<ProviderCredential>, String> {
         // 对于未知的 provider_type，直接返回 None（不是错误）
         // 这样可以让 select_credential_with_fallback 继续尝试智能降级
@@ -265,7 +265,7 @@ impl ProviderPoolService {
                 return Ok(None);
             }
         };
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
 
         // 获取凭证，对于 AI Provider 类型，也查找 Assistant 类型的凭证
         let mut credentials =
@@ -408,7 +408,7 @@ impl ProviderPoolService {
         provider_type: &str,
         model: Option<&str>,
         provider_id_hint: Option<&str>,
-        client_type: Option<&crate::server::client_detector::ClientType>,
+        client_type: Option<&proxycast_core::models::client_type::ClientType>,
     ) -> Result<Option<ProviderCredential>, String> {
         eprintln!(
             "[select_credential_with_fallback] 开始: provider_type={provider_type}, model={model:?}, provider_id_hint={provider_id_hint:?}"
@@ -554,7 +554,7 @@ impl ProviderPoolService {
 
     /// 记录凭证使用
     pub fn record_usage(&self, db: &DbConnection, uuid: &str) -> Result<(), String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let cred = ProviderPoolDao::get_by_uuid(&conn, uuid)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Credential not found: {uuid}"))?;
@@ -570,7 +570,7 @@ impl ProviderPoolService {
         uuid: &str,
         check_model: Option<&str>,
     ) -> Result<(), String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::update_health_status(
             &conn,
             uuid,
@@ -591,7 +591,7 @@ impl ProviderPoolService {
         uuid: &str,
         error_message: Option<&str>,
     ) -> Result<(), String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let cred = ProviderPoolDao::get_by_uuid(&conn, uuid)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Credential not found: {uuid}"))?;
@@ -614,7 +614,7 @@ impl ProviderPoolService {
 
     /// 重置凭证计数器
     pub fn reset_counters(&self, db: &DbConnection, uuid: &str) -> Result<(), String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::reset_counters(&conn, uuid).map_err(|e| e.to_string())
     }
 
@@ -625,7 +625,7 @@ impl ProviderPoolService {
         provider_type: &str,
     ) -> Result<usize, String> {
         let pt: PoolProviderType = provider_type.parse().map_err(|e: String| e)?;
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::reset_health_by_type(&conn, &pt).map_err(|e| e.to_string())
     }
 
@@ -636,7 +636,7 @@ impl ProviderPoolService {
         db: &DbConnection,
         uuid: &str,
     ) -> Result<Option<CredentialHealthInfo>, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let cred = ProviderPoolDao::get_by_uuid(&conn, uuid).map_err(|e| e.to_string())?;
 
         Ok(cred.map(|c| CredentialHealthInfo {
@@ -661,7 +661,7 @@ impl ProviderPoolService {
         &self,
         db: &DbConnection,
     ) -> Result<Vec<CredentialHealthInfo>, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let credentials = ProviderPoolDao::get_all(&conn).map_err(|e| e.to_string())?;
 
         Ok(credentials
@@ -694,7 +694,7 @@ impl ProviderPoolService {
         let error_message = error.user_message();
         let requires_reauth = error.requires_reauth();
 
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let cred = ProviderPoolDao::get_by_uuid(&conn, uuid)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Credential not found: {uuid}"))?;
@@ -737,7 +737,8 @@ impl ProviderPoolService {
         let pt: PoolProviderType = provider_type
             .parse()
             .map_err(|_| SelectionError::NoCredentials)?;
-        let conn = crate::database::lock_db(db).map_err(|_| SelectionError::NoCredentials)?;
+        let conn =
+            proxycast_core::database::lock_db(db).map_err(|_| SelectionError::NoCredentials)?;
         let credentials =
             ProviderPoolDao::get_by_type(&conn, &pt).map_err(|_| SelectionError::NoCredentials)?;
         drop(conn);
@@ -847,7 +848,7 @@ impl ProviderPoolService {
         uuid: &str,
     ) -> Result<HealthCheckResult, String> {
         let cred = {
-            let conn = crate::database::lock_db(db)?;
+            let conn = proxycast_core::database::lock_db(db)?;
             ProviderPoolDao::get_by_uuid(&conn, uuid)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("Credential not found: {uuid}"))?
@@ -887,7 +888,7 @@ impl ProviderPoolService {
 
                             // 重新获取凭证（token 已更新）
                             let updated_cred = {
-                                let conn = crate::database::lock_db(db)?;
+                                let conn = proxycast_core::database::lock_db(db)?;
                                 ProviderPoolDao::get_by_uuid(&conn, uuid)
                                     .map_err(|e| e.to_string())?
                                     .ok_or_else(|| format!("Credential not found: {uuid}"))?
@@ -961,7 +962,7 @@ impl ProviderPoolService {
     ) -> Result<Vec<HealthCheckResult>, String> {
         let pt: PoolProviderType = provider_type.parse().map_err(|e: String| e)?;
         let credentials = {
-            let conn = crate::database::lock_db(db)?;
+            let conn = proxycast_core::database::lock_db(db)?;
             ProviderPoolDao::get_by_type(&conn, &pt).map_err(|e| e.to_string())?
         };
 
@@ -1419,7 +1420,7 @@ impl ProviderPoolService {
         override_base_url: Option<&str>,
         model: &str,
     ) -> Result<(), String> {
-        use crate::providers::codex::CodexProvider;
+        use proxycast_providers::providers::codex::CodexProvider;
 
         let mut provider = CodexProvider::new();
         provider
@@ -1519,7 +1520,7 @@ impl ProviderPoolService {
 
     // Claude OAuth 健康检查
     async fn check_claude_oauth_health(&self, creds_path: &str, model: &str) -> Result<(), String> {
-        use crate::providers::claude_oauth::ClaudeOAuthProvider;
+        use proxycast_providers::providers::claude_oauth::ClaudeOAuthProvider;
 
         let mut provider = ClaudeOAuthProvider::new();
         provider
@@ -1564,7 +1565,7 @@ impl ProviderPoolService {
         db: &DbConnection,
         name: &str,
     ) -> Result<Option<ProviderCredential>, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::get_by_name(&conn, name).map_err(|e| e.to_string())
     }
 
@@ -1574,7 +1575,7 @@ impl ProviderPoolService {
         db: &DbConnection,
         uuid: &str,
     ) -> Result<Option<ProviderCredential>, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::get_by_uuid(&conn, uuid).map_err(|e| e.to_string())
     }
 
@@ -1584,7 +1585,7 @@ impl ProviderPoolService {
         db: &DbConnection,
         base_url: &str,
     ) -> Result<Vec<RouteInfo>, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let grouped = ProviderPoolDao::get_grouped(&conn).map_err(|e| e.to_string())?;
         drop(conn);
 
@@ -1701,7 +1702,7 @@ impl ProviderPoolService {
     /// 使用副本文件中的凭证进行刷新，副本文件应包含完整的 client_id/client_secret。
     /// 支持多账号场景，每个副本文件完全独立。
     pub async fn refresh_kiro_token(&self, creds_path: &str) -> Result<String, String> {
-        let mut provider = crate::providers::kiro::KiroProvider::new();
+        let mut provider = proxycast_providers::providers::kiro::KiroProvider::new();
         provider
             .load_credentials_from_path(creds_path)
             .await
@@ -1716,7 +1717,7 @@ impl ProviderPoolService {
 
     /// 刷新 OAuth Token (Gemini)
     pub async fn refresh_gemini_token(&self, creds_path: &str) -> Result<String, String> {
-        let mut provider = crate::providers::gemini::GeminiProvider::new();
+        let mut provider = proxycast_providers::providers::gemini::GeminiProvider::new();
         provider
             .load_credentials_from_path(creds_path)
             .await
@@ -1729,7 +1730,7 @@ impl ProviderPoolService {
 
     /// 刷新 OAuth Token (Antigravity)
     pub async fn refresh_antigravity_token(&self, creds_path: &str) -> Result<String, String> {
-        let mut provider = crate::providers::antigravity::AntigravityProvider::new();
+        let mut provider = proxycast_providers::providers::antigravity::AntigravityProvider::new();
         provider
             .load_credentials_from_path(creds_path)
             .await
@@ -1747,7 +1748,7 @@ impl ProviderPoolService {
         uuid: &str,
     ) -> Result<String, String> {
         let cred = {
-            let conn = crate::database::lock_db(db)?;
+            let conn = proxycast_core::database::lock_db(db)?;
             ProviderPoolDao::get_by_uuid(&conn, uuid)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("Credential not found: {uuid}"))?
@@ -1774,7 +1775,7 @@ impl ProviderPoolService {
         uuid: &str,
     ) -> Result<OAuthStatus, String> {
         let cred = {
-            let conn = crate::database::lock_db(db)?;
+            let conn = proxycast_core::database::lock_db(db)?;
             ProviderPoolDao::get_by_uuid(&conn, uuid)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("Credential not found: {uuid}"))?
@@ -1795,7 +1796,7 @@ impl ProviderPoolService {
         name: Option<String>,
         check_health: Option<bool>,
         check_model_name: Option<String>,
-        source: crate::models::provider_pool_model::CredentialSource,
+        source: proxycast_core::models::provider_pool_model::CredentialSource,
     ) -> Result<ProviderCredential, String> {
         let pt: PoolProviderType = provider_type.parse().map_err(|e: String| e)?;
 
@@ -1804,7 +1805,7 @@ impl ProviderPoolService {
         cred.check_health = check_health.unwrap_or(true);
         cred.check_model_name = check_model_name;
 
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         ProviderPoolDao::insert(&conn, &cred).map_err(|e| e.to_string())?;
 
         Ok(cred)
@@ -1816,10 +1817,10 @@ impl ProviderPoolService {
     pub fn migrate_private_config(
         &self,
         db: &DbConnection,
-        config: &crate::config::Config,
+        config: &proxycast_core::config::Config,
     ) -> Result<MigrationResult, String> {
-        use crate::config::expand_tilde;
-        use crate::models::provider_pool_model::CredentialSource;
+        use proxycast_core::config::expand_tilde;
+        use proxycast_core::models::provider_pool_model::CredentialSource;
 
         let mut result = MigrationResult::default();
 
@@ -1936,7 +1937,7 @@ impl ProviderPoolService {
 
     /// 检查是否存在相同路径的凭证
     fn credential_exists_by_path(&self, db: &DbConnection, path: &str) -> Result<bool, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let all_creds = ProviderPoolDao::get_all(&conn).map_err(|e| e.to_string())?;
 
         for cred in all_creds {
@@ -1955,7 +1956,7 @@ impl ProviderPoolService {
         db: &DbConnection,
         api_key: &str,
     ) -> Result<bool, String> {
-        let conn = crate::database::lock_db(db)?;
+        let conn = proxycast_core::database::lock_db(db)?;
         let all_creds = ProviderPoolDao::get_all(&conn).map_err(|e| e.to_string())?;
 
         for cred in all_creds {

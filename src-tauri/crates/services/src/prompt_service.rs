@@ -1,7 +1,7 @@
-use crate::database::dao::prompts::PromptDao;
-use crate::database::DbConnection;
-use crate::models::{AppType, Prompt};
-use crate::services::prompt_sync;
+use crate::prompt_sync;
+use proxycast_core::database::dao::prompts::PromptDao;
+use proxycast_core::database::DbConnection;
+use proxycast_core::models::{AppType, Prompt};
 use std::collections::HashMap;
 
 pub struct PromptService;

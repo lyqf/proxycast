@@ -1,0 +1,76 @@
+//! ProxyCast Services Crate
+//!
+//! 业务服务层，包含所有不依赖 Tauri 的业务逻辑。
+//!
+//! ## 模块结构
+//! - `context_memory_service` - 上下文记忆服务
+//! - `file_browser_service` - 文件浏览服务
+//! - `sysinfo_service` - 系统信息服务
+//! - `update_check_service` - 更新检查服务
+//! - `update_window` - 更新窗口
+//! - `usage_service` - 使用统计服务
+//! - `machine_id_service` - 机器 ID 服务
+//! - `live_sync` - 实时同步
+//! - `mcp_sync` - MCP 同步
+//! - `prompt_sync` - Prompt 同步
+//! - `skill_service` - 技能服务
+//! - `backup_service` - 备份服务
+//! - `material_service` - 素材服务
+//! - `persona_service` - 人设服务
+//! - `template_service` - 模板服务
+//! - `model_registry_service` - 模型注册服务
+//! - `model_service` - 模型服务
+//! - `prompt_service` - Prompt 服务
+//! - `mcp_service` - MCP 服务
+//! - `switch` - Provider 切换
+//! - `aster_session_store` - Aster 会话存储
+//! - `general_chat` - 通用聊天
+//! - `content_creator` - 内容创作
+//! - `session_context_service` - 会话上下文服务
+//! - `project_context_builder` - 项目上下文构建器
+//! - `tool_hooks_service` - 工具钩子服务
+//! - `kiro_event_service` - Kiro 事件服务
+//! - `api_key_provider_service` - API Key Provider 服务
+//! - `provider_pool_service` - Provider 池服务
+//! - `token_cache_service` - Token 缓存服务
+
+// 无外部依赖的服务
+pub mod context_memory_service;
+pub mod update_check_service;
+pub mod usage_service;
+
+// 依赖 models 的服务
+pub mod live_sync;
+pub mod machine_id_service;
+pub mod mcp_sync;
+pub mod prompt_sync;
+pub mod skill_service;
+
+// 依赖 database + models 的服务
+pub mod aster_session_store;
+pub mod backup_service;
+pub mod material_service;
+pub mod mcp_service;
+pub mod model_registry_service;
+pub mod model_service;
+pub mod persona_service;
+pub mod prompt_service;
+pub mod switch;
+pub mod template_service;
+
+// 子模块
+pub mod content_creator;
+pub mod general_chat;
+
+// 依赖其他 services 的服务
+pub mod project_context_builder;
+pub mod session_context_service;
+pub mod tool_hooks_service;
+
+// 事件服务
+pub mod kiro_event_service;
+
+// 依赖 providers 的服务
+pub mod api_key_provider_service;
+pub mod provider_pool_service;
+pub mod token_cache_service;

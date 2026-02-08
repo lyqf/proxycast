@@ -1,4 +1,4 @@
-use crate::models::{AppType, Provider};
+use proxycast_core::models::{AppType, Provider};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;

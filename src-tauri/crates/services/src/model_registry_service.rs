@@ -3,8 +3,8 @@
 //! 从内嵌资源加载模型数据，管理本地缓存，提供模型搜索等功能
 //! 模型数据在构建时从 aiclientproxy/models 仓库打包进应用
 
-use crate::database::DbConnection;
-use crate::models::model_registry::{
+use proxycast_core::database::DbConnection;
+use proxycast_core::models::model_registry::{
     EnhancedModelMetadata, ModelCapabilities, ModelLimits, ModelPricing, ModelSource, ModelStatus,
     ModelSyncState, ModelTier, ProviderAliasConfig, UserModelPreference,
 };

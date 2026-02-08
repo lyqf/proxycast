@@ -20,8 +20,6 @@ pub use proxycast_core::models::prompt_model;
 pub use proxycast_core::models::provider_model;
 pub use proxycast_core::models::provider_pool_model;
 pub use proxycast_core::models::route_model;
-pub use proxycast_core::models::skill_model;
-
 // project_model 已迁移到 core
 pub use proxycast_core::models::project_model;
 
@@ -38,6 +36,4 @@ pub use proxycast_core::models::prompt_model::Prompt;
 pub use proxycast_core::models::provider_model::Provider;
 #[allow(unused_imports)]
 pub use proxycast_core::models::provider_pool_model::*;
-pub use proxycast_core::models::skill_model::{
-    Skill, SkillMetadata, SkillRepo, SkillState, SkillStates,
-};
+pub use proxycast_core::models::skill_model::{Skill, SkillMetadata, SkillRepo, SkillState};

@@ -1,8 +1,8 @@
-use crate::database::dao::mcp::McpDao;
-use crate::database::DbConnection;
-use crate::models::mcp_model::ConfigValidationError;
-use crate::models::{AppType, McpServer};
-use crate::services::mcp_sync;
+use crate::mcp_sync;
+use proxycast_core::database::dao::mcp::McpDao;
+use proxycast_core::database::DbConnection;
+use proxycast_core::models::mcp_model::ConfigValidationError;
+use proxycast_core::models::{AppType, McpServer};
 
 pub struct McpService;
 

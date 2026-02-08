@@ -2,8 +2,8 @@
 //!
 //! 提供会话上下文的持久化、恢复和智能管理功能，解决 AI 对话中的上下文丢失问题
 
-use crate::database::dao::general_chat::GeneralChatDao;
-use crate::services::general_chat::{ChatMessage, MessageRole};
+use crate::general_chat::{ChatMessage, MessageRole};
+use proxycast_core::database::dao::general_chat::GeneralChatDao;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -410,7 +410,7 @@ pub struct SessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::general_chat::ChatSession;
+    use crate::general_chat::ChatSession;
     use rusqlite::Connection;
 
     fn setup_test_db() -> Connection {

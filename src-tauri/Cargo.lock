@@ -6672,6 +6672,7 @@ dependencies = [
  "proxycast-core",
  "proxycast-infra",
  "proxycast-providers",
+ "proxycast-services",
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.28",
@@ -6806,6 +6807,44 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "proxycast-services"
+version = "0.60.0"
+dependencies = [
+ "anyhow",
+ "aster",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap 5.5.3",
+ "dirs 5.0.1",
+ "glob",
+ "indexmap 2.13.0",
+ "md5",
+ "once_cell",
+ "parking_lot",
+ "proptest",
+ "proxycast-core",
+ "proxycast-providers",
+ "regex",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
+ "uuid",
+ "whoami",
+ "zip",
 ]
 
 [[package]]

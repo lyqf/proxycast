@@ -1,8 +1,8 @@
-use crate::database::dao::providers::ProviderDao;
-use crate::database::DbConnection;
-use crate::models::{AppType, Provider};
-use crate::services::live_sync;
+use crate::live_sync;
 use once_cell::sync::Lazy;
+use proxycast_core::database::dao::providers::ProviderDao;
+use proxycast_core::database::DbConnection;
+use proxycast_core::models::{AppType, Provider};
 use tokio::sync::Mutex;
 
 pub struct SwitchService;

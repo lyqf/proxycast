@@ -114,6 +114,7 @@ impl CWParsedResponse {
     ///
     /// # 返回
     /// (input_tokens, output_tokens) 元组
+    #[allow(dead_code)]
     pub fn estimate_tokens(&self) -> (u32, u32) {
         // 估算 output tokens: 基于响应内容长度 (约 4 字符 = 1 token)
         let mut output_tokens: u32 = (self.content.len() / 4) as u32;

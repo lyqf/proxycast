@@ -1,4 +1,4 @@
-use crate::models::AppType;
+use proxycast_core::models::AppType;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;

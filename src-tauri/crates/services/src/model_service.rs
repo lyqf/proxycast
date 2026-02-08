@@ -2,9 +2,11 @@
 //!
 //! 提供统一的模型获取、缓存和查询接口，支持从不同 Provider 获取模型列表。
 
-use crate::database::dao::provider_pool::ProviderPoolDao;
-use crate::database::DbConnection;
-use crate::models::provider_pool_model::{CredentialData, PoolProviderType, ProviderCredential};
+use proxycast_core::database::dao::provider_pool::ProviderPoolDao;
+use proxycast_core::database::DbConnection;
+use proxycast_core::models::provider_pool_model::{
+    CredentialData, PoolProviderType, ProviderCredential,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

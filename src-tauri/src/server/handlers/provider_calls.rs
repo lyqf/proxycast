@@ -2156,7 +2156,7 @@ pub fn get_stream_format_for_credential(credential: &ProviderCredential) -> Stre
 /// - 需求 4.2: 调用 process_chunk 更新流重建器
 /// - 需求 5.1: 在收到 chunk 后立即转发给客户端
 pub async fn handle_streaming_response(
-    state: &AppState,
+    _state: &AppState,
     flow_id: Option<&str>,
     source_stream: StreamResponse,
     source_format: StreamingFormat,
@@ -2229,7 +2229,7 @@ pub async fn handle_streaming_response(
 /// - 需求 6.2: 超时错误处理
 /// - 需求 6.5: 可配置的流式响应超时
 pub async fn handle_streaming_response_with_timeout(
-    state: &AppState,
+    _state: &AppState,
     flow_id: Option<&str>,
     source_stream: StreamResponse,
     source_format: StreamingFormat,
@@ -2328,7 +2328,7 @@ pub fn response_to_stream(response: reqwest::Response) -> StreamResponse {
 /// # 需求覆盖
 /// - 需求 5.4: 客户端断开时取消上游请求
 pub async fn handle_streaming_with_disconnect_detection(
-    state: &AppState,
+    _state: &AppState,
     flow_id: Option<&str>,
     source_stream: StreamResponse,
     source_format: StreamingFormat,

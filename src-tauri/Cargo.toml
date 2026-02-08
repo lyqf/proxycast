@@ -14,6 +14,7 @@ homepage = "https://github.com/aiclientproxy/proxycast"
 proxycast-core = { path = "crates/core" }
 proxycast-infra = { path = "crates/infra" }
 proxycast-providers = { path = "crates/providers" }
+proxycast-services = { path = "crates/services" }
 voice-core = { path = "crates/voice-core" }
 
 # 序列化
@@ -187,6 +188,7 @@ tauri-build.workspace = true
 proxycast-core.workspace = true
 proxycast-infra.workspace = true
 proxycast-providers.workspace = true
+proxycast-services.workspace = true
 voice-core.workspace = true
 
 # Tauri

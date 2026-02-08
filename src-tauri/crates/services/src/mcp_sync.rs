@@ -1,4 +1,4 @@
-use crate::models::{AppType, McpServer};
+use proxycast_core::models::{AppType, McpServer};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
@@ -361,7 +361,7 @@ pub fn remove_mcp_from_all_apps(
 
 /// Import MCP servers from Claude's ~/.claude/settings.json
 pub fn import_mcp_from_claude(
-) -> Result<Vec<crate::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<proxycast_core::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
     let config_path = home.join(".claude").join("settings.json");
 
@@ -376,7 +376,7 @@ pub fn import_mcp_from_claude(
 
     if let Some(mcp_servers) = settings.get("mcpServers").and_then(|v| v.as_object()) {
         for (id, config) in mcp_servers {
-            let server = crate::models::McpServer {
+            let server = proxycast_core::models::McpServer {
                 id: id.clone(),
                 name: id.clone(),
                 server_config: config.clone(),
@@ -396,7 +396,7 @@ pub fn import_mcp_from_claude(
 
 /// Import MCP servers from Codex's config.toml
 pub fn import_mcp_from_codex(
-) -> Result<Vec<crate::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<proxycast_core::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
     let config_path = home.join(".codex").join("config.toml");
 
@@ -421,7 +421,7 @@ pub fn import_mcp_from_codex(
                 if !current_env.is_empty() {
                     current_config.insert("env".to_string(), Value::Object(current_env.clone()));
                 }
-                let server = crate::models::McpServer {
+                let server = proxycast_core::models::McpServer {
                     id: id.clone(),
                     name: id.clone(),
                     server_config: Value::Object(current_config.clone()),
@@ -455,7 +455,7 @@ pub fn import_mcp_from_codex(
                 if !current_env.is_empty() {
                     current_config.insert("env".to_string(), Value::Object(current_env.clone()));
                 }
-                let server = crate::models::McpServer {
+                let server = proxycast_core::models::McpServer {
                     id: id.clone(),
                     name: id.clone(),
                     server_config: Value::Object(current_config.clone()),
@@ -503,7 +503,7 @@ pub fn import_mcp_from_codex(
         if !current_env.is_empty() {
             current_config.insert("env".to_string(), Value::Object(current_env));
         }
-        let server = crate::models::McpServer {
+        let server = proxycast_core::models::McpServer {
             id: id.clone(),
             name: id.clone(),
             server_config: Value::Object(current_config),
@@ -522,7 +522,7 @@ pub fn import_mcp_from_codex(
 
 /// Import MCP servers from Gemini's settings.json
 pub fn import_mcp_from_gemini(
-) -> Result<Vec<crate::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<proxycast_core::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
     let settings_path = home.join(".gemini").join("settings.json");
 
@@ -537,7 +537,7 @@ pub fn import_mcp_from_gemini(
 
     if let Some(mcp_servers) = settings.get("mcpServers").and_then(|v| v.as_object()) {
         for (id, config) in mcp_servers {
-            let server = crate::models::McpServer {
+            let server = proxycast_core::models::McpServer {
                 id: id.clone(),
                 name: id.clone(),
                 server_config: config.clone(),
@@ -558,7 +558,7 @@ pub fn import_mcp_from_gemini(
 /// Import MCP servers from a specific app
 pub fn import_mcp_from_app(
     app_type: &AppType,
-) -> Result<Vec<crate::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<proxycast_core::models::McpServer>, Box<dyn std::error::Error + Send + Sync>> {
     match app_type {
         AppType::Claude => import_mcp_from_claude(),
         AppType::Codex => import_mcp_from_codex(),

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::timeout;
 
-use crate::models::{AppType, Skill, SkillMetadata, SkillRepo, SkillState};
+use proxycast_core::models::{AppType, Skill, SkillMetadata, SkillRepo, SkillState};
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 

@@ -2,7 +2,7 @@
 //!
 //! 提供工具执行前后的钩子机制，用于自动化上下文记忆管理
 
-use crate::services::context_memory_service::{ContextMemoryService, MemoryEntry, MemoryFileType};
+use crate::context_memory_service::{ContextMemoryService, MemoryEntry, MemoryFileType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -566,7 +566,7 @@ impl ToolHooksService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::context_memory_service::ContextMemoryConfig;
+    use crate::context_memory_service::ContextMemoryConfig;
     use tempfile::TempDir;
 
     fn create_test_services() -> (Arc<ContextMemoryService>, ToolHooksService, TempDir) {

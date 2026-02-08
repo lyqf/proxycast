@@ -5,7 +5,6 @@
 //!
 //! 这是应用层接管框架层存储的关键桥接模块。
 
-use crate::database::DbConnection;
 use anyhow::{anyhow, Result};
 use aster::conversation::message::{Message, MessageContent};
 use aster::conversation::Conversation;
@@ -17,6 +16,7 @@ use aster::session::{
 };
 use async_trait::async_trait;
 use chrono::Utc;
+use proxycast_core::database::DbConnection;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;

@@ -13,10 +13,8 @@ mod lifecycle;
 mod processor;
 mod stream;
 
-// types 已迁移到 proxycast-core
-pub use proxycast_core::websocket::types;
-
 pub use processor::MessageProcessor;
+pub use proxycast_core::websocket::types;
 pub use proxycast_core::websocket::{
     KiroTokenInfo, WsApiRequest, WsApiResponse, WsConfig, WsConnection, WsEndpoint, WsError,
     WsKiroEvent, WsMessage, WsStats, WsStatsSnapshot, WsStreamChunk, WsStreamEnd,

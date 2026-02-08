@@ -4,8 +4,8 @@
 
 #![allow(dead_code)]
 
-use crate::database::{get_db_path, DbConnection};
 use chrono::{DateTime, Duration, Utc};
+use proxycast_core::database::{get_db_path, DbConnection};
 use rusqlite::DatabaseName;
 use std::path::{Path, PathBuf};
 
