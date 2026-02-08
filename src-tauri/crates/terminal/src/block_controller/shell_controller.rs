@@ -17,15 +17,16 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tauri::Emitter;
 use tokio::sync::{mpsc, RwLock};
 
 use super::traits::{
     BlockController, BlockControllerRuntimeStatus, BlockInputUnion, BlockMeta, RuntimeOpts,
 };
-use crate::terminal::connections::ShellProc;
-use crate::terminal::error::TerminalError;
-use crate::terminal::persistence::BlockFile;
+use crate::connections::ShellProc;
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmitter;
+use crate::error::TerminalError;
+use crate::persistence::BlockFile;
 
 /// 控制器状态事件名称
 pub const CONTROLLER_STATUS_EVENT: &str = "controller:status";
@@ -67,7 +68,7 @@ impl From<BlockControllerRuntimeStatus> for ControllerStatusEvent {
 /// - `cmd_run_once`: 仅运行一次（不自动重启）
 /// - `cmd_clear_on_start`: 启动前清空输出
 /// - `cmd_close_on_exit`: 退出后自动关闭
-pub struct ShellController {
+pub struct ShellController<E: TerminalEventEmitter> {
     /// 控制器类型: "shell" | "cmd"
     controller_type: String,
     /// Tab ID
@@ -85,11 +86,11 @@ pub struct ShellController {
     /// 连接名称（用于 SSH/WSL）
     conn_name: RwLock<Option<String>>,
     /// Shell 进程
-    shell_proc: RwLock<Option<ShellProc>>,
+    shell_proc: RwLock<Option<ShellProc<E>>>,
     /// Shell 输入发送器
     shell_input_tx: RwLock<Option<mpsc::Sender<BlockInputUnion>>>,
-    /// Tauri 应用句柄
-    app_handle: tauri::AppHandle,
+    /// 事件发射器
+    app_handle: E,
     /// 块文件存储
     block_file: Option<Arc<BlockFile>>,
     /// 是否已运行过（用于 cmd:runonce）
@@ -98,25 +99,20 @@ pub struct ShellController {
     current_meta: RwLock<Option<BlockMeta>>,
 }
 
-impl ShellController {
+impl<E: TerminalEventEmitter> ShellController<E> {
     /// 创建新的 ShellController
     ///
     /// # 参数
     /// - `tab_id`: Tab ID
     /// - `block_id`: Block ID
     /// - `controller_type`: 控制器类型 ("shell" | "cmd")
-    /// - `app_handle`: Tauri 应用句柄
+    /// - `app_handle`: 事件发射器
     ///
     /// # 返回
     /// 新的 ShellController 实例
     ///
     /// _Requirements: 1.2, 1.3_
-    pub fn new(
-        tab_id: String,
-        block_id: String,
-        controller_type: String,
-        app_handle: tauri::AppHandle,
-    ) -> Self {
+    pub fn new(tab_id: String, block_id: String, controller_type: String, app_handle: E) -> Self {
         tracing::info!(
             "[ShellController] 创建控制器: block_id={}, type={}",
             block_id,
@@ -147,13 +143,13 @@ impl ShellController {
     /// - `tab_id`: Tab ID
     /// - `block_id`: Block ID
     /// - `controller_type`: 控制器类型
-    /// - `app_handle`: Tauri 应用句柄
+    /// - `app_handle`: 事件发射器
     /// - `block_file`: 块文件存储
     pub fn with_block_file(
         tab_id: String,
         block_id: String,
         controller_type: String,
-        app_handle: tauri::AppHandle,
+        app_handle: E,
         block_file: Arc<BlockFile>,
     ) -> Self {
         let mut controller = Self::new(tab_id, block_id, controller_type, app_handle);
@@ -224,7 +220,7 @@ impl ShellController {
         let status = self.get_runtime_status();
         let event = ControllerStatusEvent::from(status);
 
-        if let Err(e) = self.app_handle.emit(CONTROLLER_STATUS_EVENT, &event) {
+        if let Err(e) = emit_helper::emit(&self.app_handle, CONTROLLER_STATUS_EVENT, &event) {
             tracing::error!(
                 "[ShellController] 发送状态更新事件失败: block_id={}, error={}",
                 self.block_id,
@@ -347,7 +343,7 @@ impl ShellController {
 }
 
 #[async_trait]
-impl BlockController for ShellController {
+impl<E: TerminalEventEmitter> BlockController for ShellController<E> {
     /// 启动控制器
     ///
     /// 根据 block_meta 配置启动 Shell 或命令执行进程。

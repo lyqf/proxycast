@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::terminal::TerminalError;
+use crate::error::TerminalError;
 
 /// 终端大小
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

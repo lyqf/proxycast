@@ -19,15 +19,16 @@
 use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use tauri::Emitter;
 
-use crate::terminal::block_controller::{
+use crate::block_controller::{
     BlockController, BlockControllerRuntimeStatus, BlockMeta, ControllerRegistry, RuntimeOpts,
     ShellController,
 };
-use crate::terminal::error::TerminalError;
-use crate::terminal::events::{event_names, TerminalOutputEvent};
-use crate::terminal::persistence::BlockFile;
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmitter;
+use crate::error::TerminalError;
+use crate::events::{event_names, TerminalOutputEvent};
+use crate::persistence::BlockFile;
 
 /// 终端重置序列
 ///
@@ -134,7 +135,7 @@ impl ResyncController {
         block_id: &str,
         block_meta: BlockMeta,
         rt_opts: Option<RuntimeOpts>,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmitter,
         block_file: Option<Arc<BlockFile>>,
         options: ResyncOptions,
     ) -> Result<ResyncResult, TerminalError> {
@@ -338,7 +339,7 @@ impl ResyncController {
         controller_name: &str,
         tab_id: &str,
         block_id: &str,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmitter,
         block_file: Option<Arc<BlockFile>>,
     ) -> Result<Box<dyn BlockController>, TerminalError> {
         match controller_name {
@@ -378,7 +379,7 @@ impl ResyncController {
     ///
     /// _Requirements: 2.3_
     fn send_reset_sequence(
-        app_handle: &tauri::AppHandle,
+        app_handle: &impl TerminalEventEmitter,
         block_id: &str,
         full_reset: bool,
     ) -> Result<(), TerminalError> {
@@ -390,15 +391,15 @@ impl ResyncController {
 
         let data = BASE64.encode(reset_data);
 
-        app_handle
-            .emit(
-                event_names::TERMINAL_OUTPUT,
-                TerminalOutputEvent {
-                    session_id: block_id.to_string(),
-                    data,
-                },
-            )
-            .map_err(|e| TerminalError::Internal(format!("发送重置序列失败: {e}")))?;
+        emit_helper::emit(
+            app_handle,
+            event_names::TERMINAL_OUTPUT,
+            &TerminalOutputEvent {
+                session_id: block_id.to_string(),
+                data,
+            },
+        )
+        .map_err(|e| TerminalError::Internal(format!("发送重置序列失败: {e}")))?;
 
         tracing::debug!(
             "[ResyncController] 发送重置序列: block_id={}, full={}",
@@ -423,7 +424,7 @@ impl ResyncController {
     ///
     /// _Requirements: 2.4_
     fn restore_history(
-        app_handle: &tauri::AppHandle,
+        app_handle: &impl TerminalEventEmitter,
         block_id: &str,
         block_file: &BlockFile,
     ) -> Result<usize, TerminalError> {
@@ -440,15 +441,15 @@ impl ResyncController {
         let data_size = history_data.len();
         let data = BASE64.encode(&history_data);
 
-        app_handle
-            .emit(
-                event_names::TERMINAL_OUTPUT,
-                TerminalOutputEvent {
-                    session_id: block_id.to_string(),
-                    data,
-                },
-            )
-            .map_err(|e| TerminalError::Internal(format!("发送历史数据失败: {e}")))?;
+        emit_helper::emit(
+            app_handle,
+            event_names::TERMINAL_OUTPUT,
+            &TerminalOutputEvent {
+                session_id: block_id.to_string(),
+                data,
+            },
+        )
+        .map_err(|e| TerminalError::Internal(format!("发送历史数据失败: {e}")))?;
 
         tracing::info!(
             "[ResyncController] 恢复历史数据: block_id={}, size={} bytes",
@@ -556,7 +557,7 @@ pub async fn resync_controller(
     block_id: &str,
     block_meta: BlockMeta,
     rt_opts: Option<RuntimeOpts>,
-    app_handle: tauri::AppHandle,
+    app_handle: impl TerminalEventEmitter,
     block_file: Option<Arc<BlockFile>>,
     force: bool,
 ) -> Result<ResyncResult, TerminalError> {

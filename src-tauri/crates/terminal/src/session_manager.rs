@@ -26,13 +26,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::database::DbConnection;
+use proxycast_core::database::DbConnection;
 
-use super::block_controller::ControllerRegistry;
-use super::error::TerminalError;
-use super::events::SessionStatus;
-use super::persistence::{BlockFile, SessionMetadataStore, SessionRecord};
-use super::pty_session::{PtySession, DEFAULT_COLS, DEFAULT_ROWS};
+use crate::block_controller::ControllerRegistry;
+use crate::emitter::{DynEmitter, TerminalEventEmit};
+use crate::error::TerminalError;
+use crate::events::SessionStatus;
+use crate::persistence::{BlockFile, SessionMetadataStore, SessionRecord};
+use crate::pty_session::{PtySession, DEFAULT_COLS, DEFAULT_ROWS};
 
 /// 会话元数据（用于前端展示）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,16 +115,16 @@ pub struct TerminalSessionManager {
     session_store: Option<Arc<SessionMetadataStore>>,
     /// 块文件基础目录
     block_file_base_dir: PathBuf,
-    /// Tauri 应用句柄
-    app_handle: tauri::AppHandle,
+    /// Tauri 应用句柄（抽象为事件发射器）
+    app_handle: DynEmitter,
 }
 
 impl TerminalSessionManager {
     /// 创建新的会话管理器
     ///
     /// # 参数
-    /// - `app_handle`: Tauri 应用句柄
-    pub fn new(app_handle: tauri::AppHandle) -> Self {
+    /// - `app_handle`: 事件发射器（实现 TerminalEventEmit trait）
+    pub fn new(app_handle: impl TerminalEventEmit) -> Self {
         let block_file_base_dir = BlockFile::default_base_dir()
             .unwrap_or_else(|_| PathBuf::from(".proxycast/terminal_blocks"));
 
@@ -137,19 +138,19 @@ impl TerminalSessionManager {
             controller_registry: Arc::new(ControllerRegistry::new()),
             session_store: None,
             block_file_base_dir,
-            app_handle,
+            app_handle: DynEmitter::new(app_handle),
         }
     }
 
     /// 创建带数据库连接的会话管理器
     ///
     /// # 参数
-    /// - `app_handle`: Tauri 应用句柄
+    /// - `app_handle`: 事件发射器（实现 TerminalEventEmit trait）
     /// - `db`: 数据库连接
     ///
     /// _Requirements: 3.5_
     pub fn with_database(
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmit,
         db: DbConnection,
     ) -> Result<Self, TerminalError> {
         let mut manager = Self::new(app_handle);

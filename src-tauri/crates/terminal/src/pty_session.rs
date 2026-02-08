@@ -20,11 +20,12 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use tauri::Emitter;
 use tokio::sync::RwLock;
 
-use super::error::TerminalError;
-use super::events::{event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmit;
+use crate::error::TerminalError;
+use crate::events::{event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
 
 /// 默认终端行数
 pub const DEFAULT_ROWS: u16 = 24;
@@ -99,7 +100,7 @@ impl PtySession {
     /// # 返回
     /// - `Ok(PtySession)`: 创建成功
     /// - `Err(TerminalError)`: 创建失败
-    pub fn new(id: String, app_handle: tauri::AppHandle) -> Result<Self, TerminalError> {
+    pub fn new(id: String, app_handle: impl TerminalEventEmit) -> Result<Self, TerminalError> {
         Self::with_size(id, DEFAULT_ROWS, DEFAULT_COLS, app_handle)
     }
 
@@ -118,7 +119,7 @@ impl PtySession {
         id: String,
         rows: u16,
         cols: u16,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmit,
     ) -> Result<Self, TerminalError> {
         Self::with_size_and_cwd(id, rows, cols, None, app_handle)
     }
@@ -140,7 +141,7 @@ impl PtySession {
         rows: u16,
         cols: u16,
         cwd: Option<String>,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmit,
     ) -> Result<Self, TerminalError> {
         tracing::info!(
             "[终端] 创建 PTY 会话 {}, 大小: {}x{}, cwd: {:?}",
@@ -255,9 +256,10 @@ impl PtySession {
                         });
 
                         // 发送状态事件
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: id_clone.clone(),
                                 status: SessionStatus::Done,
                                 exit_code: Some(0),
@@ -274,9 +276,10 @@ impl PtySession {
 
                         // 发送输出事件
                         let data = BASE64.encode(output_data);
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_OUTPUT,
-                            TerminalOutputEvent {
+                            &TerminalOutputEvent {
                                 session_id: id_clone.clone(),
                                 data,
                             },
@@ -293,9 +296,10 @@ impl PtySession {
                             *status_clone.write().await = SessionStatus::Error;
                         });
 
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: id_clone.clone(),
                                 status: SessionStatus::Error,
                                 exit_code: None,

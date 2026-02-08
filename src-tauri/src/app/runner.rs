@@ -338,7 +338,7 @@ pub fn run() {
             // 初始化终端会话管理器
             {
                 let app_handle = app.handle().clone();
-                let terminal_manager = crate::terminal::TerminalSessionManager::new(app_handle.clone());
+                let terminal_manager = crate::terminal::TerminalSessionManager::new(crate::terminal::TauriEmitter(app_handle.clone()));
                 if let Some(state) = app_handle.try_state::<crate::commands::terminal_cmd::TerminalManagerState>() {
                     let mut guard = state.inner().0.blocking_write();
                     *guard = Some(terminal_manager);

@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::terminal::error::TerminalError;
-use crate::terminal::integration::shell_integration::ShellType;
+use crate::error::TerminalError;
+use crate::integration::shell_integration::ShellType;
 
 /// Shell 集成脚本目录名
 const SHELL_INTEGRATION_DIR: &str = "shell-integration";

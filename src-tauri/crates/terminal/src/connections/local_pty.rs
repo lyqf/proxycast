@@ -27,22 +27,21 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use tauri::Emitter;
-use tauri::Manager;
 use tokio::sync::mpsc;
 
-use crate::terminal::block_controller::{BlockInputUnion, BlockMeta};
-use crate::terminal::error::TerminalError;
-use crate::terminal::events::{
-    event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent,
-};
-use crate::terminal::integration::{ShellLaunchBuilder, ShellType};
-use crate::terminal::persistence::BlockFile;
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmitter;
+
+use crate::block_controller::{BlockInputUnion, BlockMeta};
+use crate::error::TerminalError;
+use crate::events::{event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
+use crate::integration::{ShellLaunchBuilder, ShellType};
+use crate::persistence::BlockFile;
 
 /// Shell 进程封装
 ///
 /// 封装 PTY 进程，提供输入输出和生命周期管理。
-pub struct ShellProc {
+pub struct ShellProc<E: TerminalEventEmitter> {
     /// Block ID
     block_id: String,
     /// 控制器类型
@@ -57,9 +56,11 @@ pub struct ShellProc {
     exit_code: Arc<AtomicI32>,
     /// 是否已退出
     exited: Arc<AtomicBool>,
+    /// 泛型标记
+    _emitter: std::marker::PhantomData<E>,
 }
 
-impl ShellProc {
+impl<E: TerminalEventEmitter> ShellProc<E> {
     /// 创建新的 Shell 进程
     ///
     /// # 参数
@@ -67,7 +68,7 @@ impl ShellProc {
     /// - `controller_type`: 控制器类型 ("shell" | "cmd")
     /// - `rows`: 终端行数
     /// - `cols`: 终端列数
-    /// - `app_handle`: Tauri 应用句柄
+    /// - `app_handle`: 事件发射器
     /// - `block_meta`: 块元数据配置
     /// - `input_rx`: 输入接收器
     /// - `block_file`: 块文件存储（可选）
@@ -82,7 +83,7 @@ impl ShellProc {
         controller_type: String,
         rows: u16,
         cols: u16,
-        app_handle: tauri::AppHandle,
+        app_handle: E,
         block_meta: BlockMeta,
         input_rx: mpsc::Receiver<BlockInputUnion>,
         block_file: Option<Arc<BlockFile>>,
@@ -165,6 +166,7 @@ impl ShellProc {
             shutdown_flag,
             exit_code,
             exited,
+            _emitter: std::marker::PhantomData,
         })
     }
 
@@ -175,7 +177,7 @@ impl ShellProc {
     /// # 参数
     /// - `controller_type`: 控制器类型
     /// - `block_meta`: 块元数据
-    /// - `app_handle`: Tauri 应用句柄
+    /// - `app_handle`: 事件发射器
     /// - `block_id`: Block ID
     ///
     /// # 返回
@@ -185,7 +187,7 @@ impl ShellProc {
     fn build_command(
         controller_type: &str,
         block_meta: &BlockMeta,
-        app_handle: &tauri::AppHandle,
+        app_handle: &E,
         block_id: &str,
     ) -> Result<CommandBuilder, TerminalError> {
         let mut cmd = if controller_type == "cmd" {
@@ -213,7 +215,7 @@ impl ShellProc {
     /// _Requirements: 17.5, 17.7, 17.8, 17.9, 17.10_
     fn build_shell_command(
         block_meta: &BlockMeta,
-        app_handle: &tauri::AppHandle,
+        app_handle: &E,
         block_id: &str,
     ) -> Result<CommandBuilder, TerminalError> {
         // 获取用户默认 shell
@@ -222,7 +224,6 @@ impl ShellProc {
 
         // 获取应用数据目录
         let app_data_dir = app_handle
-            .path()
             .app_data_dir()
             .map_err(|e| TerminalError::Internal(format!("获取应用数据目录失败: {e}")))?;
 
@@ -299,7 +300,7 @@ impl ShellProc {
     fn spawn_output_reader(
         block_id: String,
         mut reader: Box<dyn Read + Send>,
-        app_handle: tauri::AppHandle,
+        app_handle: E,
         shutdown_flag: Arc<AtomicBool>,
         exit_code: Arc<AtomicI32>,
         exited: Arc<AtomicBool>,
@@ -323,9 +324,10 @@ impl ShellProc {
                         exited.store(true, Ordering::SeqCst);
 
                         // 发送状态事件
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: block_id.clone(),
                                 status: SessionStatus::Done,
                                 exit_code: Some(exit_code.load(Ordering::SeqCst)),
@@ -350,9 +352,10 @@ impl ShellProc {
 
                         // 发送输出事件
                         let data = BASE64.encode(output_data);
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_OUTPUT,
-                            TerminalOutputEvent {
+                            &TerminalOutputEvent {
                                 session_id: block_id.clone(),
                                 data,
                             },
@@ -367,9 +370,10 @@ impl ShellProc {
                         tracing::error!("[ShellProc] 读取错误: block_id={}, error={}", block_id, e);
                         exited.store(true, Ordering::SeqCst);
 
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: block_id.clone(),
                                 status: SessionStatus::Error,
                                 exit_code: None,
@@ -545,7 +549,7 @@ impl ShellProc {
     }
 }
 
-impl Drop for ShellProc {
+impl<E: TerminalEventEmitter> Drop for ShellProc<E> {
     fn drop(&mut self) {
         // 确保关闭标志被设置
         self.shutdown_flag.store(true, Ordering::SeqCst);

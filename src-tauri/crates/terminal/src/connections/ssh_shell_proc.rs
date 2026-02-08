@@ -21,15 +21,15 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use parking_lot::Mutex;
 use ssh2::{Channel, Session};
-use tauri::Emitter;
 use tokio::sync::mpsc;
 
-use crate::terminal::block_controller::{BlockInputUnion, BlockMeta, TermSize};
-use crate::terminal::error::TerminalError;
-use crate::terminal::events::{
-    event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent,
-};
-use crate::terminal::persistence::BlockFile;
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmitter;
+
+use crate::block_controller::{BlockInputUnion, BlockMeta, TermSize};
+use crate::error::TerminalError;
+use crate::events::{event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
+use crate::persistence::BlockFile;
 
 use super::ssh_connection::SSHConn;
 
@@ -80,7 +80,7 @@ impl SSHShellProc {
         session: &Session,
         rows: u16,
         cols: u16,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmitter,
         block_meta: BlockMeta,
         input_rx: mpsc::Receiver<BlockInputUnion>,
         block_file: Option<Arc<BlockFile>>,
@@ -190,7 +190,7 @@ impl SSHShellProc {
         ssh_conn: &SSHConn,
         rows: u16,
         cols: u16,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmitter,
         block_meta: BlockMeta,
         input_rx: mpsc::Receiver<BlockInputUnion>,
         block_file: Option<Arc<BlockFile>>,
@@ -258,7 +258,7 @@ impl SSHShellProc {
     fn spawn_output_reader(
         block_id: String,
         channel: Arc<Mutex<Channel>>,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmitter,
         shutdown_flag: Arc<AtomicBool>,
         exit_code: Arc<AtomicI32>,
         exited: Arc<AtomicBool>,
@@ -294,9 +294,10 @@ impl SSHShellProc {
                         );
 
                         // 发送状态事件
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: block_id.clone(),
                                 status: SessionStatus::Done,
                                 exit_code: Some(code),
@@ -321,9 +322,10 @@ impl SSHShellProc {
                                 exit_code.store(code, Ordering::SeqCst);
                                 exited.store(true, Ordering::SeqCst);
 
-                                let _ = app_handle.emit(
+                                let _ = emit_helper::emit(
+                                    &app_handle,
                                     event_names::TERMINAL_STATUS,
-                                    TerminalStatusEvent {
+                                    &TerminalStatusEvent {
                                         session_id: block_id.clone(),
                                         status: SessionStatus::Done,
                                         exit_code: Some(code),
@@ -353,9 +355,10 @@ impl SSHShellProc {
 
                         // 发送输出事件
                         let data = BASE64.encode(output_data);
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_OUTPUT,
-                            TerminalOutputEvent {
+                            &TerminalOutputEvent {
                                 session_id: block_id.clone(),
                                 data,
                             },
@@ -379,9 +382,10 @@ impl SSHShellProc {
                         );
                         exited.store(true, Ordering::SeqCst);
 
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: block_id.clone(),
                                 status: SessionStatus::Error,
                                 exit_code: None,

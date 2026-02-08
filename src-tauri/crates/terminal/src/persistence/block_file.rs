@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 
-use crate::terminal::error::TerminalError;
+use crate::error::TerminalError;
 
 /// 默认终端块文件最大大小 (256KB)
 pub const DEFAULT_TERM_MAX_FILE_SIZE: usize = 256 * 1024;

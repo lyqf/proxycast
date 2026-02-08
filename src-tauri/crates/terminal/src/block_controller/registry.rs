@@ -129,10 +129,10 @@ impl ControllerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::block_controller::traits::{
+    use crate::block_controller::traits::{
         BlockControllerRuntimeStatus, BlockInputUnion, BlockMeta, RuntimeOpts,
     };
-    use crate::terminal::TerminalError;
+    use crate::error::TerminalError;
     use async_trait::async_trait;
 
     /// 测试用的 Mock 控制器

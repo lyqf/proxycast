@@ -6673,6 +6673,7 @@ dependencies = [
  "proxycast-infra",
  "proxycast-providers",
  "proxycast-services",
+ "proxycast-terminal",
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.28",
@@ -6845,6 +6846,33 @@ dependencies = [
  "uuid",
  "whoami",
  "zip",
+]
+
+[[package]]
+name = "proxycast-terminal"
+version = "0.60.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap 5.5.3",
+ "dirs 5.0.1",
+ "parking_lot",
+ "portable-pty",
+ "proptest",
+ "proxycast-core",
+ "rusqlite",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ssh2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+ "whoami",
 ]
 
 [[package]]

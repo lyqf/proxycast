@@ -26,12 +26,15 @@ use std::fmt;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use ssh2::{KeyboardInteractivePrompt as SshKeyboardInteractivePrompt, Session};
 
-use crate::terminal::error::TerminalError;
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmit;
+use crate::error::TerminalError;
 
 /// 默认 SSH 端口
 pub const DEFAULT_SSH_PORT: u16 = 22;
@@ -574,8 +577,8 @@ pub struct SSHConn {
     wsh_error: RwLock<Option<String>>,
     /// 不使用 wsh 的原因
     no_wsh_reason: RwLock<Option<String>>,
-    /// Tauri 应用句柄（用于事件广播）
-    app_handle: RwLock<Option<tauri::AppHandle>>,
+    /// 事件发射器（用于事件广播）
+    app_handle: RwLock<Option<Arc<dyn TerminalEventEmit>>>,
 }
 
 impl SSHConn {
@@ -598,26 +601,25 @@ impl SSHConn {
         }
     }
 
-    /// 创建带有 Tauri 应用句柄的 SSH 连接管理器
+    /// 创建带有事件发射器的 SSH 连接管理器
     ///
     /// 启用事件广播功能。
-    pub fn with_app_handle(opts: SSHOpts, app_handle: tauri::AppHandle) -> Self {
+    pub fn with_app_handle(opts: SSHOpts, app_handle: impl TerminalEventEmit) -> Self {
         let conn = Self::new(opts);
-        *conn.app_handle.write() = Some(app_handle);
+        *conn.app_handle.write() = Some(Arc::new(app_handle));
         conn
     }
 
-    /// 设置 Tauri 应用句柄
-    pub fn set_app_handle(&self, app_handle: tauri::AppHandle) {
-        *self.app_handle.write() = Some(app_handle);
+    /// 设置事件发射器
+    pub fn set_app_handle(&self, app_handle: impl TerminalEventEmit) {
+        *self.app_handle.write() = Some(Arc::new(app_handle));
     }
 
     /// 广播连接状态变更事件
     ///
     /// _Requirements: 7.3_
     fn broadcast_conn_change(&self) {
-        use crate::terminal::events::{event_names, ConnChangeEvent};
-        use tauri::Emitter;
+        use crate::events::{event_names, ConnChangeEvent};
 
         if let Some(ref app_handle) = *self.app_handle.read() {
             let status = self.derive_conn_status();
@@ -626,7 +628,8 @@ impl SSHConn {
                 status,
             };
 
-            if let Err(e) = app_handle.emit(event_names::CONN_CHANGE, event) {
+            if let Err(e) = emit_helper::emit(app_handle.as_ref(), event_names::CONN_CHANGE, &event)
+            {
                 tracing::warn!("[SSHConn] 广播连接状态变更事件失败: {}", e);
             }
         }

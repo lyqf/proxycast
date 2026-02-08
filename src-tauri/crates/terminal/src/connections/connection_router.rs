@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{is_local_conn_name, is_ssh_conn_name, is_wsl_conn_name};
-use crate::terminal::error::TerminalError;
+use crate::error::TerminalError;
 
 // ============================================================================
 // 连接类型枚举

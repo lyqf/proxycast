@@ -25,15 +25,19 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::terminal::block_controller::{BlockInputUnion, BlockMeta};
-use crate::terminal::connections::{ConnStatus, ConnectionState};
-use crate::terminal::error::TerminalError;
-use crate::terminal::events::event_names;
+use crate::block_controller::{BlockInputUnion, BlockMeta};
+use crate::connections::{ConnStatus, ConnectionState};
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmit;
 #[cfg(target_os = "windows")]
-use crate::terminal::events::{TerminalOutputEvent, TerminalStatusEvent};
-use crate::terminal::persistence::BlockFile;
+use crate::emitter::TerminalEventEmitter;
+use crate::error::TerminalError;
+use crate::events::event_names;
 #[cfg(target_os = "windows")]
-use crate::terminal::SessionStatus;
+use crate::events::{TerminalOutputEvent, TerminalStatusEvent};
+use crate::persistence::BlockFile;
+#[cfg(target_os = "windows")]
+use crate::SessionStatus;
 
 #[cfg(target_os = "windows")]
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -286,8 +290,8 @@ pub struct WSLConn {
     wsh_error: RwLock<Option<String>>,
     /// 不使用 wsh 的原因
     no_wsh_reason: RwLock<Option<String>>,
-    /// Tauri 应用句柄（用于事件广播）
-    app_handle: RwLock<Option<tauri::AppHandle>>,
+    /// 事件发射器（用于事件广播）
+    app_handle: RwLock<Option<Arc<dyn TerminalEventEmit>>>,
 }
 
 impl WSLConn {
@@ -308,16 +312,16 @@ impl WSLConn {
         }
     }
 
-    /// 创建带有 Tauri 应用句柄的 WSL 连接管理器
-    pub fn with_app_handle(opts: WSLOpts, app_handle: tauri::AppHandle) -> Self {
+    /// 创建带有事件发射器的 WSL 连接管理器
+    pub fn with_app_handle(opts: WSLOpts, app_handle: impl TerminalEventEmit) -> Self {
         let conn = Self::new(opts);
-        *conn.app_handle.write() = Some(app_handle);
+        *conn.app_handle.write() = Some(Arc::new(app_handle));
         conn
     }
 
-    /// 设置 Tauri 应用句柄
-    pub fn set_app_handle(&self, app_handle: tauri::AppHandle) {
-        *self.app_handle.write() = Some(app_handle);
+    /// 设置事件发射器
+    pub fn set_app_handle(&self, app_handle: impl TerminalEventEmit) {
+        *self.app_handle.write() = Some(Arc::new(app_handle));
     }
 
     /// 从连接字符串创建
@@ -362,8 +366,7 @@ impl WSLConn {
     ///
     /// _Requirements: 7.3_
     fn broadcast_conn_change(&self) {
-        use crate::terminal::events::ConnChangeEvent;
-        use tauri::Emitter;
+        use crate::events::ConnChangeEvent;
 
         if let Some(ref app_handle) = *self.app_handle.read() {
             let status = self.derive_conn_status();
@@ -372,7 +375,8 @@ impl WSLConn {
                 status,
             };
 
-            if let Err(e) = app_handle.emit(event_names::CONN_CHANGE, event) {
+            if let Err(e) = emit_helper::emit(app_handle.as_ref(), event_names::CONN_CHANGE, &event)
+            {
                 tracing::warn!("[WSLConn] 广播连接状态变更事件失败: {}", e);
             }
         }
@@ -617,7 +621,7 @@ impl WSLShellProc {
         opts: WSLOpts,
         rows: u16,
         cols: u16,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmitter,
         block_meta: BlockMeta,
         input_rx: mpsc::Receiver<BlockInputUnion>,
         block_file: Option<Arc<BlockFile>>,
@@ -712,7 +716,7 @@ impl WSLShellProc {
         opts: WSLOpts,
         _rows: u16,
         _cols: u16,
-        _app_handle: tauri::AppHandle,
+        _app_handle: impl TerminalEventEmit,
         _block_meta: BlockMeta,
         _input_rx: mpsc::Receiver<BlockInputUnion>,
         _block_file: Option<Arc<BlockFile>>,
@@ -790,14 +794,12 @@ impl WSLShellProc {
     fn spawn_output_reader(
         block_id: String,
         mut reader: Box<dyn Read + Send>,
-        app_handle: tauri::AppHandle,
+        app_handle: impl TerminalEventEmit,
         shutdown_flag: Arc<AtomicBool>,
         exit_code: Arc<AtomicI32>,
         exited: Arc<AtomicBool>,
         block_file: Option<Arc<BlockFile>>,
     ) {
-        use tauri::Emitter;
-
         std::thread::spawn(move || {
             let mut buffer = [0u8; 4096];
 
@@ -812,9 +814,10 @@ impl WSLShellProc {
                         tracing::info!("[WSLShellProc] WSL 进程已退出: block_id={}", block_id);
                         exited.store(true, Ordering::SeqCst);
 
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: block_id.clone(),
                                 status: SessionStatus::Done,
                                 exit_code: Some(exit_code.load(Ordering::SeqCst)),
@@ -837,9 +840,10 @@ impl WSLShellProc {
                         }
 
                         let data = BASE64.encode(output_data);
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_OUTPUT,
-                            TerminalOutputEvent {
+                            &TerminalOutputEvent {
                                 session_id: block_id.clone(),
                                 data,
                             },
@@ -857,9 +861,10 @@ impl WSLShellProc {
                         );
                         exited.store(true, Ordering::SeqCst);
 
-                        let _ = app_handle.emit(
+                        let _ = emit_helper::emit(
+                            &app_handle,
                             event_names::TERMINAL_STATUS,
-                            TerminalStatusEvent {
+                            &TerminalStatusEvent {
                                 session_id: block_id.clone(),
                                 status: SessionStatus::Error,
                                 exit_code: None,

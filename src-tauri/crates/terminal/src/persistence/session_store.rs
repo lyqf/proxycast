@@ -13,8 +13,8 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::database::DbConnection;
-use crate::terminal::error::TerminalError;
+use crate::error::TerminalError;
+use proxycast_core::database::DbConnection;
 
 /// 会话记录（存储在 SQLite）
 ///

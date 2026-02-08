@@ -22,11 +22,12 @@ use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 use super::osc_parser::{OSCParser, OSCSequence, PromptMarkType};
-use crate::terminal::error::TerminalError;
-use crate::terminal::events::event_names;
+use crate::emit_helper;
+use crate::emitter::TerminalEventEmit;
+use crate::error::TerminalError;
+use crate::events::event_names;
 
 /// Shell 类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,15 +162,12 @@ pub struct ShellIntegration {
     current_command: RwLock<Option<CommandInfo>>,
     /// 上次命令开始时间
     last_command_start: AtomicI64,
-    /// Tauri 应用句柄（可选）
-    app_handle: Option<tauri::AppHandle>,
+    /// 事件发射器（可选）
+    app_handle: Option<std::sync::Arc<dyn TerminalEventEmit>>,
 }
 
 impl ShellIntegration {
     /// 创建新的 Shell 集成处理器
-    ///
-    /// # 参数
-    /// - `block_id`: Block ID
     pub fn new(block_id: String) -> Self {
         Self {
             block_id,
@@ -182,12 +180,8 @@ impl ShellIntegration {
         }
     }
 
-    /// 创建带有 Tauri 应用句柄的 Shell 集成处理器
-    ///
-    /// # 参数
-    /// - `block_id`: Block ID
-    /// - `app_handle`: Tauri 应用句柄
-    pub fn with_app_handle(block_id: String, app_handle: tauri::AppHandle) -> Self {
+    /// 创建带有事件发射器的 Shell 集成处理器
+    pub fn with_app_handle(block_id: String, app_handle: impl TerminalEventEmit) -> Self {
         Self {
             block_id,
             shell_type: RwLock::new(ShellType::Unknown),
@@ -195,7 +189,7 @@ impl ShellIntegration {
             status: RwLock::new(ShellIntegrationStatus::Unknown),
             current_command: RwLock::new(None),
             last_command_start: AtomicI64::new(0),
-            app_handle: Some(app_handle),
+            app_handle: Some(std::sync::Arc::new(app_handle)),
         }
     }
 
@@ -343,9 +337,10 @@ impl ShellIntegration {
 
             // 发送剪贴板事件到前端
             if let Some(ref app_handle) = self.app_handle {
-                let _ = app_handle.emit(
+                let _ = emit_helper::emit(
+                    app_handle.as_ref(),
                     event_names::CLIPBOARD_WRITE,
-                    serde_json::json!({
+                    &serde_json::json!({
                         "block_id": self.block_id,
                         "selection": selection,
                         "content": content,
@@ -497,7 +492,11 @@ impl ShellIntegration {
                 command_info,
             };
 
-            if let Err(e) = app_handle.emit(event_names::SHELL_INTEGRATION_STATUS, &event) {
+            if let Err(e) = emit_helper::emit(
+                app_handle.as_ref(),
+                event_names::SHELL_INTEGRATION_STATUS,
+                &event,
+            ) {
                 tracing::warn!(
                     "[ShellIntegration] 发送状态事件失败: block_id={}, error={}",
                     self.block_id,

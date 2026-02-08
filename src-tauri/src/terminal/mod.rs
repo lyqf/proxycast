@@ -1,50 +1,54 @@
-//! 终端核心模块
+//! 终端核心模块（重导出层）
 //!
-//! 提供 PTY 管理和会话管理能力，通过 Tauri Commands 和 Events 暴露给前端。
-//!
-//! ## 模块结构
-//! - `error` - 错误类型定义
-//! - `events` - Tauri 事件定义
-//! - `pty_session` - PTY 会话封装
-//! - `session_manager` - 会话管理器
-//! - `persistence` - 持久化存储（块文件、会话元数据）
-//! - `block_controller` - 块控制器抽象层
-//! - `connections` - 连接模块（本地 PTY、SSH、WSL）
-//! - `integration` - 集成模块（Shell 集成、OSC 解析、状态重同步）
-//!
-//! ## 使用示例
-//! ```ignore
-//! use proxycast_lib::terminal::{TerminalSessionManager, SessionStatus};
-//!
-//! let manager = TerminalSessionManager::new(app_handle);
-//! let session_id = manager.create_session(24, 80).await?;
-//! manager.write_to_session(&session_id, b"ls -la\n").await?;
-//! ```
+//! 实际实现位于 `proxycast-terminal` crate。
+//! 本模块提供 `TauriEmitter` newtype 桥接 Tauri 与终端 crate。
 
-pub mod block_controller;
-pub mod connections;
-pub mod error;
-pub mod events;
-pub mod integration;
-pub mod persistence;
-pub mod pty_session;
-pub mod session_manager;
+use std::path::PathBuf;
 
-#[cfg(test)]
-mod tests;
+use tauri::{Emitter, Manager};
+
+use proxycast_terminal::emitter::TerminalEventEmit;
+
+/// Tauri AppHandle 的 newtype 包装
+///
+/// 实现 `TerminalEventEmit` trait，桥接 Tauri 框架与终端 crate。
+#[derive(Clone)]
+pub struct TauriEmitter(pub tauri::AppHandle);
+
+impl TerminalEventEmit for TauriEmitter {
+    fn emit_event(&self, event: &str, payload: &serde_json::Value) -> Result<(), String> {
+        self.0
+            .emit(event, payload.clone())
+            .map_err(|e| format!("Tauri emit 失败: {e}"))
+    }
+
+    fn app_data_dir(&self) -> Result<PathBuf, String> {
+        self.0
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("获取应用数据目录失败: {e}"))
+    }
+}
+
+// 重新导出 proxycast-terminal 的所有公共类型
+pub use proxycast_terminal::block_controller;
+pub use proxycast_terminal::connections;
+pub use proxycast_terminal::emit_helper;
+pub use proxycast_terminal::emitter;
+pub use proxycast_terminal::error;
+pub use proxycast_terminal::events;
+pub use proxycast_terminal::integration;
+pub use proxycast_terminal::persistence;
+pub use proxycast_terminal::pty_session;
+pub use proxycast_terminal::session_manager;
 
 // 重新导出常用类型
-pub use block_controller::{
-    BlockController, BlockControllerRuntimeStatus, BlockInputUnion, BlockMeta, ControllerRegistry,
-    ControllerStatusEvent, RuntimeOpts, ShellController, TermSize, CONTROLLER_STATUS_EVENT,
+pub use proxycast_terminal::{
+    resync_controller, BlockController, BlockControllerRuntimeStatus, BlockFile, BlockInputUnion,
+    BlockMeta, ControllerRegistry, ControllerStatusEvent, DynEmitter, NoOpEmitter, PtySession,
+    ResyncController, ResyncOptions, ResyncResult, RuntimeOpts, SessionMetadata,
+    SessionMetadataStore, SessionRecord, SessionStatus, ShellController, ShellProc, TermSize,
+    TerminalError, TerminalEventEmitter, TerminalOutputEvent, TerminalSessionManager,
+    TerminalStatusEvent, CONTROLLER_STATUS_EVENT, DEFAULT_COLS, DEFAULT_ROWS,
+    TERMINAL_RESET_SEQUENCE, TERMINAL_SOFT_RESET_SEQUENCE,
 };
-pub use connections::ShellProc;
-pub use error::TerminalError;
-pub use events::{SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
-pub use integration::{
-    resync_controller, ResyncController, ResyncOptions, ResyncResult, TERMINAL_RESET_SEQUENCE,
-    TERMINAL_SOFT_RESET_SEQUENCE,
-};
-pub use persistence::{BlockFile, SessionMetadataStore, SessionRecord};
-pub use pty_session::{PtySession, DEFAULT_COLS, DEFAULT_ROWS};
-pub use session_manager::{SessionMetadata, TerminalSessionManager};

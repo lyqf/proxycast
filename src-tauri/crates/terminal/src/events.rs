@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::terminal::connections::ConnStatus;
+use crate::connections::ConnStatus;
 
 /// 会话状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
