@@ -6669,14 +6669,18 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "proptest",
+ "proxycast-agent",
  "proxycast-config",
  "proxycast-core",
  "proxycast-credential",
  "proxycast-infra",
+ "proxycast-mcp",
  "proxycast-processor",
  "proxycast-providers",
+ "proxycast-server",
  "proxycast-server-utils",
  "proxycast-services",
+ "proxycast-skills",
  "proxycast-terminal",
  "proxycast-websocket",
  "rand 0.8.5",
@@ -6725,6 +6729,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxycast-agent"
+version = "0.60.0"
+dependencies = [
+ "aster",
+ "async-trait",
+ "chrono",
+ "proxycast-core",
+ "proxycast-mcp",
+ "rmcp 0.6.4",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "proxycast-config"
 version = "0.60.0"
 dependencies = [
@@ -6752,11 +6773,13 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
+ "if-addrs",
  "indexmap 2.13.0",
  "notify 6.1.1",
  "parking_lot",
  "proptest",
  "rand 0.8.5",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -6816,6 +6839,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxycast-mcp"
+version = "0.60.0"
+dependencies = [
+ "async-trait",
+ "glob",
+ "proxycast-core",
+ "rmcp 0.6.4",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "proxycast-processor"
 version = "0.60.0"
 dependencies = [
@@ -6864,6 +6902,43 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "proxycast-server"
+version = "0.60.0"
+dependencies = [
+ "async-stream",
+ "axum 0.7.9",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "dirs 5.0.1",
+ "futures",
+ "parking_lot",
+ "proptest",
+ "proxycast-config",
+ "proxycast-core",
+ "proxycast-credential",
+ "proxycast-infra",
+ "proxycast-processor",
+ "proxycast-providers",
+ "proxycast-server-utils",
+ "proxycast-services",
+ "proxycast-websocket",
+ "regex",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tokio-util",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
  "urlencoding",
  "uuid",
 ]
@@ -6919,6 +6994,18 @@ dependencies = [
  "uuid",
  "whoami",
  "zip",
+]
+
+[[package]]
+name = "proxycast-skills"
+version = "0.60.0"
+dependencies = [
+ "async-trait",
+ "dirs 5.0.1",
+ "regex",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

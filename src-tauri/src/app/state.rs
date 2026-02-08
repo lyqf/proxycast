@@ -33,7 +33,9 @@ use crate::server;
 /// 初始化核心应用状态
 pub fn init_core_state(config: Config) -> (AppState, LogState) {
     let state: AppState = Arc::new(RwLock::new(server::ServerState::new(config.clone())));
-    let logs: LogState = Arc::new(RwLock::new(logger::LogStore::with_config(&config.logging)));
+    let logs: LogState = Arc::new(RwLock::new(logger::create_log_store_from_config(
+        &config.logging,
+    )));
     (state, logs)
 }
 

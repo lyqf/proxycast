@@ -16,20 +16,20 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
-use crate::converter::openai_to_antigravity::{
+use crate::AppState;
+use proxycast_core::models::anthropic::AnthropicMessagesRequest;
+use proxycast_core::models::openai::ChatCompletionRequest;
+use proxycast_core::models::provider_pool_model::ProviderCredential;
+use proxycast_processor::RequestContext;
+use proxycast_providers::converter::anthropic_to_openai::convert_anthropic_to_openai;
+use proxycast_providers::converter::openai_to_antigravity::{
     convert_antigravity_to_openai_response, convert_openai_to_antigravity_with_context,
 };
-use crate::models::anthropic::AnthropicMessagesRequest;
-use crate::models::openai::ChatCompletionRequest;
-use crate::models::provider_pool_model::ProviderCredential;
-use crate::processor::RequestContext;
-use crate::providers::{
+use proxycast_providers::providers::{
     AntigravityProvider, ClaudeCustomProvider, KiroProvider, OpenAICustomProvider,
 };
-use crate::server::AppState;
-use crate::server_utils::parse_cw_response;
-use crate::websocket::{
+use proxycast_server_utils::parse_cw_response;
+use proxycast_websocket::{
     WsApiRequest, WsApiResponse, WsEndpoint, WsError, WsMessage as WsProtoMessage,
 };
 
@@ -447,7 +447,7 @@ pub async fn call_provider_openai_for_ws(
     credential: &ProviderCredential,
     request: &ChatCompletionRequest,
 ) -> Result<serde_json::Value, String> {
-    use crate::models::provider_pool_model::CredentialData;
+    use proxycast_core::models::provider_pool_model::CredentialData;
 
     match &credential.credential {
         CredentialData::KiroOAuth { creds_file_path } => {
@@ -726,7 +726,7 @@ pub async fn call_provider_anthropic_for_ws(
     credential: &ProviderCredential,
     request: &AnthropicMessagesRequest,
 ) -> Result<serde_json::Value, String> {
-    use crate::models::provider_pool_model::CredentialData;
+    use proxycast_core::models::provider_pool_model::CredentialData;
 
     match &credential.credential {
         CredentialData::ClaudeKey { api_key, base_url } => {

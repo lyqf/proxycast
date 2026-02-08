@@ -16,10 +16,10 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::database::dao::api_key_provider::{ApiKeyProviderDao, ApiProviderType};
-use crate::database::dao::provider_pool::ProviderPoolDao;
-use crate::models::provider_pool_model::PoolProviderType;
-use crate::server::AppState;
+use crate::AppState;
+use proxycast_core::database::dao::api_key_provider::{ApiKeyProviderDao, ApiProviderType};
+use proxycast_core::database::dao::provider_pool::ProviderPoolDao;
+use proxycast_core::models::provider_pool_model::PoolProviderType;
 
 /// 选择凭证请求参数
 #[derive(Debug, Deserialize)]
@@ -155,7 +155,7 @@ pub async fn credentials_select(
 /// 尝试从 OAuth 凭证池选择凭证
 async fn try_select_oauth_credential(
     state: &AppState,
-    db: &crate::database::DbConnection,
+    db: &proxycast_core::database::DbConnection,
     request: &SelectCredentialRequest,
 ) -> Result<Option<CredentialResponse>, CredentialApiError> {
     // 使用 ProviderPoolService 智能选择凭证
@@ -208,7 +208,7 @@ async fn try_select_oauth_credential(
 /// 尝试从 API Key Provider 选择凭证
 async fn try_select_api_key_credential(
     state: &AppState,
-    db: &crate::database::DbConnection,
+    db: &proxycast_core::database::DbConnection,
     request: &SelectCredentialRequest,
 ) -> Result<Option<CredentialResponse>, CredentialApiError> {
     // 将 provider_type 映射到 API Key Provider ID
@@ -363,7 +363,7 @@ pub async fn credentials_get_token(
 /// 尝试从 OAuth 凭证池获取 Token
 async fn try_get_oauth_token(
     state: &AppState,
-    db: &crate::database::DbConnection,
+    db: &proxycast_core::database::DbConnection,
     uuid: &str,
 ) -> Result<Option<CredentialResponse>, CredentialApiError> {
     // 查询凭证
@@ -468,7 +468,7 @@ async fn try_get_oauth_token(
 /// 尝试从 API Key Provider 获取 Token
 async fn try_get_api_key_token(
     state: &AppState,
-    db: &crate::database::DbConnection,
+    db: &proxycast_core::database::DbConnection,
     uuid: &str,
 ) -> Result<Option<CredentialResponse>, CredentialApiError> {
     let conn = db.lock().map_err(|e| CredentialApiError {

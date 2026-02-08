@@ -15,9 +15,11 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::database::dao::provider_pool::ProviderPoolDao;
-use crate::models::provider_pool_model::{CachedTokenInfo, PoolProviderType, ProviderCredential};
-use crate::server::AppState;
+use crate::AppState;
+use proxycast_core::database::dao::provider_pool::ProviderPoolDao;
+use proxycast_core::models::provider_pool_model::{
+    CachedTokenInfo, PoolProviderType, ProviderCredential,
+};
 
 /// 可用凭证信息
 #[derive(Debug, Clone, Serialize)]

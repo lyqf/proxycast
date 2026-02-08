@@ -49,28 +49,28 @@ use axum::{
 };
 use futures::StreamExt;
 
-use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
-use crate::converter::openai_to_antigravity::{
+use crate::AppState;
+use proxycast_core::models::anthropic::AnthropicMessagesRequest;
+use proxycast_core::models::openai::ChatCompletionRequest;
+use proxycast_core::models::provider_pool_model::{CredentialData, ProviderCredential};
+use proxycast_providers::converter::anthropic_to_openai::convert_anthropic_to_openai;
+use proxycast_providers::converter::openai_to_antigravity::{
     convert_antigravity_to_openai_response, convert_openai_to_antigravity_with_context,
 };
-use crate::models::anthropic::AnthropicMessagesRequest;
-use crate::models::openai::ChatCompletionRequest;
-use crate::models::provider_pool_model::{CredentialData, ProviderCredential};
-use crate::providers::{
+use proxycast_providers::providers::{
     AntigravityProvider, ClaudeCustomProvider, CodexProvider, KiroProvider, OpenAICustomProvider,
     VertexProvider,
 };
-use crate::server::AppState;
-use crate::server_utils::{
-    build_anthropic_response, build_anthropic_stream_response, build_error_response,
-    build_error_response_with_status, parse_cw_response, safe_truncate, CWParsedResponse,
-};
-use crate::session::store_thought_signature;
-use crate::stream::{PipelineConfig, StreamPipeline};
-use crate::streaming::traits::StreamingProvider;
-use crate::streaming::{
+use proxycast_providers::session::store_thought_signature;
+use proxycast_providers::stream::{PipelineConfig, StreamPipeline};
+use proxycast_providers::streaming::traits::StreamingProvider;
+use proxycast_providers::streaming::{
     StreamConfig, StreamContext, StreamError, StreamFormat as StreamingFormat, StreamManager,
     StreamResponse,
+};
+use proxycast_server_utils::{
+    build_anthropic_response, build_anthropic_stream_response, build_error_response,
+    build_error_response_with_status, parse_cw_response, safe_truncate, CWParsedResponse,
 };
 
 /// 根据凭证调用 Provider (Anthropic 格式)
@@ -1658,9 +1658,9 @@ pub async fn call_provider_openai(
 
                         // 创建 StreamConverter 将 Anthropic SSE 转换为 OpenAI SSE
                         let converter = std::sync::Arc::new(tokio::sync::Mutex::new(
-                            crate::streaming::converter::StreamConverter::with_model(
-                                crate::streaming::converter::StreamFormat::AnthropicSse,
-                                crate::streaming::converter::StreamFormat::OpenAiSse,
+                            proxycast_providers::streaming::converter::StreamConverter::with_model(
+                                proxycast_providers::streaming::converter::StreamFormat::AnthropicSse,
+                                proxycast_providers::streaming::converter::StreamFormat::OpenAiSse,
                                 &request.model,
                             ),
                         ));
@@ -1681,7 +1681,7 @@ pub async fn call_provider_openai(
                                         };
 
                                         for sse_str in sse_events {
-                                            yield Ok::<String, crate::streaming::StreamError>(sse_str);
+                                            yield Ok::<String, proxycast_providers::streaming::StreamError>(sse_str);
                                         }
                                     }
                                     Err(e) => {
@@ -1699,7 +1699,7 @@ pub async fn call_provider_openai(
                             };
 
                             for sse_str in final_events {
-                                yield Ok::<String, crate::streaming::StreamError>(sse_str);
+                                yield Ok::<String, proxycast_providers::streaming::StreamError>(sse_str);
                             }
                         };
 
@@ -2257,9 +2257,14 @@ pub async fn handle_streaming_response_with_timeout(
     // 获取 flow_id 的克隆用于回调
 
     // 创建带超时的流式处理，使用 BoxStream 统一类型
-    let timeout_stream: BoxStream<'static, Result<String, crate::streaming::StreamError>> = {
+    let timeout_stream: BoxStream<
+        'static,
+        Result<String, proxycast_providers::streaming::StreamError>,
+    > = {
         let stream = manager.handle_stream(context, source_stream);
-        Box::pin(crate::streaming::with_timeout(stream, &config))
+        Box::pin(proxycast_providers::streaming::with_timeout(
+            stream, &config,
+        ))
     };
 
     // 转换为 Body 流
@@ -2299,7 +2304,7 @@ pub async fn handle_streaming_response_with_timeout(
 /// # 返回
 /// 统一的流式响应类型
 pub fn response_to_stream(response: reqwest::Response) -> StreamResponse {
-    crate::streaming::reqwest_stream_to_stream_response(response)
+    proxycast_providers::streaming::reqwest_stream_to_stream_response(response)
 }
 
 // ============================================================================
@@ -2355,7 +2360,7 @@ pub async fn handle_streaming_with_disconnect_detection(
     // 创建流式处理
     let managed_stream: futures::stream::BoxStream<
         'static,
-        Result<String, crate::streaming::StreamError>,
+        Result<String, proxycast_providers::streaming::StreamError>,
     > = Box::pin(manager.handle_stream(context, source_stream));
 
     // 如果有取消令牌，创建一个可取消的流
@@ -2624,8 +2629,8 @@ pub async fn handle_kiro_stream(
             // 检查是否是 401/403 错误或 Token 过期，需要刷新 token 重试（需求 4.1）
             let needs_token_refresh = matches!(
                 &e,
-                crate::providers::ProviderError::AuthenticationError(_)
-                    | crate::providers::ProviderError::TokenExpired(_)
+                proxycast_providers::providers::ProviderError::AuthenticationError(_)
+                    | proxycast_providers::providers::ProviderError::TokenExpired(_)
             );
 
             if needs_token_refresh {
@@ -3109,7 +3114,7 @@ fn build_sse_response(
 /// ```
 ///
 /// OpenAI SSE 格式:
-/// ```
+/// ```text
 /// data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
 /// ```
 fn convert_gemini_chunk_to_openai_sse(json: &serde_json::Value, model: &str) -> Option<String> {
@@ -3207,7 +3212,7 @@ fn convert_gemini_chunk_to_openai_sse(json: &serde_json::Value, model: &str) -> 
 
 /// 将 OpenAI ChatCompletionResponse 转换为 Anthropic MessagesResponse 格式
 fn convert_openai_response_to_anthropic(
-    openai_resp: &crate::models::openai::ChatCompletionResponse,
+    openai_resp: &proxycast_core::models::openai::ChatCompletionResponse,
     model: &str,
 ) -> serde_json::Value {
     // 提取第一个 choice 的内容

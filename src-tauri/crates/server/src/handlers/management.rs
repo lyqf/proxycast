@@ -7,8 +7,8 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 
-use crate::database::dao::provider_pool::ProviderPoolDao;
-use crate::server::AppState;
+use crate::AppState;
+use proxycast_core::database::dao::provider_pool::ProviderPoolDao;
 
 // ============ Types ============
 
@@ -201,7 +201,7 @@ pub async fn management_add_credential(
     State(state): State<AppState>,
     Json(request): Json<AddCredentialRequest>,
 ) -> impl IntoResponse {
-    use crate::models::provider_pool_model::{
+    use proxycast_core::models::provider_pool_model::{
         CredentialData, PoolProviderType, ProviderCredential,
     };
 
@@ -538,7 +538,7 @@ pub async fn management_update_config(
     // 更新默认 Provider
     if let Some(provider) = request.default_provider {
         // 验证 provider 类型
-        if provider.parse::<crate::ProviderType>().is_ok() {
+        if provider.parse::<proxycast_core::ProviderType>().is_ok() {
             let mut dp = state.default_provider.write().await;
             *dp = provider.clone();
             tracing::info!("[MANAGEMENT] Updated default_provider to: {}", provider);

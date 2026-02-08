@@ -7,8 +7,8 @@ pub use proxycast_core::models::client_type::*;
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::config::EndpointProvidersConfig;
     use proptest::prelude::*;
+    use proxycast_core::config::EndpointProvidersConfig;
 
     fn arb_client_type() -> impl Strategy<Value = ClientType> {
         prop_oneof![

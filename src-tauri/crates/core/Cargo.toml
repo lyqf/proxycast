@@ -51,11 +51,17 @@ flate2.workspace = true
 tar.workspace = true
 zip.workspace = true
 
+# 正则表达式（logger 脱敏需要）
+regex.workspace = true
+
 # YAML 配置
 serde_yaml.workspace = true
 
 # 数据库（errors 模块需要 rusqlite::Error）
 rusqlite.workspace = true
+
+# 网络接口（network 模块需要）
+if-addrs.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

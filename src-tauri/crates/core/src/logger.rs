@@ -1,9 +1,10 @@
 //! 日志管理模块
 use chrono::{Duration, Local, Utc};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -42,19 +43,13 @@ pub struct LogStore {
 
 impl Default for LogStore {
     fn default() -> Self {
-        // 默认日志文件路径: ~/.proxycast/logs/proxycast.log
         let log_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".proxycast")
             .join("logs");
-
-        // 创建日志目录
         let _ = fs::create_dir_all(&log_dir);
-
         let log_file = log_dir.join("proxycast.log");
-
         let config = LogStoreConfig::default();
-
         Self {
             logs: VecDeque::new(),
             max_logs: config.max_logs,
@@ -86,24 +81,18 @@ impl LogStore {
             level: level.to_string(),
             message: sanitized.clone(),
         };
-
         self.logs.push_back(entry.clone());
-
-        // 写入日志文件
         if self.config.enable_file_logging {
             if let Some(ref path) = self.log_file_path {
                 self.rotate_log_file_if_needed(path);
                 let local_time = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
                 let log_line = format!("{} [{}] {}\n", local_time, level.to_uppercase(), sanitized);
-
                 if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
                     let _ = file.write_all(log_line.as_bytes());
                 }
                 self.prune_old_logs(path);
             }
         }
-
-        // 保持日志数量在限制内
         if self.logs.len() > self.max_logs {
             self.logs.pop_front();
         }
@@ -115,7 +104,6 @@ impl LogStore {
             let log_dir = log_path.parent().unwrap_or(std::path::Path::new("."));
             let raw_file = log_dir.join(format!("raw_response_{request_id}.txt"));
             let sanitized = sanitize_log_message(body);
-
             if let Ok(mut file) = OpenOptions::new()
                 .create(true)
                 .truncate(true)
@@ -145,26 +133,22 @@ impl LogStore {
         let Ok(metadata) = fs::metadata(path) else {
             return;
         };
-
         if metadata.len() <= self.config.max_file_size {
             return;
         }
-
         let suffix = Local::now().format("%Y%m%d-%H%M%S");
         let rotated = path.with_file_name(format!(
             "{}.{}",
             path.file_name().unwrap_or_default().to_string_lossy(),
             suffix
         ));
-
         let _ = fs::rename(path, &rotated);
         self.prune_old_logs(path);
     }
 
-    fn prune_old_logs(&self, path: &std::path::Path) {
-        let Some(dir) = path.parent() else {
-            return;
-        };
+    fn prune_old_logs(&self, path: &PathBuf) {
+        let Some(dir) = path.parent() else { return };
+        self.archive_old_logs(path);
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
@@ -173,7 +157,6 @@ impl LogStore {
             "{}.",
             path.file_name().unwrap_or_default().to_string_lossy()
         );
-
         for entry in entries.flatten() {
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
@@ -192,26 +175,106 @@ impl LogStore {
             }
         }
     }
+
+    fn archive_old_logs(&self, path: &PathBuf) {
+        let Some(dir) = path.parent() else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        let archive_cutoff = Utc::now() - Duration::days(7);
+        let delete_cutoff = Utc::now() - Duration::days(30);
+        let prefix = format!(
+            "{}.",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if !file_name.starts_with(&prefix) {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = metadata.modified() else {
+                continue;
+            };
+            let modified = chrono::DateTime::<Utc>::from(modified);
+            // 删除超过 30 天的 gz 文件
+            if file_name.ends_with(".gz") {
+                if modified < delete_cutoff {
+                    let _ = fs::remove_file(path);
+                }
+                continue;
+            }
+            // 跳过不到 7 天的文件
+            if modified >= archive_cutoff {
+                continue;
+            }
+            // 压缩超过 7 天的日志文件
+            let mut input = Vec::new();
+            if let Ok(mut file) = fs::File::open(&path) {
+                if file.read_to_end(&mut input).is_err() {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            let gz_path = path.with_extension(format!(
+                "{}.gz",
+                path.extension().unwrap_or_default().to_string_lossy()
+            ));
+            if let Ok(gz_file) = fs::File::create(&gz_path) {
+                let mut encoder =
+                    flate2::write::GzEncoder::new(gz_file, flate2::Compression::default());
+                if encoder.write_all(&input).is_ok() && encoder.finish().is_ok() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+    }
 }
 
-/// 简化的共享日志存储类型（使用 parking_lot）
 pub type SharedLogStore = Arc<parking_lot::RwLock<LogStore>>;
 
 /// P2 安全修复：扩展日志脱敏规则，覆盖更多敏感字段
 pub fn sanitize_log_message(message: &str) -> String {
-    // 简化版本：使用字符串替换而不是正则表达式
+    let patterns = [
+        (r"Bearer\s+[A-Za-z0-9._-]+", "Bearer ***"),
+        (
+            r#"api[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9._-]+"#,
+            "api_key: ***",
+        ),
+        (r#"token["']?\s*[:=]\s*["']?[A-Za-z0-9._-]+"#, "token: ***"),
+        (
+            r#"access[_-]?token["']?\s*[:=]\s*["']?[A-Za-z0-9._-]+"#,
+            "access_token: ***",
+        ),
+        (
+            r#"refresh[_-]?token["']?\s*[:=]\s*["']?[A-Za-z0-9._-]+"#,
+            "refresh_token: ***",
+        ),
+        (
+            r#"client[_-]?secret["']?\s*[:=]\s*["']?[A-Za-z0-9._-]+"#,
+            "client_secret: ***",
+        ),
+        (
+            r#"[Aa]uthorization["']?\s*[:=]\s*["']?[A-Za-z0-9._\s-]+"#,
+            "authorization: ***",
+        ),
+        (r#"password["']?\s*[:=]\s*["']?[^\s"',}]+"#, "password: ***"),
+        (
+            r#"secret["']?\s*[:=]\s*["']?[A-Za-z0-9._-]+"#,
+            "secret: ***",
+        ),
+    ];
     let mut sanitized = message.to_string();
-
-    // Bearer token
-    if let Some(pos) = sanitized.find("Bearer ") {
-        let start = pos + 7;
-        if let Some(end) =
-            sanitized[start..].find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-        {
-            sanitized.replace_range(start..start + end, "***");
+    for (pattern, replacement) in patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            sanitized = re.replace_all(&sanitized, replacement).to_string();
         }
     }
-
     sanitized
 }
 
@@ -221,9 +284,50 @@ mod tests {
 
     #[test]
     fn test_sanitize_bearer_token() {
-        let input = "Authorization: Bearer abcDEF123 end";
+        let input = "Authorization: Bearer abcDEF123._-XYZ";
         let output = sanitize_log_message(input);
+        assert!(!output.contains("abcDEF123"));
         assert!(output.contains("***"));
+    }
+
+    #[test]
+    fn test_sanitize_api_key() {
+        let input = r#"request api_key="sk-test_123.456-ABC" end"#;
+        let output = sanitize_log_message(input);
+        assert!(output.contains("api_key: ***"));
+        assert!(!output.contains("sk-test_123"));
+    }
+
+    #[test]
+    fn test_sanitize_access_token() {
+        let input = "access_token=atk_12345";
+        let output = sanitize_log_message(input);
+        assert!(output.contains("access_token: ***"));
+        assert!(!output.contains("atk_12345"));
+    }
+
+    #[test]
+    fn test_sanitize_refresh_token() {
+        let input = "refresh_token: rtk_ABCDE-123";
+        let output = sanitize_log_message(input);
+        assert!(output.contains("refresh_token: ***"));
+        assert!(!output.contains("rtk_ABCDE"));
+    }
+
+    #[test]
+    fn test_sanitize_client_secret() {
+        let input = "client_secret = \"cs_SeCreT-999\"";
+        let output = sanitize_log_message(input);
+        assert!(output.contains("client_secret: ***"));
+        assert!(!output.contains("cs_SeCreT"));
+    }
+
+    #[test]
+    fn test_sanitize_password() {
+        let input = r#"{"password":"p@ssW0rd!"}"#;
+        let output = sanitize_log_message(input);
+        assert!(output.contains("password: ***"));
+        assert!(!output.contains("p@ssW0rd!"));
     }
 
     #[test]

@@ -25,18 +25,18 @@ use axum::{
 use serde_json::json;
 use std::collections::HashMap;
 
-use crate::converter::anthropic_to_openai::convert_anthropic_to_openai;
-use crate::models::anthropic::AnthropicMessagesRequest;
-use crate::models::openai::ChatCompletionRequest;
-use crate::processor::RequestContext;
-use crate::server::client_detector::ClientType;
-use crate::server::{record_request_telemetry, record_token_usage, AppState};
-use crate::server_utils::{
+use crate::client_detector::ClientType;
+use crate::{record_request_telemetry, record_token_usage, AppState};
+use proxycast_core::models::anthropic::AnthropicMessagesRequest;
+use proxycast_core::models::openai::ChatCompletionRequest;
+use proxycast_core::ProviderType;
+use proxycast_processor::RequestContext;
+use proxycast_providers::converter::anthropic_to_openai::convert_anthropic_to_openai;
+use proxycast_providers::streaming::StreamFormat as StreamingFormat;
+use proxycast_server_utils::{
     build_anthropic_response, build_anthropic_stream_response, message_content_len,
     parse_cw_response, safe_truncate,
 };
-use crate::streaming::StreamFormat as StreamingFormat;
-use crate::ProviderType;
 
 use super::{call_provider_anthropic, call_provider_openai};
 
@@ -331,13 +331,14 @@ pub async fn chat_completions(
     let credential = if credential.is_none() {
         eprintln!("[CHAT_COMPLETIONS] Provider Pool 中未找到凭证，尝试 API Key Provider...");
 
-        use crate::database::dao::api_key_provider::ApiProviderType;
+        use proxycast_core::database::dao::api_key_provider::ApiProviderType;
         let provider_id_lower = selected_provider.to_lowercase();
 
         // 策略 1: 优先按 provider_id 直接查找（支持 deepseek, moonshot 等 60+ Provider）
         // 这些 Provider 在 API Key Provider 中有独立配置
-        let mut found_credential: Option<crate::models::provider_pool_model::ProviderCredential> =
-            None;
+        let mut found_credential: Option<
+            proxycast_core::models::provider_pool_model::ProviderCredential,
+        > = None;
 
         if let Some(db) = &state.db {
             // 先尝试按 provider_id 直接查找
@@ -347,7 +348,7 @@ pub async fn chat_completions(
                 .api_key_service
                 .get_fallback_credential(
                     db,
-                    &crate::models::provider_pool_model::PoolProviderType::OpenAI,
+                    &proxycast_core::models::provider_pool_model::PoolProviderType::OpenAI,
                     Some(&provider_id_lower),
                     Some(&client_type),
                 )
@@ -408,36 +409,40 @@ pub async fn chat_completions(
                             };
 
                             let provider_type = match provider_info.provider_type {
-                                ApiProviderType::Anthropic => crate::ProviderType::Anthropic,
-                                ApiProviderType::Openai | ApiProviderType::OpenaiResponse => {
-                                    crate::ProviderType::OpenAI
+                                ApiProviderType::Anthropic => {
+                                    proxycast_core::ProviderType::Anthropic
                                 }
-                                ApiProviderType::Gemini => crate::ProviderType::GeminiApiKey,
-                                _ => crate::ProviderType::OpenAI,
+                                ApiProviderType::Openai | ApiProviderType::OpenaiResponse => {
+                                    proxycast_core::ProviderType::OpenAI
+                                }
+                                ApiProviderType::Gemini => {
+                                    proxycast_core::ProviderType::GeminiApiKey
+                                }
+                                _ => proxycast_core::ProviderType::OpenAI,
                             };
 
                             let credential_data = match provider_type {
-                                crate::ProviderType::Anthropic => {
-                                    crate::models::provider_pool_model::CredentialData::AnthropicKey {
+                                proxycast_core::ProviderType::Anthropic => {
+                                    proxycast_core::models::provider_pool_model::CredentialData::AnthropicKey {
                                         api_key: api_key.clone(),
                                         base_url,
                                     }
                                 }
-                                crate::ProviderType::GeminiApiKey => {
-                                    crate::models::provider_pool_model::CredentialData::GeminiApiKey {
+                                proxycast_core::ProviderType::GeminiApiKey => {
+                                    proxycast_core::models::provider_pool_model::CredentialData::GeminiApiKey {
                                         api_key: api_key.clone(),
                                         base_url,
                                         excluded_models: vec![],
                                     }
                                 }
-                                _ => crate::models::provider_pool_model::CredentialData::OpenAIKey {
+                                _ => proxycast_core::models::provider_pool_model::CredentialData::OpenAIKey {
                                     api_key: api_key.clone(),
                                     base_url,
                                 },
                             };
 
                             let mut cred =
-                                crate::models::provider_pool_model::ProviderCredential::new(
+                                proxycast_core::models::provider_pool_model::ProviderCredential::new(
                                     provider_type,
                                     credential_data,
                                 );
@@ -522,9 +527,9 @@ pub async fn chat_completions(
         let is_success = response.status().is_success();
         let _status_code = response.status().as_u16();
         let status = if is_success {
-            crate::telemetry::RequestStatus::Success
+            proxycast_infra::telemetry::RequestStatus::Success
         } else {
-            crate::telemetry::RequestStatus::Failed
+            proxycast_infra::telemetry::RequestStatus::Failed
         };
         record_request_telemetry(&state, &ctx, status, None);
 
@@ -674,7 +679,7 @@ pub async fn chat_completions(
                         record_request_telemetry(
                             &state,
                             &ctx,
-                            crate::telemetry::RequestStatus::Success,
+                            proxycast_infra::telemetry::RequestStatus::Success,
                             None,
                         );
                         // 记录 Token 使用量
@@ -693,7 +698,7 @@ pub async fn chat_completions(
                         record_request_telemetry(
                             &state,
                             &ctx,
-                            crate::telemetry::RequestStatus::Failed,
+                            proxycast_infra::telemetry::RequestStatus::Failed,
                             Some(e.to_string()),
                         );
                         // 标记 Flow 失败
@@ -1059,8 +1064,9 @@ pub async fn anthropic_messages(
         eprintln!("[ANTHROPIC_MESSAGES] Provider Pool 中未找到凭证，尝试 API Key Provider...");
 
         // 策略 1: 优先按 provider_id 直接查找（支持自定义 Provider）
-        let mut found_credential: Option<crate::models::provider_pool_model::ProviderCredential> =
-            None;
+        let mut found_credential: Option<
+            proxycast_core::models::provider_pool_model::ProviderCredential,
+        > = None;
 
         if let Some(db) = &state.db {
             eprintln!("[ANTHROPIC_MESSAGES] 尝试按 provider_id '{selected_provider}' 直接查找凭证");
@@ -1069,7 +1075,7 @@ pub async fn anthropic_messages(
                 .api_key_service
                 .get_fallback_credential(
                     db,
-                    &crate::models::provider_pool_model::PoolProviderType::Anthropic,
+                    &proxycast_core::models::provider_pool_model::PoolProviderType::Anthropic,
                     Some(&selected_provider),
                     Some(&client_type),
                 )
@@ -1133,9 +1139,9 @@ pub async fn anthropic_messages(
         // 记录请求统计
         let is_success = response.status().is_success();
         let status = if is_success {
-            crate::telemetry::RequestStatus::Success
+            proxycast_infra::telemetry::RequestStatus::Success
         } else {
-            crate::telemetry::RequestStatus::Failed
+            proxycast_infra::telemetry::RequestStatus::Failed
         };
         record_request_telemetry(&state, &ctx, status, None);
 
@@ -1552,9 +1558,9 @@ fn get_target_stream_format(path: &str) -> StreamingFormat {
 /// 当前所有 Provider 都返回 false，因为 StreamingProvider trait 尚未实现。
 /// 一旦任务 6 完成，此函数将根据凭证类型返回适当的值。
 fn should_use_true_streaming(
-    credential: &crate::models::provider_pool_model::ProviderCredential,
+    credential: &proxycast_core::models::provider_pool_model::ProviderCredential,
 ) -> bool {
-    use crate::models::provider_pool_model::CredentialData;
+    use proxycast_core::models::provider_pool_model::CredentialData;
 
     // TODO: 当 StreamingProvider trait 实现后，根据凭证类型返回 true
     // 目前所有 Provider 都使用伪流式模式
@@ -1665,10 +1671,10 @@ fn map_to_api_key_provider_id(provider_type: &str) -> String {
 
 /// 根据 API Provider 类型构建额外的请求头
 fn build_api_key_headers(
-    provider_type: &crate::database::dao::api_key_provider::ApiProviderType,
+    provider_type: &proxycast_core::database::dao::api_key_provider::ApiProviderType,
     api_key: &str,
 ) -> HashMap<String, String> {
-    use crate::database::dao::api_key_provider::ApiProviderType;
+    use proxycast_core::database::dao::api_key_provider::ApiProviderType;
 
     let mut headers = HashMap::new();
 
@@ -1693,9 +1699,9 @@ fn build_api_key_headers(
 
 /// 获取默认的 API Host
 fn get_default_api_host(
-    provider_type: &crate::database::dao::api_key_provider::ApiProviderType,
+    provider_type: &proxycast_core::database::dao::api_key_provider::ApiProviderType,
 ) -> String {
-    use crate::database::dao::api_key_provider::ApiProviderType;
+    use proxycast_core::database::dao::api_key_provider::ApiProviderType;
 
     match provider_type {
         ApiProviderType::Openai | ApiProviderType::OpenaiResponse => {
@@ -1718,11 +1724,11 @@ fn convert_openai_to_anthropic(request: &ChatCompletionRequest) -> serde_json::V
             // 提取 system prompt
             if let Some(content) = &msg.content {
                 system_prompt = Some(match content {
-                    crate::models::openai::MessageContent::Text(s) => s.clone(),
-                    crate::models::openai::MessageContent::Parts(parts) => parts
+                    proxycast_core::models::openai::MessageContent::Text(s) => s.clone(),
+                    proxycast_core::models::openai::MessageContent::Parts(parts) => parts
                         .iter()
                         .filter_map(|p| {
-                            if let crate::models::openai::ContentPart::Text { text } = p {
+                            if let proxycast_core::models::openai::ContentPart::Text { text } = p {
                                 Some(text.clone())
                             } else {
                                 None
@@ -1736,11 +1742,11 @@ fn convert_openai_to_anthropic(request: &ChatCompletionRequest) -> serde_json::V
             // 转换其他消息
             let content = match &msg.content {
                 Some(c) => match c {
-                    crate::models::openai::MessageContent::Text(s) => s.clone(),
-                    crate::models::openai::MessageContent::Parts(parts) => parts
+                    proxycast_core::models::openai::MessageContent::Text(s) => s.clone(),
+                    proxycast_core::models::openai::MessageContent::Parts(parts) => parts
                         .iter()
                         .filter_map(|p| {
-                            if let crate::models::openai::ContentPart::Text { text } = p {
+                            if let proxycast_core::models::openai::ContentPart::Text { text } = p {
                                 Some(text.clone())
                             } else {
                                 None

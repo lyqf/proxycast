@@ -144,7 +144,9 @@ pub struct AppStates {
 pub fn init_states(config: &Config) -> Result<AppStates, String> {
     // 核心状态
     let state: AppState = Arc::new(RwLock::new(server::ServerState::new(config.clone())));
-    let logs: LogState = Arc::new(RwLock::new(logger::LogStore::with_config(&config.logging)));
+    let logs: LogState = Arc::new(RwLock::new(logger::create_log_store_from_config(
+        &config.logging,
+    )));
 
     // 数据库
     let db = database::init_database().map_err(|e| format!("数据库初始化失败: {e}"))?;

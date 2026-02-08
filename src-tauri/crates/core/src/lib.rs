@@ -47,6 +47,12 @@ pub mod processor;
 // WebSocket 核心类型
 pub mod websocket;
 
+// 事件发射抽象（供独立 crate 解耦 Tauri 依赖）
+pub mod event_emit;
+
+// 网络工具
+pub mod network;
+
 // 数据层
 pub mod content;
 pub mod database;
@@ -54,6 +60,7 @@ pub mod memory;
 pub mod workspace;
 
 // 重新导出常用类型
+pub use event_emit::{DynEmitter, EventEmit, NoOpEmitter};
 pub use logger::{LogEntry, LogStore, LogStoreConfig, SharedLogStore};
 pub use models::provider_type::ProviderType;
 pub use models::*;

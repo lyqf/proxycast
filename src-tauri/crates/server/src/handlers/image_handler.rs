@@ -23,14 +23,14 @@ use axum::{
     Json,
 };
 
-use crate::converter::openai_to_antigravity::{
+use crate::handlers::verify_api_key;
+use crate::AppState;
+use proxycast_core::models::openai::ImageGenerationRequest;
+use proxycast_core::models::provider_pool_model::CredentialData;
+use proxycast_providers::converter::openai_to_antigravity::{
     convert_antigravity_image_response, convert_image_request_to_antigravity,
 };
-use crate::models::openai::ImageGenerationRequest;
-use crate::models::provider_pool_model::CredentialData;
-use crate::providers::AntigravityProvider;
-use crate::server::handlers::verify_api_key;
-use crate::server::AppState;
+use proxycast_providers::providers::AntigravityProvider;
 
 /// 处理图像生成请求
 ///
