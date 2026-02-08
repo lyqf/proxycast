@@ -1,0 +1,14 @@
+//! 请求处理器 crate
+//!
+//! 提供统一的请求处理管道，集成路由、容错、监控、插件等功能模块。
+//!
+//! ## 模块结构
+//!
+//! - `steps` - 管道步骤（认证、注入、路由、插件、Provider、遥测）
+
+pub mod processor;
+pub mod steps;
+
+pub use processor::RequestProcessor;
+pub use proxycast_core::processor::RequestContext;
+pub use steps::*;

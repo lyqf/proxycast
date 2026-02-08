@@ -19,6 +19,7 @@ proxycast-services = { path = "crates/services" }
 proxycast-terminal = { path = "crates/terminal" }
 proxycast-credential = { path = "crates/credential" }
 proxycast-websocket = { path = "crates/websocket" }
+proxycast-processor = { path = "crates/processor" }
 voice-core = { path = "crates/voice-core" }
 
 # 序列化
@@ -197,6 +198,7 @@ proxycast-services.workspace = true
 proxycast-terminal.workspace = true
 proxycast-credential.workspace = true
 proxycast-websocket.workspace = true
+proxycast-processor.workspace = true
 voice-core.workspace = true
 
 # Tauri
