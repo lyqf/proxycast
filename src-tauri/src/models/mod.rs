@@ -22,10 +22,8 @@ pub use proxycast_core::models::provider_pool_model;
 pub use proxycast_core::models::route_model;
 pub use proxycast_core::models::skill_model;
 
-// ProjectContext 及相关类型依赖 workspace::Workspace，保留在主 crate
-pub mod project_model;
-#[allow(unused_imports)]
-pub use project_model::*;
+// project_model 已迁移到 core
+pub use proxycast_core::models::project_model;
 
 // 重新导出常用类型（保持向后兼容）
 #[allow(unused_imports)]

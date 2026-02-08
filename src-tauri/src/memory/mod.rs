@@ -1,9 +1,3 @@
-//! Memory 模块
-//!
-//! 提供项目记忆系统管理功能（角色、世界观、风格指南、大纲）。
+//! Memory 模块 - 从 proxycast-core 重新导出
 
-pub mod manager;
-pub mod types;
-
-pub use manager::MemoryManager;
-pub use types::*;
+pub use proxycast_core::memory::*;

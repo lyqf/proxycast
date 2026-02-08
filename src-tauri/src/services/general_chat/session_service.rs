@@ -11,8 +11,8 @@
 //! - SQLite 数据库（通过 DatabaseService）
 //! - types 模块中的数据结构
 
-use super::types::{ChatMessage, ChatSession, ContentBlock, CreateMessageRequest};
 use chrono::Utc;
+use proxycast_core::general_chat::{ChatMessage, ChatSession, ContentBlock, CreateMessageRequest};
 use uuid::Uuid;
 
 /// 会话管理服务

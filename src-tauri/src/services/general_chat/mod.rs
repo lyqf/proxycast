@@ -10,7 +10,8 @@
 //! - `session_service` - 会话管理服务
 
 pub mod session_service;
-pub mod types;
+
+// types 已迁移到 proxycast-core::general_chat
+pub use proxycast_core::general_chat::*;
 
 pub use session_service::SessionService;
-pub use types::*;

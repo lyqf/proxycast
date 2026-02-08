@@ -14,7 +14,9 @@ pub mod aster_state;
 pub mod credential_bridge;
 pub mod event_converter;
 pub mod subagent_scheduler;
-pub mod types;
+
+// types 已迁移到 proxycast-core
+pub use proxycast_core::agent::types;
 
 pub use aster_agent::{AsterAgentWrapper, SessionDetail, SessionInfo};
 pub use aster_state::AsterAgentState;

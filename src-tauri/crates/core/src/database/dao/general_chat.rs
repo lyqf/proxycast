@@ -14,7 +14,7 @@
 //! - `get_message_count` - 获取消息数量
 //! - `delete_messages` - 删除会话消息
 
-use crate::services::general_chat::{ChatMessage, ChatSession, ContentBlock, MessageRole};
+use crate::general_chat::{ChatMessage, ChatSession, ContentBlock, MessageRole};
 use rusqlite::{params, Connection};
 
 pub struct GeneralChatDao;
@@ -342,7 +342,7 @@ impl GeneralChatDao {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::general_chat::MessageRole;
+    use crate::general_chat::MessageRole;
     use rusqlite::Connection;
 
     fn setup_test_db() -> Connection {

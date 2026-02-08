@@ -31,6 +31,16 @@ pub mod plugin;
 pub mod session;
 pub mod session_files;
 
+// 类型模块（纯数据类型，供 database 等模块使用）
+pub mod agent;
+pub mod general_chat;
+
+// 数据层
+pub mod content;
+pub mod database;
+pub mod memory;
+pub mod workspace;
+
 // 重新导出常用类型
 pub use logger::{LogEntry, LogStore, LogStoreConfig, SharedLogStore};
 pub use models::provider_type::ProviderType;
