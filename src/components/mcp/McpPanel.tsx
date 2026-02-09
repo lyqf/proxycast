@@ -28,7 +28,11 @@ const tabs: { id: McpTab; label: string }[] = [
   { id: "config", label: "配置管理" },
 ];
 
-export function McpPanel() {
+interface McpPanelProps {
+  hideHeader?: boolean;
+}
+
+export function McpPanel({ hideHeader = false }: McpPanelProps) {
   const [activeTab, setActiveTab] = useState<McpTab>("runtime");
   const [callingTool, setCallingTool] = useState<McpToolDefinition | null>(
     null,
@@ -74,12 +78,14 @@ export function McpPanel() {
   return (
     <div className="h-full flex flex-col">
       {/* 页面标题 */}
-      <div className="mb-4">
-        <h2 className="text-2xl font-bold">MCP 服务器</h2>
-        <p className="text-muted-foreground">
-          管理 Model Context Protocol 服务器，浏览工具、提示词和资源
-        </p>
-      </div>
+      {!hideHeader && (
+        <div className="mb-4">
+          <h2 className="text-2xl font-bold">MCP 服务器</h2>
+          <p className="text-muted-foreground">
+            管理 Model Context Protocol 服务器，浏览工具、提示词和资源
+          </p>
+        </div>
+      )}
 
       {/* Tab 导航 */}
       <div className="flex items-center gap-1 mb-4 border-b">

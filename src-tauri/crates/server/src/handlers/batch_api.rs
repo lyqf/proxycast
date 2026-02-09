@@ -84,7 +84,7 @@ pub async fn create_batch_task(
     };
 
     // 验证模板是否存在
-    let template = match TemplateDao::get_by_id(db, &request.template_id) {
+    let _template = match TemplateDao::get_by_id(db, &request.template_id) {
         Ok(Some(t)) => t,
         Ok(None) => {
             return (

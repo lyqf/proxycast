@@ -42,6 +42,8 @@ interface InputbarCoreProps {
   isCanvasOpen?: boolean;
   /** Textarea ref（用于 CharacterMention） */
   textareaRef?: React.RefObject<HTMLTextAreaElement>;
+  /** 输入框底栏左侧扩展区域 */
+  leftExtra?: React.ReactNode;
 }
 
 export const InputbarCore: React.FC<InputbarCoreProps> = ({
@@ -59,6 +61,7 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
   isFullscreen = false,
   isCanvasOpen = false,
   textareaRef: externalTextareaRef,
+  leftExtra,
 }) => {
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = externalTextareaRef || internalTextareaRef;
@@ -126,6 +129,9 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
 
         <BottomBar>
           <LeftSection>
+            {leftExtra && (
+              <div className="flex items-center gap-2 mr-2">{leftExtra}</div>
+            )}
             <InputbarTools
               onToolClick={onToolClick}
               activeTools={activeTools}

@@ -6,6 +6,7 @@ use crate::models::model_registry::{
     EnhancedModelMetadata, ModelSyncState, ModelTier, ProviderAliasConfig, UserModelPreference,
 };
 use proxycast_services::model_registry_service::{FetchModelsResult, ModelRegistryService};
+use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use tauri::State;
@@ -13,6 +14,12 @@ use tokio::sync::RwLock;
 
 /// 模型注册服务状态
 pub type ModelRegistryState = Arc<RwLock<Option<ModelRegistryService>>>;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HostAliasUserFileInfo {
+    pub path: String,
+    pub exists: bool,
+}
 
 /// 获取所有模型
 #[tauri::command]
@@ -200,6 +207,23 @@ pub async fn refresh_model_registry(state: State<'_, ModelRegistryState>) -> Res
     service.force_reload().await
 }
 
+#[tauri::command]
+pub fn get_model_host_alias_user_file_info() -> Result<HostAliasUserFileInfo, String> {
+    let path = ModelRegistryService::resolve_user_host_alias_path()
+        .ok_or_else(|| "无法解析用户数据目录".to_string())?;
+
+    Ok(HostAliasUserFileInfo {
+        path: path.to_string_lossy().to_string(),
+        exists: path.exists(),
+    })
+}
+
+#[tauri::command]
+pub fn ensure_model_host_alias_user_file() -> Result<String, String> {
+    let path = ModelRegistryService::ensure_user_host_alias_file()?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// 从 Provider API 获取模型列表
 ///
 /// 调用 Provider 的 /v1/models 端点获取模型列表，
@@ -267,6 +291,12 @@ pub async fn fetch_provider_models_auto(
         .ok_or_else(|| "模型注册服务未初始化".to_string())?;
 
     service
-        .fetch_models_from_api(&provider_id, &api_host, &api_key)
+        .fetch_models_from_api_with_hints(
+            &provider_id,
+            &api_host,
+            &api_key,
+            Some(provider.provider.provider_type),
+            &provider.provider.custom_models,
+        )
         .await
 }

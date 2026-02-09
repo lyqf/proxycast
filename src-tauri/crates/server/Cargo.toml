@@ -13,6 +13,8 @@ proxycast-credential.workspace = true
 proxycast-websocket.workspace = true
 proxycast-processor.workspace = true
 proxycast-server-utils.workspace = true
+proxycast-scheduler.workspace = true
+proxycast-agent.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

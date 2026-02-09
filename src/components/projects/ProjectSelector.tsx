@@ -29,6 +29,10 @@ export interface ProjectSelectorProps {
   disabled?: boolean;
   /** 自定义类名 */
   className?: string;
+  /** 下拉方向 */
+  dropdownSide?: "top" | "bottom";
+  /** 下拉对齐 */
+  dropdownAlign?: "start" | "end";
 }
 
 /**
@@ -43,6 +47,8 @@ export function ProjectSelector({
   placeholder = "选择项目",
   disabled = false,
   className,
+  dropdownSide = "top",
+  dropdownAlign = "start",
 }: ProjectSelectorProps) {
   const { projects, defaultProject, loading, getOrCreateDefault } =
     useProjects();
@@ -119,7 +125,11 @@ export function ProjectSelector({
           <SelectValue placeholder={placeholder} />
         )}
       </SelectTrigger>
-      <SelectContent side="top" className="min-w-[280px] max-w-[400px]">
+      <SelectContent
+        side={dropdownSide}
+        align={dropdownAlign}
+        className="min-w-[320px] max-w-[520px]"
+      >
         {availableProjects.map((project) => (
           <SelectItem key={project.id} value={project.id}>
             <div className="flex items-center gap-2 w-full">
@@ -128,7 +138,7 @@ export function ProjectSelector({
               ) : (
                 <FolderIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               )}
-              <span className="truncate">{project.name}</span>
+              <span className="break-all">{project.name}</span>
               {project.isDefault && (
                 <StarIcon className="h-3 w-3 text-yellow-500 fill-yellow-500 flex-shrink-0" />
               )}

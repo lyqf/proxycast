@@ -1,36 +1,43 @@
 /**
  * 全局应用侧边栏
  *
- * 类似 cherry-studio 的图标导航栏，始终显示在应用左侧
+ * 参考 LobeHub 的信息架构：用户区、搜索、主导航、助手分组、底部快捷入口
  */
 
 import { useState, useEffect, useMemo } from "react";
 import styled from "styled-components";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
+  Home,
+  Image,
+  Compass,
   Bot,
-  Globe,
-  Database,
-  Wrench,
-  Puzzle,
   Settings,
   Moon,
   Sun,
+  Search,
+  Library,
+  BrainCircuit,
+  PenTool,
+  Video,
+  Music,
+  BookOpen,
+  Lightbulb,
+  CalendarRange,
+  FileType,
+  ChevronDown,
   Activity,
-  Terminal,
-  Image,
-  FolderKanban,
-  Blocks,
   LucideIcon,
 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import { getPluginsForSurface, PluginUIInfo } from "@/lib/api/pluginUI";
-import { Page, PageParams } from "@/types/page";
+import {
+  getThemeWorkspacePage,
+  LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
+  Page,
+  PageParams,
+  ThemeWorkspacePage,
+} from "@/types/page";
+import { SettingsTabs } from "@/types/settings";
 import { getConfig } from "@/hooks/useTauri";
 
 interface AppSidebarProps {
@@ -38,107 +45,316 @@ interface AppSidebarProps {
   onNavigate: (page: Page, params?: PageParams) => void;
 }
 
-const Container = styled.div`
+interface SidebarNavItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  page: Page;
+  params?: PageParams;
+  isActive?: (currentPage: Page) => boolean;
+}
+
+const Container = styled.aside`
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 54px;
-  min-width: 54px;
+  width: 248px;
+  min-width: 248px;
   height: 100vh;
-  padding: 12px 0;
+  padding: 12px 10px;
   background-color: hsl(var(--card));
   border-right: 1px solid hsl(var(--border));
 `;
 
-const LogoContainer = styled.div`
-  width: 36px;
-  height: 36px;
+const HeaderArea = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+`;
+
+const UserButton = styled.button`
   display: flex;
   align-items: center;
-  justify-content: center;
-  margin-bottom: 16px;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  padding: 8px 10px;
   cursor: pointer;
-  transition: transform 0.2s;
+  color: hsl(var(--foreground));
 
   &:hover {
-    transform: scale(1.05);
+    background: hsl(var(--muted) / 0.55);
   }
 `;
 
-const LogoImg = styled.img`
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
+const Avatar = styled.div`
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
 `;
 
-const MenusContainer = styled.div`
-  display: flex;
-  flex-direction: column;
+const UserName = styled.div`
   flex: 1;
-  gap: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`;
+
+const SearchButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  padding: 0 10px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: hsl(var(--primary) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  span {
+    font-size: 13px;
+  }
+`;
+
+const MenuScroll = styled.div`
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  padding-right: 2px;
 
   &::-webkit-scrollbar {
-    display: none;
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
   }
 `;
 
-const BottomMenus = styled.div`
+const Section = styled.div`
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid hsl(var(--border));
+  margin-bottom: 14px;
 `;
 
-const IconButton = styled.button<{ $active?: boolean }>`
-  width: 38px;
-  height: 38px;
+const SectionTitle = styled.div`
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.9;
+`;
+
+const NavButton = styled.button<{ $active?: boolean }>`
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 10px;
+  gap: 10px;
+  width: 100%;
+  height: 38px;
   border: none;
+  border-radius: 10px;
+  padding: 0 10px;
   background: ${({ $active }) =>
-    $active ? "hsl(var(--primary))" : "transparent"};
+    $active ? "hsl(var(--accent))" : "transparent"};
   color: ${({ $active }) =>
-    $active
-      ? "hsl(var(--primary-foreground))"
-      : "hsl(var(--muted-foreground))"};
+    $active ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))"};
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.18s ease;
 
   &:hover {
-    background: ${({ $active }) =>
-      $active ? "hsl(var(--primary))" : "hsl(var(--muted))"};
-    color: ${({ $active }) =>
-      $active ? "hsl(var(--primary-foreground))" : "hsl(var(--foreground))"};
+    background: hsl(var(--accent));
+    color: hsl(var(--foreground));
   }
 
   svg {
-    width: 20px;
-    height: 20px;
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+    opacity: 0.9;
   }
 `;
 
-const mainMenuItems: { id: Page; label: string; icon: typeof Bot }[] = [
-  { id: "agent", label: "AI Agent", icon: Bot },
-  { id: "projects", label: "项目", icon: FolderKanban },
-  { id: "image-gen", label: "图片生成", icon: Image },
-  { id: "api-server", label: "API Server", icon: Globe },
-  { id: "provider-pool", label: "凭证池", icon: Database },
-  { id: "mcp", label: "MCP 服务器", icon: Blocks },
-  { id: "terminal", label: "终端", icon: Terminal },
-  { id: "tools", label: "工具", icon: Wrench },
-  { id: "plugins", label: "插件中心", icon: Puzzle },
+const NavLabel = styled.span`
+  flex: 1;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const FooterArea = styled.div`
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--border));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`;
+
+const ActionRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+`;
+
+const IconActionButton = styled.button<{ $active?: boolean }>`
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: ${({ $active }) =>
+    $active ? "hsl(var(--accent))" : "transparent"};
+  color: ${({ $active }) =>
+    $active ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))"};
+  cursor: pointer;
+
+  &:hover {
+    background: hsl(var(--accent));
+    color: hsl(var(--foreground));
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+`;
+
+const MAIN_MENU_ITEMS: SidebarNavItem[] = [
+  {
+    id: "home-general",
+    label: "首页",
+    icon: Home,
+    page: "agent",
+    params: { theme: "general", lockTheme: false },
+    isActive: (currentPage) => currentPage === "agent",
+  },
+  { id: "image-gen", label: "绘画", icon: Image, page: "image-gen" },
+  { id: "plugins", label: "插件中心", icon: Compass, page: "plugins" },
 ];
 
-/**
- * 根据图标名称获取 Lucide 图标组件
- * 默认返回 Activity 图标
- */
+const THEME_MENU_ITEMS: SidebarNavItem[] = [
+  {
+    id: "theme-social-media",
+    label: "社媒内容",
+    icon: PenTool,
+    page: getThemeWorkspacePage("social-media"),
+    isActive: (currentPage) =>
+      currentPage === getThemeWorkspacePage("social-media"),
+  },
+  {
+    id: "theme-poster",
+    label: "图文海报",
+    icon: Image,
+    page: getThemeWorkspacePage("poster"),
+    isActive: (currentPage) => currentPage === getThemeWorkspacePage("poster"),
+  },
+  {
+    id: "theme-video",
+    label: "短视频",
+    icon: Video,
+    page: getThemeWorkspacePage("video"),
+    isActive: (currentPage) => currentPage === getThemeWorkspacePage("video"),
+  },
+  {
+    id: "theme-music",
+    label: "歌词曲谱",
+    icon: Music,
+    page: getThemeWorkspacePage("music"),
+    isActive: (currentPage) => currentPage === getThemeWorkspacePage("music"),
+  },
+  {
+    id: "theme-novel",
+    label: "小说创作",
+    icon: BookOpen,
+    page: getThemeWorkspacePage("novel"),
+    isActive: (currentPage) => currentPage === getThemeWorkspacePage("novel"),
+  },
+  {
+    id: "theme-document",
+    label: "办公文档",
+    icon: FileType,
+    page: getThemeWorkspacePage("document"),
+    isActive: (currentPage) =>
+      currentPage === getThemeWorkspacePage("document"),
+  },
+  {
+    id: "theme-knowledge",
+    label: "知识探索",
+    icon: Lightbulb,
+    page: getThemeWorkspacePage("knowledge"),
+    isActive: (currentPage) =>
+      currentPage === getThemeWorkspacePage("knowledge"),
+  },
+  {
+    id: "theme-planning",
+    label: "计划规划",
+    icon: CalendarRange,
+    page: getThemeWorkspacePage("planning"),
+    isActive: (currentPage) =>
+      currentPage === getThemeWorkspacePage("planning"),
+  },
+];
+
+const FOOTER_MENU_ITEMS: SidebarNavItem[] = [
+  {
+    id: "settings",
+    label: "设置",
+    icon: Settings,
+    page: "settings",
+    isActive: (currentPage) => currentPage === "settings",
+  },
+  {
+    id: "resources",
+    label: "资源",
+    icon: Library,
+    page: "tools",
+    isActive: (currentPage) => currentPage === "tools",
+  },
+  {
+    id: "memory",
+    label: "记忆",
+    icon: BrainCircuit,
+    page: "settings",
+    params: { tab: SettingsTabs.Memory },
+    isActive: (currentPage) => currentPage === "settings",
+  },
+];
+
+const DEFAULT_ENABLED_NAV_ITEMS = ["home-general", "image-gen", "plugins"];
+
 function getIconByName(iconName: string): LucideIcon {
   const IconComponent = (
     LucideIcons as unknown as Record<string, LucideIcon | undefined>
@@ -146,15 +362,9 @@ function getIconByName(iconName: string): LucideIcon {
   return IconComponent || Activity;
 }
 
-/** 默认启用的导航模块 */
-const DEFAULT_ENABLED_NAV_ITEMS = [
-  "agent",
-  "projects",
-  "image-gen",
-  "api-server",
-  "provider-pool",
-  "mcp",
-];
+function isThemeWorkspacePage(page: Page): page is ThemeWorkspacePage {
+  return typeof page === "string" && page.startsWith("workspace-");
+}
 
 export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -166,24 +376,21 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
     return "light";
   });
 
-  // 启用的导航模块
   const [enabledNavItems, setEnabledNavItems] = useState<string[]>(
     DEFAULT_ENABLED_NAV_ITEMS,
   );
-
-  // 已安装的侧边栏插件列表
   const [sidebarPlugins, setSidebarPlugins] = useState<PluginUIInfo[]>([]);
-  // 刷新触发器
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [_activeThemeKey, setActiveThemeKey] = useState<string>(
+    getThemeWorkspacePage("general"),
+  );
 
-  // 加载导航配置
   useEffect(() => {
     const loadNavConfig = async () => {
       try {
         const config = await getConfig();
         const saved = config.navigation?.enabled_items;
         if (saved && saved.length > 0) {
-          // 自动补充新增的默认导航项（避免新功能不可见）
           const merged = [...saved];
           for (const item of DEFAULT_ENABLED_NAV_ITEMS) {
             if (!merged.includes(item)) {
@@ -198,12 +405,13 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
         console.error("加载导航配置失败:", error);
       }
     };
+
     loadNavConfig();
 
-    // 监听导航配置变更事件
     const handleNavConfigChange = () => {
       loadNavConfig();
     };
+
     window.addEventListener("nav-config-changed", handleNavConfigChange);
 
     return () => {
@@ -211,12 +419,10 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
     };
   }, []);
 
-  // 过滤后的导航项
-  const filteredMenuItems = useMemo(() => {
-    return mainMenuItems.filter((item) => enabledNavItems.includes(item.id));
+  const filteredMainMenuItems = useMemo(() => {
+    return MAIN_MENU_ITEMS.filter((item) => enabledNavItems.includes(item.id));
   }, [enabledNavItems]);
 
-  // 加载侧边栏插件
   useEffect(() => {
     const loadSidebarPlugins = async () => {
       try {
@@ -226,18 +432,17 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
         console.error("加载侧边栏插件失败:", error);
       }
     };
+
     loadSidebarPlugins();
   }, [refreshTrigger]);
 
-  // 监听插件安装/卸载事件，刷新侧边栏
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === "plugin-changed") {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === "plugin-changed") {
         setRefreshTrigger((prev) => prev + 1);
       }
     };
 
-    // 监听自定义事件
     const handlePluginChange = () => {
       setRefreshTrigger((prev) => prev + 1);
     };
@@ -260,91 +465,169 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme(theme === "dark" ? "light" : "dark");
+  useEffect(() => {
+    if (isThemeWorkspacePage(currentPage)) {
+      setActiveThemeKey(currentPage);
+    }
+  }, [currentPage]);
+
+  useEffect(() => {
+    const savedThemeKey = localStorage.getItem(
+      LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
+    );
+    if (savedThemeKey) {
+      setActiveThemeKey(savedThemeKey);
+    }
+  }, []);
+
+  const assistantItems = useMemo<SidebarNavItem[]>(() => {
+    const builtin: SidebarNavItem[] = [
+      {
+        id: "assistant-proxycast",
+        label: "ProxyCast AI",
+        icon: Bot,
+        page: "agent",
+      },
+    ];
+
+    const pluginItems: SidebarNavItem[] = sidebarPlugins.map((plugin) => {
+      const pluginPageId = `plugin:${plugin.pluginId}` as Page;
+      return {
+        id: plugin.pluginId,
+        label: plugin.name,
+        icon: getIconByName(plugin.icon),
+        page: pluginPageId,
+      };
+    });
+
+    return [...builtin, ...pluginItems];
+  }, [sidebarPlugins]);
+
+  const isActive = (item: SidebarNavItem) => {
+    if (item.id.startsWith("theme-")) {
+      return currentPage === item.page;
+    }
+
+    if (item.isActive) {
+      return item.isActive(currentPage);
+    }
+
+    return currentPage === item.page;
+  };
+
+  const handleNavigate = (item: SidebarNavItem) => {
+    if (isThemeWorkspacePage(item.page)) {
+      setActiveThemeKey(item.page);
+      localStorage.setItem(LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY, item.page);
+    }
+    onNavigate(item.page, item.params);
   };
 
   return (
-    <TooltipProvider>
-      <Container>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <LogoContainer onClick={() => onNavigate("agent")}>
-              <LogoImg src="/logo.png" alt="ProxyCast" />
-            </LogoContainer>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            <span className="whitespace-nowrap">ProxyCast</span>
-          </TooltipContent>
-        </Tooltip>
+    <Container>
+      <HeaderArea>
+        <UserButton
+          onClick={() =>
+            onNavigate("agent", {
+              theme: "general",
+              lockTheme: false,
+            })
+          }
+        >
+          <Avatar>
+            <img src="/logo.png" alt="ProxyCast" />
+          </Avatar>
+          <UserName>ProxyCast</UserName>
+          <ChevronDown size={14} />
+        </UserButton>
 
-        <MenusContainer>
-          {filteredMenuItems.map((item) => (
-            <Tooltip key={item.id}>
-              <TooltipTrigger asChild>
-                <IconButton
-                  $active={currentPage === item.id}
-                  onClick={() => onNavigate(item.id)}
-                >
-                  <item.icon />
-                </IconButton>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <span className="whitespace-nowrap">{item.label}</span>
-              </TooltipContent>
-            </Tooltip>
+        <SearchButton
+          onClick={() =>
+            onNavigate("agent", {
+              theme: "general",
+              lockTheme: false,
+            })
+          }
+        >
+          <Search size={14} />
+          <span>搜索</span>
+        </SearchButton>
+      </HeaderArea>
+
+      <MenuScroll>
+        <Section>
+          {filteredMainMenuItems.map((item) => (
+            <NavButton
+              key={item.id}
+              $active={isActive(item)}
+              onClick={() => handleNavigate(item)}
+            >
+              <item.icon />
+              <NavLabel>{item.label}</NavLabel>
+            </NavButton>
           ))}
-          {/* 动态插件入口 */}
-          {sidebarPlugins.map((plugin) => {
-            const PluginIcon = getIconByName(plugin.icon);
-            const pluginPageId: Page = `plugin:${plugin.pluginId}`;
-            return (
-              <Tooltip key={plugin.pluginId}>
-                <TooltipTrigger asChild>
-                  <IconButton
-                    $active={currentPage === pluginPageId}
-                    onClick={() => onNavigate(pluginPageId)}
-                  >
-                    <PluginIcon />
-                  </IconButton>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <span className="whitespace-nowrap">{plugin.name}</span>
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </MenusContainer>
+        </Section>
 
-        <BottomMenus>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton onClick={toggleTheme}>
-                {theme === "dark" ? <Moon /> : <Sun />}
-              </IconButton>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <span className="whitespace-nowrap">
-                {theme === "dark" ? "深色模式" : "浅色模式"}
-              </span>
-            </TooltipContent>
-          </Tooltip>
+        <Section>
+          <SectionTitle>创作主题</SectionTitle>
+          {THEME_MENU_ITEMS.map((item) => (
+            <NavButton
+              key={item.id}
+              $active={isActive(item)}
+              onClick={() => handleNavigate(item)}
+            >
+              <item.icon />
+              <NavLabel>{item.label}</NavLabel>
+            </NavButton>
+          ))}
+        </Section>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <IconButton
-                $active={currentPage === "settings"}
-                onClick={() => onNavigate("settings")}
-              >
-                <Settings />
-              </IconButton>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <span className="whitespace-nowrap">设置</span>
-            </TooltipContent>
-          </Tooltip>
-        </BottomMenus>
-      </Container>
-    </TooltipProvider>
+        <Section>
+          <SectionTitle>助手</SectionTitle>
+          {assistantItems.map((item) => (
+            <NavButton
+              key={item.id}
+              $active={isActive(item)}
+              onClick={() => handleNavigate(item)}
+            >
+              <item.icon />
+              <NavLabel>{item.label}</NavLabel>
+            </NavButton>
+          ))}
+        </Section>
+      </MenuScroll>
+
+      <FooterArea>
+        <Section>
+          {FOOTER_MENU_ITEMS.map((item) => (
+            <NavButton
+              key={item.id}
+              $active={isActive(item)}
+              onClick={() => handleNavigate(item)}
+            >
+              <item.icon />
+              <NavLabel>{item.label}</NavLabel>
+            </NavButton>
+          ))}
+        </Section>
+
+        <ActionRow>
+          <IconActionButton
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            title={theme === "dark" ? "深色模式" : "浅色模式"}
+          >
+            {theme === "dark" ? <Moon /> : <Sun />}
+          </IconActionButton>
+
+          <IconActionButton
+            $active={currentPage === "settings"}
+            onClick={() => onNavigate("settings")}
+            title="设置"
+          >
+            <Settings />
+          </IconActionButton>
+        </ActionRow>
+      </FooterArea>
+    </Container>
   );
 }

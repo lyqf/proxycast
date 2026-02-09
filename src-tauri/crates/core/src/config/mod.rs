@@ -21,14 +21,15 @@ pub use import::{ImportOptions, ImportService, ValidationResult};
 pub use path_utils::{collapse_tilde, contains_tilde, expand_tilde};
 pub use types::{
     generate_secure_api_key, AmpConfig, AmpModelMapping, ApiKeyEntry, AsrCredentialEntry,
-    AsrProviderType, BaiduConfig, Config, ContentCreatorConfig, CredentialEntry,
-    CredentialPoolConfig, CustomProviderConfig, EndpointProvidersConfig, ExperimentalFeatures,
-    GeminiApiKeyEntry, InjectionRuleConfig, InjectionSettings, LoggingConfig, ModelInfo,
-    ModelsConfig, NativeAgentConfig, NavigationConfig, OpenAIAsrConfig, ProviderConfig,
-    ProviderModelsConfig, ProvidersConfig, QuotaExceededConfig, RemoteManagementConfig,
-    RetrySettings, RoutingConfig, ScreenshotChatConfig, ServerConfig, TlsConfig, UpdateCheckConfig,
-    VertexApiKeyEntry, VertexModelAlias, VoiceInputConfig, VoiceInstruction, VoiceOutputConfig,
-    VoiceOutputMode, VoiceProcessorConfig, WhisperLocalConfig, WhisperModelSize, XunfeiConfig,
-    DEFAULT_API_KEY,
+    AsrProviderType, AssistantConfig, AssistantProfile, BaiduConfig, ChatAppearanceConfig, Config,
+    ContentCreatorConfig, CredentialEntry, CredentialPoolConfig, CustomProviderConfig,
+    EndpointProvidersConfig, ExperimentalFeatures, GeminiApiKeyEntry, ImageGenConfig,
+    InjectionRuleConfig, InjectionSettings, LoggingConfig, MemoryConfig, ModelInfo, ModelsConfig,
+    NativeAgentConfig, NavigationConfig, OpenAIAsrConfig, ProviderConfig, ProviderModelsConfig,
+    ProvidersConfig, QuotaExceededConfig, RemoteManagementConfig, RetrySettings, RoutingConfig,
+    ScreenshotChatConfig, ServerConfig, TlsConfig, UpdateCheckConfig, UserProfile,
+    VertexApiKeyEntry, VertexModelAlias, VoiceConfig, VoiceInputConfig, VoiceInstruction,
+    VoiceOutputConfig, VoiceOutputMode, VoiceProcessorConfig, WhisperLocalConfig, WhisperModelSize,
+    XunfeiConfig, DEFAULT_API_KEY,
 };
 pub use yaml::{load_config, save_config, ConfigError, ConfigManager, YamlService};

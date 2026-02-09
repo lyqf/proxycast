@@ -405,6 +405,24 @@ pub struct Config {
     /// 导航栏配置
     #[serde(default)]
     pub navigation: NavigationConfig,
+    /// 聊天外观配置
+    #[serde(default)]
+    pub chat_appearance: ChatAppearanceConfig,
+    /// 记忆管理配置
+    #[serde(default)]
+    pub memory: MemoryConfig,
+    /// 语音服务配置
+    #[serde(default)]
+    pub voice: VoiceConfig,
+    /// 图像生成服务配置
+    #[serde(default)]
+    pub image_gen: ImageGenConfig,
+    /// 助理配置
+    #[serde(default)]
+    pub assistant: AssistantConfig,
+    /// 用户资料
+    #[serde(default)]
+    pub user_profile: UserProfile,
 }
 
 // ============ Native Agent 配置类型 ============
@@ -1696,8 +1714,175 @@ impl Default for Config {
             experimental: ExperimentalFeatures::default(),
             content_creator: ContentCreatorConfig::default(),
             navigation: NavigationConfig::default(),
+            chat_appearance: ChatAppearanceConfig::default(),
+            memory: MemoryConfig::default(),
+            voice: VoiceConfig::default(),
+            image_gen: ImageGenConfig::default(),
+            assistant: AssistantConfig::default(),
+            user_profile: UserProfile::default(),
         }
     }
+}
+
+// ============ 设置页面配置类型 ============
+
+/// 聊天外观配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ChatAppearanceConfig {
+    /// 字体大小 (12-18)
+    #[serde(default)]
+    pub font_size: Option<i32>,
+    /// 消息过渡模式
+    #[serde(default)]
+    pub transition_mode: Option<String>,
+    /// 气泡样式
+    #[serde(default)]
+    pub bubble_style: Option<String>,
+    /// 显示头像
+    #[serde(default)]
+    pub show_avatar: Option<bool>,
+    /// 显示时间戳
+    #[serde(default)]
+    pub show_timestamp: Option<bool>,
+}
+
+/// 记忆管理配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MemoryConfig {
+    /// 是否启用记忆功能
+    #[serde(default)]
+    pub enabled: bool,
+    /// 最大记忆条数
+    #[serde(default)]
+    pub max_entries: Option<u32>,
+    /// 记忆保留天数
+    #[serde(default)]
+    pub retention_days: Option<u32>,
+    /// 自动清理过期记忆
+    #[serde(default)]
+    pub auto_cleanup: Option<bool>,
+}
+
+/// 语音服务配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct VoiceConfig {
+    /// TTS 服务商
+    #[serde(default)]
+    pub tts_service: Option<String>,
+    /// STT 服务商
+    #[serde(default)]
+    pub stt_service: Option<String>,
+    /// TTS 语音
+    #[serde(default)]
+    pub tts_voice: Option<String>,
+    /// TTS 语速 (0.1-2.0)
+    #[serde(default)]
+    pub tts_rate: Option<f32>,
+    /// TTS 音调 (0.1-2.0)
+    #[serde(default)]
+    pub tts_pitch: Option<f32>,
+    /// TTS 音量 (0-1)
+    #[serde(default)]
+    pub tts_volume: Option<f32>,
+    /// STT 语言
+    #[serde(default)]
+    pub stt_language: Option<String>,
+    /// 自动停止录音
+    #[serde(default)]
+    pub stt_auto_stop: Option<bool>,
+    /// 启用语音输入
+    #[serde(default)]
+    pub voice_input_enabled: Option<bool>,
+    /// 启用语音输出
+    #[serde(default)]
+    pub voice_output_enabled: Option<bool>,
+}
+
+/// 图像生成服务配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ImageGenConfig {
+    /// 默认图像生成服务
+    #[serde(default)]
+    pub default_service: Option<String>,
+    /// 默认图像数量
+    #[serde(default)]
+    pub default_count: Option<u32>,
+    /// 默认图像尺寸
+    #[serde(default)]
+    pub default_size: Option<String>,
+    /// 默认图像质量
+    #[serde(default)]
+    pub default_quality: Option<String>,
+    /// 默认图像风格
+    #[serde(default)]
+    pub default_style: Option<String>,
+    /// 启用图像增强
+    #[serde(default)]
+    pub enable_enhancement: Option<bool>,
+    /// 自动下载生成的图像
+    #[serde(default)]
+    pub auto_download: Option<bool>,
+}
+
+/// 助理配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AssistantConfig {
+    /// 默认助理 ID
+    #[serde(default)]
+    pub default_assistant_id: Option<String>,
+    /// 自定义助理列表
+    #[serde(default)]
+    pub custom_assistants: Option<Vec<AssistantProfile>>,
+    /// 启用助理自动选择
+    #[serde(default)]
+    pub auto_select: Option<bool>,
+    /// 显示助理建议
+    #[serde(default)]
+    pub show_suggestions: Option<bool>,
+}
+
+/// 助理档案
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AssistantProfile {
+    /// ID
+    pub id: String,
+    /// 名称
+    pub name: String,
+    /// 描述
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 模型
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// 系统提示词
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    /// 温度参数
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    /// 最大 token 数
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+/// 用户资料
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct UserProfile {
+    /// 用户头像 URL
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    /// 昵称
+    #[serde(default)]
+    pub nickname: Option<String>,
+    /// 个人简介
+    #[serde(default)]
+    pub bio: Option<String>,
+    /// 邮箱
+    #[serde(default)]
+    pub email: Option<String>,
+    /// 偏好标签
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 #[cfg(test)]

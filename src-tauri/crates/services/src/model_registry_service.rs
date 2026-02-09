@@ -18,6 +18,9 @@ use tokio::sync::RwLock;
 /// 内嵌的模型资源目录名（相对于 resource_dir）
 /// 对应 tauri.conf.json 中的 "resources/models/**/*"
 const MODELS_RESOURCE_DIR: &str = "resources/models";
+const MODELS_HOST_ALIASES_FILE: &str = "host_aliases.json";
+const MODELS_HOST_ALIASES_USER_FILE: &str = "host_aliases.user.json";
+const DEFAULT_USER_HOST_ALIASES_TEMPLATE: &str = "{\n  \"rules\": []\n}\n";
 
 /// 仓库索引文件结构
 #[derive(Debug, Deserialize)]
@@ -88,6 +91,18 @@ struct RepoLimits {
     max_output: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+struct HostAliasConfig {
+    #[serde(default)]
+    rules: Vec<HostAliasRule>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HostAliasRule {
+    contains: String,
+    providers: Vec<String>,
+}
+
 /// 模型注册服务
 pub struct ModelRegistryService {
     /// 数据库连接
@@ -117,6 +132,32 @@ impl ModelRegistryService {
     /// 设置资源目录路径
     pub fn set_resource_dir(&mut self, path: std::path::PathBuf) {
         self.resource_dir = Some(path);
+    }
+
+    /// 获取用户 host_alias 覆盖文件路径
+    pub fn resolve_user_host_alias_path() -> Option<std::path::PathBuf> {
+        dirs::data_dir().map(|dir| {
+            dir.join("proxycast")
+                .join("models")
+                .join(MODELS_HOST_ALIASES_USER_FILE)
+        })
+    }
+
+    /// 确保用户 host_alias 覆盖文件存在
+    pub fn ensure_user_host_alias_file() -> Result<std::path::PathBuf, String> {
+        let path = Self::resolve_user_host_alias_path()
+            .ok_or_else(|| "无法解析用户数据目录".to_string())?;
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建用户模型目录失败: {e}"))?;
+        }
+
+        if !path.exists() {
+            std::fs::write(&path, DEFAULT_USER_HOST_ALIASES_TEMPLATE)
+                .map_err(|e| format!("写入用户 host_alias 模板失败: {e}"))?;
+        }
+
+        Ok(path)
     }
 
     /// 初始化服务 - 从内嵌资源加载模型数据
@@ -916,6 +957,20 @@ impl ModelRegistryService {
         }
     }
 
+    pub async fn get_local_fallback_model_ids_with_hints(
+        &self,
+        provider_id: &str,
+        api_host: &str,
+        provider_type: Option<ApiProviderType>,
+        custom_models: &[String],
+    ) -> Vec<String> {
+        self.resolve_local_fallback_models(provider_id, api_host, provider_type, custom_models)
+            .await
+            .into_iter()
+            .map(|model| model.id)
+            .collect()
+    }
+
     async fn resolve_local_fallback_models(
         &self,
         provider_id: &str,
@@ -1015,8 +1070,15 @@ impl ModelRegistryService {
             }
         }
 
-        for inferred_id in Self::infer_provider_ids_from_api_host(api_host) {
-            Self::push_unique_candidate(&mut candidates, inferred_id);
+        let host_alias_candidates = self.infer_provider_ids_from_host_aliases(api_host);
+        if host_alias_candidates.is_empty() {
+            for inferred_id in Self::infer_provider_ids_from_api_host(api_host) {
+                Self::push_unique_candidate(&mut candidates, inferred_id);
+            }
+        } else {
+            for inferred_id in host_alias_candidates {
+                Self::push_unique_candidate(&mut candidates, &inferred_id);
+            }
         }
 
         if let Some(provider_type) = provider_type {
@@ -1036,6 +1098,131 @@ impl ModelRegistryService {
         let normalized = candidate.trim().to_lowercase();
         if !candidates.iter().any(|existing| existing == &normalized) {
             candidates.push(normalized);
+        }
+    }
+
+    fn infer_provider_ids_from_host_aliases(&self, api_host: &str) -> Vec<String> {
+        let host = api_host.trim().to_lowercase();
+        if host.is_empty() {
+            return Vec::new();
+        }
+
+        let user_path = Self::resolve_user_host_alias_path();
+        let user_rules = user_path.as_ref().and_then(|path| {
+            if !path.exists() {
+                return None;
+            }
+            Self::load_host_alias_config_from_path(path, "user").map(|config| config.rules)
+        });
+
+        let system_path = self.resolve_system_host_alias_path();
+        let system_rules = system_path.as_ref().and_then(|path| {
+            Self::load_host_alias_config_from_path(path, "system").map(|config| config.rules)
+        });
+
+        if let Some((source, matched)) = Self::select_host_alias_candidates(
+            &host,
+            user_rules.as_deref(),
+            system_rules.as_deref(),
+        ) {
+            match source {
+                "user" => tracing::info!(
+                    "[ModelRegistry] host_alias 用户规则命中: host={}, providers={:?}, path={:?}",
+                    host,
+                    matched,
+                    user_path
+                ),
+                "system" => tracing::info!(
+                    "[ModelRegistry] host_alias 系统规则命中: host={}, providers={:?}, path={:?}",
+                    host,
+                    matched,
+                    system_path
+                ),
+                _ => {}
+            }
+            return matched;
+        }
+
+        tracing::debug!("[ModelRegistry] host_alias 未命中: host={}", host);
+        Vec::new()
+    }
+
+    fn select_host_alias_candidates(
+        host: &str,
+        user_rules: Option<&[HostAliasRule]>,
+        system_rules: Option<&[HostAliasRule]>,
+    ) -> Option<(&'static str, Vec<String>)> {
+        if let Some(rules) = user_rules {
+            let matched = Self::match_host_alias_rules(host, rules);
+            if !matched.is_empty() {
+                return Some(("user", matched));
+            }
+        }
+
+        if let Some(rules) = system_rules {
+            let matched = Self::match_host_alias_rules(host, rules);
+            if !matched.is_empty() {
+                return Some(("system", matched));
+            }
+        }
+
+        None
+    }
+
+    fn match_host_alias_rules(host: &str, rules: &[HostAliasRule]) -> Vec<String> {
+        let mut matched = Vec::new();
+
+        for rule in rules {
+            let pattern = rule.contains.trim().to_lowercase();
+            if pattern.is_empty() || !host.contains(&pattern) {
+                continue;
+            }
+
+            for provider_id in &rule.providers {
+                Self::push_unique_candidate(&mut matched, provider_id);
+            }
+        }
+
+        matched
+    }
+
+    fn resolve_system_host_alias_path(&self) -> Option<std::path::PathBuf> {
+        let resource_dir = self.resource_dir.as_ref()?;
+        Some(
+            resource_dir
+                .join(MODELS_RESOURCE_DIR)
+                .join(MODELS_HOST_ALIASES_FILE),
+        )
+    }
+
+    fn load_host_alias_config_from_path(
+        path: &std::path::Path,
+        source: &str,
+    ) -> Option<HostAliasConfig> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::debug!(
+                    "[ModelRegistry] 读取 host_aliases 配置失败: source={}, path={:?}, error={}",
+                    source,
+                    path,
+                    e
+                );
+                return None;
+            }
+        };
+
+        match serde_json::from_str::<HostAliasConfig>(&content) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                tracing::warn!(
+                    "[ModelRegistry] 解析 host_aliases 配置失败: source={}, path={:?}, error={}",
+                    source,
+                    path,
+                    e
+                );
+                None
+            }
         }
     }
 
@@ -1236,8 +1423,12 @@ pub struct FetchModelsResult {
 
 #[cfg(test)]
 mod tests {
-    use super::ModelRegistryService;
+    use super::{HostAliasRule, ModelRegistryService};
     use proxycast_core::database::dao::api_key_provider::ApiProviderType;
+    use proxycast_core::database::DbConnection;
+    use rusqlite::Connection;
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
 
     #[test]
     fn test_build_models_api_url() {
@@ -1253,6 +1444,78 @@ mod tests {
             ModelRegistryService::build_models_api_url("https://open.bigmodel.cn/api/anthropic"),
             "https://open.bigmodel.cn/api/anthropic/v1/models"
         );
+    }
+
+    fn create_service_with_resource_dir(resource_dir: std::path::PathBuf) -> ModelRegistryService {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let db: DbConnection = Arc::new(Mutex::new(conn));
+        let mut service = ModelRegistryService::new(db);
+        service.set_resource_dir(resource_dir);
+        service
+    }
+
+    #[test]
+    fn test_infer_provider_ids_from_host_aliases_resources() {
+        let temp = tempdir().expect("tempdir");
+        let models_dir = temp.path().join("resources/models");
+        std::fs::create_dir_all(&models_dir).expect("create models dir");
+        std::fs::write(
+            models_dir.join("host_aliases.json"),
+            r#"{"rules":[{"contains":"bigmodel.cn","providers":["zhipuai-custom"]}]}"#,
+        )
+        .expect("write host aliases");
+
+        let service = create_service_with_resource_dir(temp.path().to_path_buf());
+        let provider_ids =
+            service.infer_provider_ids_from_host_aliases("https://open.bigmodel.cn/api/anthropic");
+
+        assert_eq!(provider_ids, vec!["zhipuai-custom".to_string()]);
+    }
+
+    #[test]
+    fn test_select_host_alias_candidates_user_priority() {
+        let user_rules = vec![HostAliasRule {
+            contains: "bigmodel.cn".to_string(),
+            providers: vec!["zhipuai-user".to_string()],
+        }];
+        let system_rules = vec![HostAliasRule {
+            contains: "bigmodel.cn".to_string(),
+            providers: vec!["zhipuai-system".to_string()],
+        }];
+
+        let result = ModelRegistryService::select_host_alias_candidates(
+            "https://open.bigmodel.cn/api/anthropic",
+            Some(&user_rules),
+            Some(&system_rules),
+        );
+
+        assert!(result.is_some());
+        let (source, providers) = result.expect("should match");
+        assert_eq!(source, "user");
+        assert_eq!(providers, vec!["zhipuai-user".to_string()]);
+    }
+
+    #[test]
+    fn test_select_host_alias_candidates_system_fallback() {
+        let user_rules = vec![HostAliasRule {
+            contains: "not-hit-domain".to_string(),
+            providers: vec!["nohit".to_string()],
+        }];
+        let system_rules = vec![HostAliasRule {
+            contains: "bigmodel.cn".to_string(),
+            providers: vec!["zhipuai-system".to_string()],
+        }];
+
+        let result = ModelRegistryService::select_host_alias_candidates(
+            "https://open.bigmodel.cn/api/anthropic",
+            Some(&user_rules),
+            Some(&system_rules),
+        );
+
+        assert!(result.is_some());
+        let (source, providers) = result.expect("should fallback to system");
+        assert_eq!(source, "system");
+        assert_eq!(providers, vec!["zhipuai-system".to_string()]);
     }
 
     #[test]

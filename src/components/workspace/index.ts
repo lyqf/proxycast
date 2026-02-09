@@ -6,3 +6,5 @@
 
 export { WorkspaceSelector } from "./WorkspaceSelector";
 export type { WorkspaceSelectorProps } from "./WorkspaceSelector";
+export { WorkbenchPage } from "./WorkbenchPage";
+export type { WorkbenchPageProps } from "./WorkbenchPage";

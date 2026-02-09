@@ -145,6 +145,125 @@ export interface NavigationConfig {
   enabled_items: string[];
 }
 
+/**
+ * 聊天外观配置
+ */
+export interface ChatAppearanceConfig {
+  /** 字体大小 (12-18) */
+  fontSize?: number;
+  /** 消息过渡模式 */
+  transitionMode?: "none" | "fadeIn" | "smooth";
+  /** 气泡样式 */
+  bubbleStyle?: "default" | "minimal" | "colorful";
+  /** 显示头像 */
+  showAvatar?: boolean;
+  /** 显示时间戳 */
+  showTimestamp?: boolean;
+}
+
+/**
+ * 记忆管理系统配置
+ */
+export interface MemoryConfig {
+  /** 是否启用记忆功能 */
+  enabled: boolean;
+  /** 最大记忆条数 */
+  max_entries?: number;
+  /** 记忆保留天数 */
+  retention_days?: number;
+  /** 自动清理过期记忆 */
+  auto_cleanup?: boolean;
+}
+
+/**
+ * 语音服务配置
+ */
+export interface VoiceConfig {
+  /** TTS 服务商 */
+  tts_service?: "openai" | "azure" | "google" | "edge" | "macos";
+  /** STT 服务商 */
+  stt_service?: "openai" | "azure" | "google" | "whisper";
+  /** TTS 语音 */
+  tts_voice?: string;
+  /** TTS 语速 (0.1-2.0) */
+  tts_rate?: number;
+  /** TTS 音调 (0.1-2.0) */
+  tts_pitch?: number;
+  /** TTS 音量 (0-1) */
+  tts_volume?: number;
+  /** STT 语言 */
+  stt_language?: string;
+  /** 自动停止录音 */
+  stt_auto_stop?: boolean;
+  /** 启用语音输入 */
+  voice_input_enabled?: boolean;
+  /** 启用语音输出 */
+  voice_output_enabled?: boolean;
+}
+
+/**
+ * 图像生成服务配置
+ */
+export interface ImageGenConfig {
+  /** 默认图像生成服务 */
+  default_service?: "dall_e" | "midjourney" | "stable_diffusion" | "flux";
+  /** 默认图像数量 */
+  default_count?: number;
+  /** 默认图像尺寸 */
+  default_size?:
+    | "256x256"
+    | "512x512"
+    | "1024x1024"
+    | "1792x1024"
+    | "1024x1792";
+  /** 默认图像质量 */
+  default_quality?: "standard" | "hd";
+  /** 默认图像风格 */
+  default_style?: "vivid" | "natural";
+  /** 启用图像增强 */
+  enable_enhancement?: boolean;
+  /** 自动下载生成的图像 */
+  auto_download?: boolean;
+}
+
+/**
+ * 助理配置
+ */
+export interface AssistantConfig {
+  /** 默认助理 ID */
+  default_assistant_id?: string;
+  /** 自定义助理列表 */
+  custom_assistants?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    model?: string;
+    system_prompt?: string;
+    temperature?: number;
+    max_tokens?: number;
+  }>;
+  /** 启用助理自动选择 */
+  auto_select?: boolean;
+  /** 显示助理建议 */
+  show_suggestions?: boolean;
+}
+
+/**
+ * 用户资料配置
+ */
+export interface UserProfile {
+  /** 用户头像 URL */
+  avatar_url?: string;
+  /** 昵称 */
+  nickname?: string;
+  /** 个人简介 */
+  bio?: string;
+  /** 邮箱 */
+  email?: string;
+  /** 偏好标签 */
+  tags?: string[];
+}
+
 export interface Config {
   server: {
     host: string;
@@ -193,6 +312,18 @@ export interface Config {
   content_creator?: ContentCreatorConfig;
   /** 导航栏配置 */
   navigation?: NavigationConfig;
+  /** 聊天外观配置 */
+  chat_appearance?: ChatAppearanceConfig;
+  /** 记忆管理配置 */
+  memory?: MemoryConfig;
+  /** 语音服务配置 */
+  voice?: VoiceConfig;
+  /** 图像生成服务配置 */
+  image_gen?: ImageGenConfig;
+  /** 助理配置 */
+  assistant?: AssistantConfig;
+  /** 用户资料 */
+  user_profile?: UserProfile;
 }
 
 export interface LogEntry {
@@ -593,4 +724,148 @@ export async function updateScreenshotShortcut(
   shortcut: string,
 ): Promise<void> {
   return safeInvoke("update_screenshot_shortcut", { newShortcut: shortcut });
+}
+
+// ============ 使用统计 API ============
+
+export interface UsageStatsResponse {
+  total_conversations: number;
+  total_messages: number;
+  total_tokens: number;
+  total_time_minutes: number;
+  monthly_conversations: number;
+  monthly_messages: number;
+  monthly_tokens: number;
+  today_conversations: number;
+  today_messages: number;
+  today_tokens: number;
+}
+
+export interface ModelUsage {
+  model: string;
+  conversations: number;
+  tokens: number;
+  percentage: number;
+}
+
+export interface DailyUsage {
+  date: string;
+  conversations: number;
+  tokens: number;
+}
+
+/**
+ * 获取使用统计数据
+ * @param timeRange 时间范围 (week/month/all)
+ */
+export async function getUsageStats(
+  timeRange: string,
+): Promise<UsageStatsResponse> {
+  return safeInvoke("get_usage_stats", { timeRange });
+}
+
+/**
+ * 获取模型使用排行
+ * @param timeRange 时间范围 (week/month/all)
+ */
+export async function getModelUsageRanking(
+  timeRange: string,
+): Promise<ModelUsage[]> {
+  return safeInvoke("get_model_usage_ranking", { timeRange });
+}
+
+/**
+ * 获取每日使用趋势
+ * @param timeRange 时间范围 (week/month/all)
+ */
+export async function getDailyUsageTrends(
+  timeRange: string,
+): Promise<DailyUsage[]> {
+  return safeInvoke("get_daily_usage_trends", { timeRange });
+}
+
+// ============ 记忆管理 API ============
+
+export interface MemoryStatsResponse {
+  total_entries: number;
+  storage_used: number;
+  memory_count: number;
+}
+
+export interface CleanupMemoryResult {
+  cleaned_entries: number;
+  freed_space: number;
+}
+
+/**
+ * 获取记忆统计信息
+ */
+export async function getMemoryStats(): Promise<MemoryStatsResponse> {
+  return safeInvoke("get_conversation_memory_stats");
+}
+
+/**
+ * 清理过期记忆
+ */
+export async function cleanupMemory(): Promise<CleanupMemoryResult> {
+  return safeInvoke("cleanup_conversation_memory");
+}
+
+// ============ 语音测试 API ============
+
+export interface TtsTestResult {
+  success: boolean;
+  error: string | null;
+  audio_path: string | null;
+}
+
+export interface VoiceOption {
+  id: string;
+  name: string;
+  language: string;
+}
+
+/**
+ * 测试 TTS 语音合成
+ * @param service TTS 服务名称
+ * @param voice 语音 ID
+ */
+export async function testTts(
+  service: string,
+  voice: string,
+): Promise<TtsTestResult> {
+  return safeInvoke("test_tts", { service, voice });
+}
+
+/**
+ * 获取可用的语音列表
+ * @param service TTS 服务名称
+ */
+export async function getAvailableVoices(
+  service: string,
+): Promise<VoiceOption[]> {
+  return safeInvoke("get_available_voices", { service });
+}
+
+// ============ 文件上传 API ============
+
+export interface UploadResult {
+  url: string;
+  size: number;
+}
+
+/**
+ * 上传用户头像
+ * @param filePath 文件路径
+ */
+export async function uploadAvatar(filePath: string): Promise<UploadResult> {
+  return safeInvoke("upload_avatar", { filePath });
+}
+
+/**
+ * 删除用户头像
+ * @param url 头像 URL
+ */
+export async function deleteAvatar(url: string): Promise<void> {
+  return safeInvoke("delete_avatar", { url });
 }

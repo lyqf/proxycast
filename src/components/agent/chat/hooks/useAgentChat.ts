@@ -985,10 +985,20 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     );
   };
 
-  const clearMessages = () => {
+  const clearMessages = (
+    options: {
+      showToast?: boolean;
+      toastMessage?: string;
+    } = {},
+  ) => {
+    const { showToast = true, toastMessage = "新话题已创建" } = options;
+
     setMessages([]);
     setSessionId(null);
-    toast.success("新话题已创建");
+
+    if (showToast) {
+      toast.success(toastMessage);
+    }
   };
 
   // 切换话题

@@ -192,6 +192,12 @@ fn arb_config() -> impl Strategy<Value = Config> {
             experimental: proxycast_core::config::ExperimentalFeatures::default(),
             content_creator: ContentCreatorConfig::default(),
             navigation: NavigationConfig::default(),
+            chat_appearance: proxycast_core::config::ChatAppearanceConfig::default(),
+            memory: proxycast_core::config::MemoryConfig::default(),
+            voice: proxycast_core::config::VoiceConfig::default(),
+            image_gen: proxycast_core::config::ImageGenConfig::default(),
+            assistant: proxycast_core::config::AssistantConfig::default(),
+            user_profile: proxycast_core::config::UserProfile::default(),
         })
 }
 
@@ -432,6 +438,12 @@ fn arb_valid_config() -> impl Strategy<Value = Config> {
             experimental: proxycast_core::config::ExperimentalFeatures::default(),
             content_creator: ContentCreatorConfig::default(),
             navigation: NavigationConfig::default(),
+            chat_appearance: proxycast_core::config::ChatAppearanceConfig::default(),
+            memory: proxycast_core::config::MemoryConfig::default(),
+            voice: proxycast_core::config::VoiceConfig::default(),
+            image_gen: proxycast_core::config::ImageGenConfig::default(),
+            assistant: proxycast_core::config::AssistantConfig::default(),
+            user_profile: proxycast_core::config::UserProfile::default(),
         })
 }
 
@@ -483,6 +495,12 @@ fn arb_invalid_config() -> impl Strategy<Value = Config> {
                     experimental: proxycast_core::config::ExperimentalFeatures::default(),
                     content_creator: ContentCreatorConfig::default(),
                     navigation: NavigationConfig::default(),
+                    chat_appearance: proxycast_core::config::ChatAppearanceConfig::default(),
+                    memory: proxycast_core::config::MemoryConfig::default(),
+                    voice: proxycast_core::config::VoiceConfig::default(),
+                    image_gen: proxycast_core::config::ImageGenConfig::default(),
+                    assistant: proxycast_core::config::AssistantConfig::default(),
+                    user_profile: proxycast_core::config::UserProfile::default(),
                 };
                 // 根据类型使配置无效
                 match invalid_type {

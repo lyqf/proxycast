@@ -3,10 +3,9 @@
 //! 提供任务调度的核心功能
 
 use super::dao::SchedulerDao;
-use super::types::{ScheduledTask, TaskFilter, TaskStatus};
+use super::types::{ScheduledTask, TaskFilter};
 use async_trait::async_trait;
 use proxycast_core::database::DbConnection;
-use std::sync::Arc;
 
 /// 调度器 Trait
 ///

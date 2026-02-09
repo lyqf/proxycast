@@ -134,12 +134,14 @@ interface SelectContentProps {
   className?: string;
   children: React.ReactNode;
   side?: "top" | "bottom";
+  align?: "start" | "end";
 }
 
 const SelectContent: React.FC<SelectContentProps> = ({
   className,
   children,
   side = "bottom",
+  align = "start",
 }) => {
   const context = useContext(SelectContext);
   if (!context) throw new Error("SelectContent must be used within Select");
@@ -153,6 +155,7 @@ const SelectContent: React.FC<SelectContentProps> = ({
       className={cn(
         "absolute z-50 w-full rounded-md border bg-background shadow-lg",
         side === "top" ? "bottom-full mb-1" : "top-full mt-1",
+        align === "end" ? "right-0" : "left-0",
         className,
       )}
     >

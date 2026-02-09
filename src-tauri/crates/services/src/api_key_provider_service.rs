@@ -77,6 +77,30 @@ data: [DONE]\n";
             ApiProviderType::Openai
         ));
     }
+
+    #[test]
+    fn test_pick_test_model_priority() {
+        let with_explicit = ApiKeyProviderService::pick_test_model(
+            Some("explicit-model".to_string()),
+            &["custom-model".to_string()],
+            &["fallback-model".to_string()],
+        );
+        assert_eq!(with_explicit.as_deref(), Some("explicit-model"));
+
+        let with_custom = ApiKeyProviderService::pick_test_model(
+            None,
+            &["custom-model".to_string()],
+            &["fallback-model".to_string()],
+        );
+        assert_eq!(with_custom.as_deref(), Some("custom-model"));
+
+        let with_local_fallback =
+            ApiKeyProviderService::pick_test_model(None, &[], &["fallback-model".to_string()]);
+        assert_eq!(with_local_fallback.as_deref(), Some("fallback-model"));
+
+        let none = ApiKeyProviderService::pick_test_model(None, &[], &[]);
+        assert!(none.is_none());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +299,16 @@ impl ApiKeyProviderService {
     #[inline]
     fn uses_anthropic_protocol(provider_type: ApiProviderType) -> bool {
         provider_type.is_anthropic_protocol()
+    }
+
+    fn pick_test_model(
+        model_name: Option<String>,
+        custom_models: &[String],
+        fallback_models: &[String],
+    ) -> Option<String> {
+        model_name
+            .or_else(|| custom_models.first().cloned())
+            .or_else(|| fallback_models.first().cloned())
     }
 
     async fn test_openai_chat_once(
@@ -1619,6 +1653,18 @@ impl ApiKeyProviderService {
         provider_id: &str,
         model_name: Option<String>,
     ) -> Result<ConnectionTestResult, String> {
+        self.test_connection_with_fallback_models(db, provider_id, model_name, Vec::new())
+            .await
+    }
+
+    /// 测试 Provider 连接（带本地模型兜底）
+    pub async fn test_connection_with_fallback_models(
+        &self,
+        db: &DbConnection,
+        provider_id: &str,
+        model_name: Option<String>,
+        fallback_models: Vec<String>,
+    ) -> Result<ConnectionTestResult, String> {
         use std::time::Instant;
 
         // 获取 Provider 信息
@@ -1639,9 +1685,12 @@ impl ApiKeyProviderService {
         let result = match provider.provider_type {
             provider_type if Self::uses_anthropic_protocol(provider_type) => {
                 // Anthropic / AnthropicCompatible 不支持 /models，统一发送 /messages 测试请求
-                let test_model = model_name
-                    .or_else(|| provider.custom_models.first().cloned())
-                    .unwrap_or_else(|| "claude-3-haiku-20240307".to_string());
+                let test_model = Self::pick_test_model(
+                    model_name.clone(),
+                    &provider.custom_models,
+                    &fallback_models,
+                )
+                .unwrap_or_else(|| "claude-3-haiku-20240307".to_string());
 
                 match self
                     .test_anthropic_connection(&api_key, &provider.api_host, &test_model)
@@ -1665,9 +1714,12 @@ impl ApiKeyProviderService {
             }
             ApiProviderType::Codex => {
                 // Codex 协议直接走 /responses 端点
-                let test_model = model_name
-                    .or_else(|| provider.custom_models.first().cloned())
-                    .ok_or_else(|| "缺少模型名称：请在自定义模型中填写一个模型名".to_string())?;
+                let test_model = Self::pick_test_model(
+                    model_name.clone(),
+                    &provider.custom_models,
+                    &fallback_models,
+                )
+                .ok_or_else(|| "缺少模型名称：请在自定义模型中填写一个模型名".to_string())?;
 
                 self.test_codex_responses_endpoint(&api_key, &provider.api_host, &test_model, "hi")
                     .await
@@ -1680,6 +1732,10 @@ impl ApiKeyProviderService {
                     "[TEST_CONNECTION] provider.custom_models: {:?}",
                     provider.custom_models
                 );
+                eprintln!(
+                    "[TEST_CONNECTION] local_fallback_models_count: {}",
+                    fallback_models.len()
+                );
 
                 let models_result = self
                     .test_openai_models_endpoint(&api_key, &provider.api_host)
@@ -1689,9 +1745,14 @@ impl ApiKeyProviderService {
 
                 // 如果 /models 端点失败：
                 // 1) 优先用传入的 model_name
-                // 2) 否则如果 Provider 配置了 custom_models，则用第一个模型降级测试 chat/completions
+                // 2) 否则使用 Provider 配置的 custom_models
+                // 3) 再使用本地模型注册表兜底
                 if models_result.is_err() {
-                    let test_model = model_name.or_else(|| provider.custom_models.first().cloned());
+                    let test_model = Self::pick_test_model(
+                        model_name.clone(),
+                        &provider.custom_models,
+                        &fallback_models,
+                    );
 
                     eprintln!("[TEST_CONNECTION] fallback test_model: {test_model:?}");
 

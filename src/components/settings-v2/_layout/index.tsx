@@ -5,10 +5,12 @@
  * 参考 LobeHub 的设置布局设计
  */
 
-import { useState, ReactNode } from "react";
+import { useState, ReactNode, useEffect } from "react";
 import styled from "styled-components";
+import { Home } from "lucide-react";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { SettingsTabs } from "@/types/settings";
+import { Page, PageParams } from "@/types/page";
 
 // 外观设置（迁移自原 GeneralSettings）
 import { GeneralSettings } from "../../settings/GeneralSettings";
@@ -28,18 +30,34 @@ import { ExperimentalSettings } from "../../settings/ExperimentalSettings";
 import { DeveloperSettings } from "../../settings/DeveloperSettings";
 // 关于
 import { AboutSection } from "../../settings/AboutSection";
-// 连接设置
-import { ConnectionsSettings } from "../../settings/ConnectionsSettings";
 // 扩展设置
 import { ExtensionsSettings } from "../../settings/ExtensionsSettings";
 // 快捷键设置
 import { HotkeysSettings } from "../general/hotkeys";
+// 聊天外观设置
+import { ChatAppearanceSettings } from "../general/chat-appearance";
+// 记忆设置
+import { MemorySettings } from "../agent/memory";
+// 语音服务设置
+import { VoiceSettings } from "../agent/voice";
+// 图像生成设置
+import { ImageGenSettings } from "../agent/image-gen";
+// 助理服务设置
+import { AssistantSettings } from "../agent/assistant";
+// 数据统计
+import { StatsSettings } from "../account/stats";
+// 个人资料
+import { ProfileSettings } from "../account/profile";
+import { ProviderPoolPage } from "@/components/provider-pool";
+import { ApiServerPage } from "@/components/api-server/ApiServerPage";
+import { McpPanel } from "@/components/mcp";
 
 import { SettingHeader } from "../features/SettingHeader";
 
 const LayoutContainer = styled.div`
   display: flex;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   background: hsl(var(--background));
 `;
 
@@ -62,8 +80,43 @@ const ContentContainer = styled.main`
   }
 `;
 
-const ContentWrapper = styled.div`
-  max-width: 800px;
+const ContentWrapper = styled.div<{ $wide: boolean }>`
+  width: 100%;
+  max-width: ${({ $wide }) => ($wide ? "none" : "800px")};
+`;
+
+const HeaderBar = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+`;
+
+const BackButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    background: hsl(var(--accent));
+    border-color: hsl(var(--accent));
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
 `;
 
 const PlaceholderPage = styled.div`
@@ -91,10 +144,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="个人资料" />
-          <PlaceholderPage>
-            <p>个人资料设置</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <ProfileSettings />
         </>
       );
 
@@ -102,10 +152,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="数据统计" />
-          <PlaceholderPage>
-            <p>使用统计信息</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <StatsSettings />
         </>
       );
 
@@ -122,10 +169,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="聊天外观" />
-          <PlaceholderPage>
-            <p>聊天气泡样式设置</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <ChatAppearanceSettings />
         </>
       );
 
@@ -141,8 +185,8 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
     case SettingsTabs.Providers:
       return (
         <>
-          <SettingHeader title="AI 服务商" />
-          <ConnectionsSettings />
+          <SettingHeader title="凭证管理" />
+          <ProviderPoolPage hideHeader />
         </>
       );
 
@@ -150,10 +194,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="助理服务" />
-          <PlaceholderPage>
-            <p>助理配置</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <AssistantSettings />
         </>
       );
 
@@ -169,10 +210,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="记忆设置" />
-          <PlaceholderPage>
-            <p>记忆管理</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <MemorySettings />
         </>
       );
 
@@ -180,10 +218,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="绘画服务" />
-          <PlaceholderPage>
-            <p>绘画服务配置</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <ImageGenSettings />
         </>
       );
 
@@ -191,14 +226,27 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="语音服务" />
-          <PlaceholderPage>
-            <p>语音服务配置</p>
-            <p>即将推出...</p>
-          </PlaceholderPage>
+          <VoiceSettings />
         </>
       );
 
     // 系统组
+    case SettingsTabs.ApiServer:
+      return (
+        <>
+          <SettingHeader title="API Server" />
+          <ApiServerPage hideHeader />
+        </>
+      );
+
+    case SettingsTabs.McpServer:
+      return (
+        <>
+          <SettingHeader title="MCP 服务器" />
+          <McpPanel hideHeader />
+        </>
+      );
+
     case SettingsTabs.Proxy:
       return (
         <>
@@ -273,18 +321,56 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
 /**
  * 设置页面主组件
  */
-export function SettingsLayoutV2() {
+interface SettingsLayoutV2Props {
+  onNavigate?: (page: Page, params?: PageParams) => void;
+  initialTab?: SettingsTabs;
+}
+
+const WIDE_CONTENT_TABS = new Set<SettingsTabs>([
+  SettingsTabs.Providers,
+  SettingsTabs.ApiServer,
+  SettingsTabs.McpServer,
+]);
+
+export function SettingsLayoutV2({
+  onNavigate,
+  initialTab,
+}: SettingsLayoutV2Props) {
   const [activeTab, setActiveTab] = useState<SettingsTabs>(
-    SettingsTabs.Appearance,
+    initialTab || SettingsTabs.Appearance,
   );
 
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  const handleBackToHome = () => {
+    if (onNavigate) {
+      onNavigate("agent");
+    }
+  };
+
   return (
-    <LayoutContainer>
-      <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />
-      <ContentContainer>
-        <ContentWrapper>{renderSettingsContent(activeTab)}</ContentWrapper>
-      </ContentContainer>
-    </LayoutContainer>
+    <>
+      {/* 顶部返回栏 */}
+      <HeaderBar>
+        <BackButton onClick={handleBackToHome}>
+          <Home />
+          返回首页
+        </BackButton>
+      </HeaderBar>
+      {/* 设置内容 */}
+      <LayoutContainer>
+        <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />
+        <ContentContainer>
+          <ContentWrapper $wide={WIDE_CONTENT_TABS.has(activeTab)}>
+            {renderSettingsContent(activeTab)}
+          </ContentWrapper>
+        </ContentContainer>
+      </LayoutContainer>
+    </>
   );
 }
 

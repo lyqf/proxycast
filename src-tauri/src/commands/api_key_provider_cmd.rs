@@ -203,19 +203,29 @@ fn provider_with_keys_to_display(
 /// 为系统 Provider 提供兼容旧版本的别名 ID
 fn get_legacy_ids(provider_id: &str) -> Vec<String> {
     match provider_id {
+        "proxycast-hub" => vec!["lobehub".to_string()],
         "google" => vec!["gemini".to_string()],
         "zhipuai" => vec!["zhipu".to_string()],
-        "alibaba" => vec!["dashscope".to_string()],
+        "alibaba" => vec!["dashscope".to_string(), "qwen".to_string()],
         "moonshotai" => vec!["moonshot".to_string()],
         "xai" => vec!["grok".to_string()],
         "github-models" => vec!["github".to_string()],
         "github-copilot" => vec!["copilot".to_string()],
         "google-vertex" => vec!["vertexai".to_string()],
-        "amazon-bedrock" => vec!["aws-bedrock".to_string()],
+        "azure-openai" => vec!["azure".to_string()],
+        "amazon-bedrock" => vec!["aws-bedrock".to_string(), "bedrock".to_string()],
         "togetherai" => vec!["together".to_string()],
-        "fireworks-ai" => vec!["fireworks".to_string()],
-        "xiaomi" => vec!["mimo".to_string()],
-        "siliconflow" => vec!["silicon".to_string()],
+        "fireworks-ai" => vec!["fireworks".to_string(), "fireworksai".to_string()],
+        "xiaomi" => vec!["mimo".to_string(), "xiaomimimo".to_string()],
+        "siliconflow" => vec!["silicon".to_string(), "siliconcloud".to_string()],
+        "302ai" => vec!["ai302".to_string()],
+        "new-api" => vec!["newapi".to_string()],
+        "vercel-gateway" => vec!["vercelaigateway".to_string()],
+        "yi" => vec!["zeroone".to_string()],
+        "infini" => vec!["infiniai".to_string()],
+        "doubao" => vec!["volcengine".to_string()],
+        "baidu-cloud" => vec!["wenxin".to_string()],
+        "tencent-cloud-ti" => vec!["tencentcloud".to_string()],
         _ => vec![],
     }
 }
@@ -666,12 +676,34 @@ pub fn delete_legacy_api_key_credential(
 pub async fn test_api_key_provider_connection(
     db: State<'_, DbConnection>,
     service: State<'_, ApiKeyProviderServiceState>,
+    model_registry_state: State<'_, crate::commands::model_registry_cmd::ModelRegistryState>,
     provider_id: String,
     model_name: Option<String>,
 ) -> Result<ConnectionTestResult, String> {
+    let provider = service
+        .0
+        .get_provider(&db, &provider_id)?
+        .ok_or_else(|| format!("Provider 不存在: {provider_id}"))?;
+
+    let fallback_models = {
+        let guard = model_registry_state.read().await;
+        if let Some(model_registry) = guard.as_ref() {
+            model_registry
+                .get_local_fallback_model_ids_with_hints(
+                    &provider_id,
+                    &provider.provider.api_host,
+                    Some(provider.provider.provider_type),
+                    &provider.provider.custom_models,
+                )
+                .await
+        } else {
+            Vec::new()
+        }
+    };
+
     service
         .0
-        .test_connection(&db, &provider_id, model_name)
+        .test_connection_with_fallback_models(&db, &provider_id, model_name, fallback_models)
         .await
 }
 

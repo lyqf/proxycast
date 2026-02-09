@@ -4,6 +4,7 @@
 //! 本模块保留 Tauri 相关服务。
 
 // 保留在主 crate 的 Tauri 相关服务
+pub mod conversation_statistics_service;
 pub mod file_browser_service;
 pub mod sysinfo_service;
 pub mod update_check_service;

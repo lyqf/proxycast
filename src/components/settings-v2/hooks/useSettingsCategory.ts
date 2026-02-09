@@ -19,6 +19,8 @@ import {
   BrainCircuit,
   Image,
   Mic,
+  Server,
+  Plug,
   Globe,
   Database,
   Shield,
@@ -144,6 +146,16 @@ export function useSettingsCategory(): CategoryGroup[] {
       key: SettingsGroupKey.System,
       title: t("settings.group.system", "系统"),
       items: [
+        {
+          key: SettingsTabs.ApiServer,
+          label: t("settings.tab.apiServer", "API Server"),
+          icon: Server,
+        },
+        {
+          key: SettingsTabs.McpServer,
+          label: t("settings.tab.mcpServer", "MCP 服务器"),
+          icon: Plug,
+        },
         {
           key: SettingsTabs.Proxy,
           label: t("settings.tab.proxy", "网络代理"),

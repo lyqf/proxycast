@@ -1,0 +1,537 @@
+/**
+ * 语音服务配置设置组件
+ *
+ * 参考 LobeHub 的 TTS/STT 实现
+ * 功能包括：TTS 服务商选择、STT 服务商选择、语音参数配置等
+ */
+
+import { useState, useEffect } from "react";
+import {
+  Mic,
+  Volume2,
+  Play,
+  Settings2,
+  Info,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
+
+type TTSService = "openai" | "azure" | "google" | "edge" | "macos";
+type STTService = "openai" | "azure" | "google" | "whisper";
+
+interface VoiceConfig {
+  /** TTS 服务商 */
+  tts_service?: TTSService;
+  /** STT 服务商 */
+  stt_service?: STTService;
+  /** TTS 语音 */
+  tts_voice?: string;
+  /** TTS 语速 (0.1-2.0) */
+  tts_rate?: number;
+  /** TTS 音调 (0.1-2.0) */
+  tts_pitch?: number;
+  /** TTS 音量 (0-1) */
+  tts_volume?: number;
+  /** STT 语言 */
+  stt_language?: string;
+  /** 自动停止录音 */
+  stt_auto_stop?: boolean;
+  /** 启用语音输入 */
+  voice_input_enabled?: boolean;
+  /** 启用语音输出 */
+  voice_output_enabled?: boolean;
+}
+
+const DEFAULT_VOICE_CONFIG: VoiceConfig = {
+  tts_service: "openai",
+  stt_service: "openai",
+  tts_voice: "alloy",
+  tts_rate: 1.0,
+  tts_pitch: 1.0,
+  tts_volume: 1.0,
+  stt_language: "zh-CN",
+  stt_auto_stop: true,
+  voice_input_enabled: false,
+  voice_output_enabled: false,
+};
+
+const TTS_SERVICES = [
+  { value: "openai" as TTSService, label: "OpenAI", desc: "使用 OpenAI TTS" },
+  { value: "azure" as TTSService, label: "Azure", desc: "使用 Azure TTS" },
+  { value: "google" as TTSService, label: "Google", desc: "使用 Google TTS" },
+  { value: "edge" as TTSService, label: "Edge", desc: "使用 Edge TTS" },
+  { value: "macos" as TTSService, label: "macOS", desc: "使用系统 TTS" },
+];
+
+const STT_SERVICES = [
+  {
+    value: "openai" as STTService,
+    label: "OpenAI",
+    desc: "使用 OpenAI Whisper",
+  },
+  { value: "azure" as STTService, label: "Azure", desc: "使用 Azure Speech" },
+  {
+    value: "google" as STTService,
+    label: "Google",
+    desc: "使用 Google Speech",
+  },
+  {
+    value: "whisper" as STTService,
+    label: "Whisper",
+    desc: "使用本地 Whisper",
+  },
+];
+
+const TTS_VOICES = {
+  openai: [
+    { value: "alloy", label: "Alloy" },
+    { value: "echo", label: "Echo" },
+    { value: "fable", label: "Fable" },
+    { value: "onyx", label: "Onyx" },
+    { value: "nova", label: "Nova" },
+    { value: "shimmer", label: "Shimmer" },
+  ],
+  azure: [
+    { value: "zh-CN-XiaoxiaoNeural", label: "晓晓 (女)" },
+    { value: "zh-CN-YunxiNeural", label: "云希 (男)" },
+    { value: "zh-CN-YunyangNeural", label: "云扬 (男)" },
+  ],
+  google: [
+    { value: "zh-CN-Wavenet-A", label: "WaveNet A" },
+    { value: "zh-CN-Wavenet-B", label: "WaveNet B" },
+    { value: "zh-CN-Standard-A", label: "Standard A" },
+  ],
+  edge: [
+    { value: "zh-CN-XiaoxiaoNeural", label: "晓晓 (女)" },
+    { value: "zh-CN-YunxiNeural", label: "云希 (男)" },
+  ],
+  macos: [
+    { value: "Ting-Ting", label: "婷婷" },
+    { value: "Mei-Jia", label: "美佳" },
+    { value: "Sin-ji", label: "欣怡" },
+  ],
+};
+
+const STT_LANGUAGES = [
+  { value: "zh-CN", label: "中文 (简体)" },
+  { value: "zh-TW", label: "中文 (繁体)" },
+  { value: "en-US", label: "英语 (美国)" },
+  { value: "en-GB", label: "英语 (英国)" },
+  { value: "ja-JP", label: "日语" },
+  { value: "ko-KR", label: "韩语" },
+];
+
+export function VoiceSettings() {
+  const [config, setConfig] = useState<Config | null>(null);
+  const [voiceConfig, setVoiceConfig] =
+    useState<VoiceConfig>(DEFAULT_VOICE_CONFIG);
+  const [loading, setLoading] = useState(true);
+  const [_saving, setSaving] = useState<Record<string, boolean>>({});
+  const [testingTTS, setTestingTTS] = useState(false);
+  const [message, setMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  // 加载配置
+  useEffect(() => {
+    loadConfig();
+  }, []);
+
+  const loadConfig = async () => {
+    setLoading(true);
+    try {
+      const c = await getConfig();
+      setConfig(c);
+      setVoiceConfig(c.voice || DEFAULT_VOICE_CONFIG);
+    } catch (e) {
+      console.error("加载语音配置失败:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 保存配置
+  const saveVoiceConfig = async (key: keyof VoiceConfig, value: any) => {
+    if (!config) return;
+    setSaving((prev) => ({ ...prev, [key]: true }));
+
+    try {
+      const newConfig = {
+        ...voiceConfig,
+        [key]: value,
+      };
+      const updatedFullConfig = {
+        ...config,
+        voice: newConfig,
+      };
+      await saveConfig(updatedFullConfig);
+      setConfig(updatedFullConfig);
+      setVoiceConfig(newConfig);
+
+      showMessage("success", "设置已保存");
+    } catch (e) {
+      console.error("保存语音配置失败:", e);
+      showMessage("error", "保存失败");
+    } finally {
+      setSaving((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // 测试 TTS
+  const handleTestTTS = async () => {
+    setTestingTTS(true);
+    try {
+      // TODO: 实现 TTS 测试 API
+      // await testTTS(voiceConfig.tts_service, voiceConfig.tts_voice);
+
+      // 模拟测试
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      showMessage("success", "语音测试成功");
+    } catch (e) {
+      console.error("TTS 测试失败:", e);
+      showMessage("error", "测试失败");
+    } finally {
+      setTestingTTS(false);
+    }
+  };
+
+  const showMessage = (type: "success" | "error", text: string) => {
+    setMessage({ type, text });
+    setTimeout(() => setMessage(null), 3000);
+  };
+
+  const availableVoices = TTS_VOICES[voiceConfig.tts_service || "openai"] || [];
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      {/* 语音总开关 */}
+      <div className="rounded-lg border p-3">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <h3 className="text-sm font-medium">语音功能</h3>
+              <p className="text-xs text-muted-foreground">
+                控制语音输入和输出功能
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="flex items-center justify-between py-1.5 cursor-pointer">
+            <span className="text-sm">语音输入 (STT)</span>
+            <input
+              type="checkbox"
+              checked={voiceConfig.voice_input_enabled ?? false}
+              onChange={(e) =>
+                saveVoiceConfig("voice_input_enabled", e.target.checked)
+              }
+              disabled={loading}
+              className="w-4 h-4 rounded border-gray-300"
+            />
+          </label>
+
+          <label className="flex items-center justify-between py-1.5 cursor-pointer border-t">
+            <span className="text-sm">语音输出 (TTS)</span>
+            <input
+              type="checkbox"
+              checked={voiceConfig.voice_output_enabled ?? false}
+              onChange={(e) =>
+                saveVoiceConfig("voice_output_enabled", e.target.checked)
+              }
+              disabled={loading}
+              className="w-4 h-4 rounded border-gray-300"
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* TTS 服务商 */}
+      <div className="rounded-lg border p-3">
+        <div className="flex items-center gap-2 mb-3">
+          <Volume2 className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <h3 className="text-sm font-medium">文字转语音 (TTS)</h3>
+            <p className="text-xs text-muted-foreground">
+              选择语音合成服务商和参数
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {/* 服务商选择 */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">
+              服务商
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {TTS_SERVICES.map((service) => (
+                <button
+                  key={service.value}
+                  onClick={() => saveVoiceConfig("tts_service", service.value)}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-sm font-medium transition-colors border text-left",
+                    voiceConfig.tts_service === service.value
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "hover:bg-muted",
+                  )}
+                >
+                  <div className="font-medium">{service.label}</div>
+                  <div className="text-xs opacity-80">{service.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 语音选择 */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">
+              语音
+            </label>
+            <select
+              value={voiceConfig.tts_voice || "alloy"}
+              onChange={(e) => saveVoiceConfig("tts_voice", e.target.value)}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none"
+            >
+              {availableVoices.map((voice) => (
+                <option key={voice.value} value={voice.value}>
+                  {voice.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 语速 */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs text-muted-foreground">语速</label>
+              <span className="text-xs text-primary">
+                {voiceConfig.tts_rate?.toFixed(1) || "1.0"}x
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0.1}
+              max={2.0}
+              step={0.1}
+              value={voiceConfig.tts_rate || 1.0}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                setVoiceConfig((prev) => ({ ...prev, tts_rate: value }));
+              }}
+              onChangeCapture={(e) => {
+                saveVoiceConfig(
+                  "tts_rate",
+                  parseFloat((e.target as HTMLInputElement).value),
+                );
+              }}
+              className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+            />
+            <div className="flex justify-between mt-1 text-xs text-muted-foreground">
+              <span>0.5x</span>
+              <span>1.0x</span>
+              <span>2.0x</span>
+            </div>
+          </div>
+
+          {/* 音调 */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs text-muted-foreground">音调</label>
+              <span className="text-xs text-primary">
+                {voiceConfig.tts_pitch?.toFixed(1) || "1.0"}x
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0.1}
+              max={2.0}
+              step={0.1}
+              value={voiceConfig.tts_pitch || 1.0}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                setVoiceConfig((prev) => ({ ...prev, tts_pitch: value }));
+              }}
+              onChangeCapture={(e) => {
+                saveVoiceConfig(
+                  "tts_pitch",
+                  parseFloat((e.target as HTMLInputElement).value),
+                );
+              }}
+              className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+            />
+            <div className="flex justify-between mt-1 text-xs text-muted-foreground">
+              <span>低</span>
+              <span>中</span>
+              <span>高</span>
+            </div>
+          </div>
+
+          {/* 音量 */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs text-muted-foreground">音量</label>
+              <span className="text-xs text-primary">
+                {Math.round((voiceConfig.tts_volume || 1.0) * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.1}
+              value={voiceConfig.tts_volume || 1.0}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                setVoiceConfig((prev) => ({ ...prev, tts_volume: value }));
+              }}
+              onChangeCapture={(e) => {
+                saveVoiceConfig(
+                  "tts_volume",
+                  parseFloat((e.target as HTMLInputElement).value),
+                );
+              }}
+              className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+            />
+          </div>
+
+          {/* 测试按钮 */}
+          <button
+            onClick={handleTestTTS}
+            disabled={
+              loading ||
+              testingTTS ||
+              !(voiceConfig.voice_output_enabled ?? false)
+            }
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            {testingTTS ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                测试中...
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" />
+                测试语音
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* STT 服务商 */}
+      <div className="rounded-lg border p-3">
+        <div className="flex items-center gap-2 mb-3">
+          <Mic className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <h3 className="text-sm font-medium">语音转文字 (STT)</h3>
+            <p className="text-xs text-muted-foreground">
+              选择语音识别服务商和参数
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {/* 服务商选择 */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">
+              服务商
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {STT_SERVICES.map((service) => (
+                <button
+                  key={service.value}
+                  onClick={() => saveVoiceConfig("stt_service", service.value)}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-sm font-medium transition-colors border text-left",
+                    voiceConfig.stt_service === service.value
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "hover:bg-muted",
+                  )}
+                >
+                  <div className="font-medium">{service.label}</div>
+                  <div className="text-xs opacity-80">{service.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 语言选择 */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block">
+              识别语言
+            </label>
+            <select
+              value={voiceConfig.stt_language || "zh-CN"}
+              onChange={(e) => saveVoiceConfig("stt_language", e.target.value)}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-1 focus:ring-primary/20 focus:border-primary outline-none"
+            >
+              {STT_LANGUAGES.map((lang) => (
+                <option key={lang.value} value={lang.value}>
+                  {lang.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 自动停止 */}
+          <label className="flex items-center justify-between py-1.5 cursor-pointer border-t">
+            <div>
+              <span className="text-sm">自动停止录音</span>
+              <p className="text-xs text-muted-foreground">
+                检测到停止说话时自动结束录音
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={voiceConfig.stt_auto_stop ?? true}
+              onChange={(e) =>
+                saveVoiceConfig("stt_auto_stop", e.target.checked)
+              }
+              disabled={loading}
+              className="w-4 h-4 rounded border-gray-300"
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* 提示信息 */}
+      <div className="flex items-start gap-2 text-xs text-muted-foreground p-3 bg-muted/30 rounded-lg">
+        <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+        <p>
+          语音功能需要先启用相应的开关。TTS 用于将 AI 的回复转换为语音播放，STT
+          用于将您的语音转换为文字输入。不同的服务商可能有不同的费用和效果。
+        </p>
+      </div>
+
+      {/* 消息提示 */}
+      {message && (
+        <div
+          className={cn(
+            "flex items-center gap-2 p-3 rounded-lg",
+            message.type === "success"
+              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+          )}
+        >
+          {message.type === "success" ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <AlertCircle className="h-4 w-4" />
+          )}
+          <span className="text-sm">{message.text}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default VoiceSettings;

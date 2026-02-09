@@ -1005,6 +1005,8 @@ pub fn run() {
             commands::model_registry_cmd::get_model_registry,
             commands::model_registry_cmd::get_model_registry_provider_ids,
             commands::model_registry_cmd::refresh_model_registry,
+            commands::model_registry_cmd::get_model_host_alias_user_file_info,
+            commands::model_registry_cmd::ensure_model_host_alias_user_file,
             commands::model_registry_cmd::search_models,
             commands::model_registry_cmd::get_model_preferences,
             commands::model_registry_cmd::toggle_model_favorite,
@@ -1220,6 +1222,19 @@ pub fn run() {
             commands::context_memory::mark_error_resolved,
             commands::context_memory::get_memory_stats,
             commands::context_memory::cleanup_expired_memories,
+            // Usage Stats commands
+            commands::usage_stats_cmd::get_usage_stats,
+            commands::usage_stats_cmd::get_model_usage_ranking,
+            commands::usage_stats_cmd::get_daily_usage_trends,
+            // Memory Management commands
+            commands::memory_management_cmd::get_conversation_memory_stats,
+            commands::memory_management_cmd::cleanup_conversation_memory,
+            // Voice Test commands
+            commands::voice_test_cmd::test_tts,
+            commands::voice_test_cmd::get_available_voices,
+            // File Upload commands
+            commands::file_upload_cmd::upload_avatar,
+            commands::file_upload_cmd::delete_avatar,
             // Tool Hooks commands
             commands::tool_hooks::execute_hooks,
             commands::tool_hooks::add_hook_rule,

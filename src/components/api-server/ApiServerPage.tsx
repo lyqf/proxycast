@@ -57,6 +57,10 @@ interface TestState {
 
 type TabId = "server" | "logs";
 
+interface ApiServerPageProps {
+  hideHeader?: boolean;
+}
+
 // Provider 到 API 类型的映射
 type ApiType = "openai" | "anthropic" | "gemini";
 const getProviderApiType = (provider: string): ApiType => {
@@ -130,7 +134,7 @@ interface AvailableProvider {
   totalCount: number;
 }
 
-export function ApiServerPage() {
+export function ApiServerPage({ hideHeader = false }: ApiServerPageProps) {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1040,28 +1044,30 @@ export function ApiServerPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-end gap-3">
-            <h2 className="text-2xl font-bold">API Server</h2>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground pb-0.5">
-              <span className="flex items-center gap-1.5">
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${status?.running ? "bg-green-500" : "bg-red-500"}`}
-                />
-                {status?.running ? "运行中" : "已停止"}
-              </span>
-              <span>·</span>
-              <span>{status?.requests || 0} 请求</span>
-              <span>·</span>
-              <span className="capitalize">{defaultProvider}</span>
+      {!hideHeader && (
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-end gap-3">
+              <h2 className="text-2xl font-bold">API Server</h2>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground pb-0.5">
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className={`inline-block h-2 w-2 rounded-full ${status?.running ? "bg-green-500" : "bg-red-500"}`}
+                  />
+                  {status?.running ? "运行中" : "已停止"}
+                </span>
+                <span>·</span>
+                <span>{status?.requests || 0} 请求</span>
+                <span>·</span>
+                <span className="capitalize">{defaultProvider}</span>
+              </div>
             </div>
+            <p className="text-muted-foreground text-sm mt-1">
+              本地代理服务器，支持 OpenAI/Anthropic 格式
+            </p>
           </div>
-          <p className="text-muted-foreground text-sm mt-1">
-            本地代理服务器，支持 OpenAI/Anthropic 格式
-          </p>
         </div>
-      </div>
+      )}
 
       {message && (
         <div

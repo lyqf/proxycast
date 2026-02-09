@@ -35,6 +35,7 @@ import DoubaoIcon from "./doubao.svg?react";
 import AzureIcon from "./azure.svg?react";
 import antigravityIconUrl from "./antigravity.svg?url";
 import ProxycastIcon from "./proxycast.svg?react";
+import ProxycastHubIcon from "./proxycast-hub.svg?react";
 
 // 新增图标 - 主流 AI
 import PerplexityIcon from "./perplexity.svg?react";
@@ -109,12 +110,14 @@ const AntigravityIcon: React.FC<SVGProps<SVGSVGElement>> = ({
   width = "1em",
   height = "1em",
 }) => {
+  const widthValue = typeof width === "number" ? `${width}px` : width;
+  const heightValue = typeof height === "number" ? `${height}px` : height;
+
   return (
     <img
       src={antigravityIconUrl}
-      width={width}
-      height={height}
       alt="Antigravity"
+      style={{ width: widthValue, height: heightValue, display: "block" }}
     />
   );
 };
@@ -148,6 +151,7 @@ const iconComponents: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   azure: AzureIcon,
   antigravity: AntigravityIcon,
   proxycast: ProxycastIcon,
+  "proxycast-hub": ProxycastHubIcon,
 
   // 主流 AI
   perplexity: PerplexityIcon,
@@ -220,6 +224,21 @@ const iconComponents: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
 };
 
 // ============================================================================
+// Fallback 色板
+// ============================================================================
+
+const FALLBACK_GRADIENTS: Array<[string, string]> = [
+  ["#6366f1", "#8b5cf6"],
+  ["#0ea5e9", "#2563eb"],
+  ["#22c55e", "#16a34a"],
+  ["#f59e0b", "#ea580c"],
+  ["#ec4899", "#db2777"],
+  ["#14b8a6", "#0d9488"],
+  ["#a855f7", "#7e22ce"],
+  ["#f43f5e", "#be123c"],
+];
+
+// ============================================================================
 // ProviderIcon 组件
 // ============================================================================
 
@@ -257,7 +276,8 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   showFallback = true,
 }) => {
   const iconName = providerTypeToIcon[providerType] || providerType;
-  const IconComponent = iconComponents[iconName];
+  const IconComponent =
+    iconName === "custom" ? undefined : iconComponents[iconName];
 
   const sizeStyle = useMemo(() => {
     const sizeValue = typeof size === "number" ? `${size}px` : size;
@@ -283,7 +303,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     );
   }
 
-  // Fallback：显示首字母
+  // Fallback：显示彩色首字母图标
   if (showFallback) {
     const source = fallbackText?.trim() || providerType;
     const words = source
@@ -308,14 +328,26 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
 
     const fallbackFontSize =
       typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
+
+    const hash = Array.from(source).reduce(
+      (accumulator, char) => (accumulator * 31 + char.charCodeAt(0)) >>> 0,
+      7,
+    );
+    const [startColor, endColor] =
+      FALLBACK_GRADIENTS[hash % FALLBACK_GRADIENTS.length];
+
     return (
       <span
         className={cn(
           "inline-flex items-center justify-center flex-shrink-0 rounded-lg",
-          "bg-muted text-muted-foreground font-semibold",
+          "text-white font-semibold",
           className,
         )}
-        style={sizeStyle}
+        style={{
+          ...sizeStyle,
+          background: `linear-gradient(135deg, ${startColor}, ${endColor})`,
+          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.22)",
+        }}
       >
         <span style={{ fontSize: fallbackFontSize }}>{initials}</span>
       </span>

@@ -50,21 +50,13 @@ const ALL_NAV_ITEMS = [
   { id: "agent", label: "AI Agent" },
   { id: "projects", label: "项目" },
   { id: "image-gen", label: "图片生成" },
-  { id: "api-server", label: "API Server" },
-  { id: "provider-pool", label: "凭证池" },
   { id: "terminal", label: "终端" },
   { id: "tools", label: "工具" },
   { id: "plugins", label: "插件中心" },
 ] as const;
 
 /** 默认启用的导航模块 */
-const DEFAULT_ENABLED_NAV_ITEMS = [
-  "agent",
-  "projects",
-  "image-gen",
-  "api-server",
-  "provider-pool",
-];
+const DEFAULT_ENABLED_NAV_ITEMS = ["agent", "projects", "image-gen"];
 
 export function GeneralSettings() {
   const [theme, setTheme] = useState<Theme>("system");

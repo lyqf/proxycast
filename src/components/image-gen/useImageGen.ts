@@ -17,6 +17,81 @@ import { IMAGE_GEN_MODELS, IMAGE_GEN_PROVIDER_IDS } from "./types";
 
 const HISTORY_KEY = "image-gen-history";
 
+interface GenerateImageOptions {
+  imageCount?: number;
+  referenceImages?: string[];
+  size?: string;
+}
+
+function extractImageUrlFromResponse(content: string): string | null {
+  const base64Match = content.match(
+    /!\[.*?\]\((data:image\/[^;]+;base64,[^)]+)\)/,
+  );
+  if (base64Match) {
+    return base64Match[1];
+  }
+
+  const urlMatch = content.match(/!\[.*?\]\((https?:\/\/[^)]+)\)/);
+  if (urlMatch) {
+    return urlMatch[1];
+  }
+
+  return null;
+}
+
+async function requestImageFromNewApi(
+  apiHost: string,
+  apiKey: string,
+  model: string,
+  prompt: string,
+  referenceImages: string[],
+): Promise<string> {
+  const referenceText =
+    referenceImages.length > 0
+      ? `\n参考图链接：\n${referenceImages
+          .map((url, index) => `${index + 1}. ${url}`)
+          .join("\n")}`
+      : "";
+
+  const chatRequest = {
+    model,
+    messages: [
+      {
+        role: "user",
+        content:
+          "请根据以下描述生成一张图片，并以 Markdown 图片格式返回结果。" +
+          `\n描述：${prompt}${referenceText}`,
+      },
+    ],
+    temperature: 0.7,
+    stream: false,
+  };
+
+  const response = await fetch(`${apiHost}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(chatRequest),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`请求失败: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || "";
+  const imageUrl = extractImageUrlFromResponse(content);
+
+  if (!imageUrl) {
+    throw new Error("未能从响应中提取图片");
+  }
+
+  return imageUrl;
+}
+
 /**
  * 检查 Provider 是否支持图片生成
  * 通过 Provider ID 或 type 匹配
@@ -185,143 +260,106 @@ export function useImageGen() {
 
   // 生成图片
   const generateImage = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, options?: GenerateImageOptions) => {
       if (!selectedProvider) {
         throw new Error("请先在凭证池中配置 API Key Provider");
       }
 
-      // 获取 API Key
-      const apiKey = await apiKeyProviderApi.getNextApiKey(selectedProvider.id);
-      if (!apiKey) {
-        throw new Error("该 Provider 没有可用的 API Key，请在凭证池中添加");
-      }
+      const generationCount = Math.max(
+        1,
+        Math.min(options?.imageCount ?? 1, 8),
+      );
+      const requestSize = options?.size || selectedSize;
+      const referenceImages = options?.referenceImages || [];
 
-      // 如果当前选中的是 pending 状态的图片，更新它；否则创建新的
-      let imageId: string;
-      const currentImage = images.find((img) => img.id === selectedImageId);
-
-      if (currentImage?.status === "pending") {
-        // 更新已存在的 pending 图片
-        imageId = currentImage.id;
-        setImages((prev) => {
-          const updated = prev.map((img) =>
-            img.id === imageId
-              ? { ...img, prompt, status: "generating" as const }
-              : img,
-          );
-          saveHistory(updated);
-          return updated;
-        });
-      } else {
-        // 创建新的图片
-        imageId = `img-${Date.now()}`;
-        const newImage: GeneratedImage = {
-          id: imageId,
+      const baseId = Date.now();
+      const generationItems: GeneratedImage[] = Array.from(
+        { length: generationCount },
+        (_, index) => ({
+          id: `img-${baseId}-${index}`,
           url: "",
           prompt,
           model: selectedModelId,
-          size: selectedSize,
+          size: requestSize,
           providerId: selectedProvider.id,
           providerName: selectedProvider.name,
-          createdAt: Date.now(),
+          createdAt: baseId + index,
           status: "generating",
-        };
+        }),
+      );
 
-        // 添加到列表并选中
-        setImages((prev) => {
-          const updated = [newImage, ...prev];
-          saveHistory(updated);
-          return updated;
-        });
-        setSelectedImageId(imageId);
-      }
+      setImages((prev) => {
+        const updated = [...generationItems, ...prev];
+        saveHistory(updated);
+        return updated;
+      });
+      setSelectedImageId(generationItems[0]?.id || null);
 
       setGenerating(true);
 
       try {
-        let imageUrl: string;
-
-        // New API 使用聊天接口生成图片（通过 Provider ID 或 type 判断）
         const isNewApi =
           selectedProvider.id === "new-api" ||
           selectedProvider.type === "new-api" ||
           selectedProvider.type === "NewApi";
 
-        console.log(
-          "[useImageGen] Provider:",
-          selectedProvider.id,
-          "Type:",
-          selectedProvider.type,
-          "isNewApi:",
-          isNewApi,
-        );
-
         if (isNewApi) {
-          const chatRequest = {
-            model: selectedModelId,
-            messages: [
-              { role: "user", content: `请帮我画一张图片：${prompt}` },
-            ],
-            temperature: 0.7,
-            stream: false,
-          };
-
-          console.log(
-            "[useImageGen] 发送 New API 请求:",
-            `${selectedProvider.api_host}/v1/chat/completions`,
-          );
-
-          const response = await fetch(
-            `${selectedProvider.api_host}/v1/chat/completions`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify(chatRequest),
-            },
-          );
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`请求失败: ${response.status} - ${errorText}`);
-          }
-
-          const data = await response.json();
-          const content = data.choices?.[0]?.message?.content || "";
-
-          console.log("[useImageGen] 响应内容长度:", content.length);
-
-          // 从响应中提取图片（支持 base64 和 URL）
-          // 优先匹配 base64: ![image](data:image/...;base64,...)
-          const base64Match = content.match(
-            /!\[.*?\]\((data:image\/[^;]+;base64,[^)]+)\)/,
-          );
-          if (base64Match) {
-            console.log("[useImageGen] 匹配到 base64 图片");
-            imageUrl = base64Match[1];
-          } else {
-            // 回退匹配 URL: ![image](https://...)
-            const urlMatch = content.match(/!\[.*?\]\((https?:\/\/[^)]+)\)/);
-            if (urlMatch) {
-              console.log("[useImageGen] 匹配到 URL 图片");
-              imageUrl = urlMatch[1];
-            } else {
-              console.log(
-                "[useImageGen] 未匹配到图片，内容预览:",
-                content.slice(0, 200),
+          for (const item of generationItems) {
+            try {
+              const apiKey = await apiKeyProviderApi.getNextApiKey(
+                selectedProvider.id,
               );
-              throw new Error("未能从响应中提取图片");
+              if (!apiKey) {
+                throw new Error(
+                  "该 Provider 没有可用的 API Key，请在凭证池中添加",
+                );
+              }
+
+              const imageUrl = await requestImageFromNewApi(
+                selectedProvider.api_host,
+                apiKey,
+                selectedModelId,
+                prompt,
+                referenceImages,
+              );
+
+              setImages((prev) => {
+                const updated = prev.map((img) =>
+                  img.id === item.id
+                    ? { ...img, url: imageUrl, status: "complete" as const }
+                    : img,
+                );
+                saveHistory(updated);
+                return updated;
+              });
+            } catch (error) {
+              const errorMessage =
+                error instanceof Error ? error.message : String(error);
+
+              setImages((prev) => {
+                const updated = prev.map((img) =>
+                  img.id === item.id
+                    ? { ...img, status: "error" as const, error: errorMessage }
+                    : img,
+                );
+                saveHistory(updated);
+                return updated;
+              });
             }
           }
         } else {
-          // 标准 OpenAI 图片生成接口
+          const apiKey = await apiKeyProviderApi.getNextApiKey(
+            selectedProvider.id,
+          );
+          if (!apiKey) {
+            throw new Error("该 Provider 没有可用的 API Key，请在凭证池中添加");
+          }
+
           const request: ImageGenRequest = {
             model: selectedModelId,
             prompt,
-            n: 1,
-            size: selectedSize,
+            n: generationCount,
+            size: requestSize,
           };
 
           const response = await fetch(
@@ -342,29 +380,44 @@ export function useImageGen() {
           }
 
           const data = (await response.json()) as ImageGenResponse;
-          imageUrl = data.data[0]?.url || "";
-        }
+          const urls = data.data.map((item) => item.url).filter(Boolean);
 
-        if (!imageUrl) {
-          throw new Error("未返回图片 URL");
-        }
+          if (urls.length === 0) {
+            throw new Error("未返回图片 URL");
+          }
 
-        // 更新图片状态
-        setImages((prev) => {
-          const updated = prev.map((img) =>
-            img.id === imageId
-              ? { ...img, url: imageUrl, status: "complete" as const }
-              : img,
-          );
-          saveHistory(updated);
-          return updated;
-        });
+          setImages((prev) => {
+            const updated = prev.map((img) => {
+              const index = generationItems.findIndex(
+                (item) => item.id === img.id,
+              );
+
+              if (index === -1) return img;
+
+              const imageUrl = urls[index];
+              if (imageUrl) {
+                return { ...img, url: imageUrl, status: "complete" as const };
+              }
+
+              return {
+                ...img,
+                status: "error" as const,
+                error: "服务返回的图片数量少于请求数量",
+              };
+            });
+
+            saveHistory(updated);
+            return updated;
+          });
+        }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
+
         setImages((prev) => {
           const updated = prev.map((img) =>
-            img.id === imageId
+            generationItems.some((item) => item.id === img.id) &&
+            img.status === "generating"
               ? { ...img, status: "error" as const, error: errorMessage }
               : img,
           );
@@ -376,14 +429,7 @@ export function useImageGen() {
         setGenerating(false);
       }
     },
-    [
-      selectedProvider,
-      selectedModelId,
-      selectedSize,
-      saveHistory,
-      images,
-      selectedImageId,
-    ],
+    [selectedProvider, selectedModelId, selectedSize, saveHistory],
   );
 
   // 删除图片
@@ -391,14 +437,14 @@ export function useImageGen() {
     (id: string) => {
       setImages((prev) => {
         const updated = prev.filter((img) => img.id !== id);
+        if (selectedImageId === id) {
+          setSelectedImageId(updated[0]?.id || null);
+        }
         saveHistory(updated);
         return updated;
       });
-      if (selectedImageId === id) {
-        setSelectedImageId(images[1]?.id || null);
-      }
     },
-    [images, selectedImageId, saveHistory],
+    [selectedImageId, saveHistory],
   );
 
   // 新建图片（创建一个新的空白图片项）

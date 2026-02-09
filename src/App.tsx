@@ -13,20 +13,19 @@ import styled from "styled-components";
 import { withI18nPatch } from "./i18n/withI18nPatch";
 import { SplashScreen } from "./components/SplashScreen";
 import { AppSidebar } from "./components/AppSidebar";
-// import { SettingsPage } from "./components/settings";
 import { SettingsPageV2 } from "./components/settings-v2";
-import { ApiServerPage } from "./components/api-server/ApiServerPage";
-import { ProviderPoolPage } from "./components/provider-pool";
 import { ToolsPage } from "./components/tools/ToolsPage";
 import { AgentChatPage } from "./components/agent";
 import { PluginsPage } from "./components/plugins/PluginsPage";
-import { McpPanel } from "./components/mcp";
 import { ImageGenPage } from "./components/image-gen";
-import { ProjectsPage } from "./components/projects";
-import { ProjectDetailPage } from "./components/projects/ProjectDetailPage";
 import { CreateProjectDialog } from "./components/projects/CreateProjectDialog";
-import { ProjectType } from "./lib/api/project";
-
+import { WorkbenchPage } from "./components/workspace";
+import {
+  ProjectType,
+  createProject,
+  createContent,
+  isUserProjectType,
+} from "./lib/api/project";
 import {
   TerminalWorkspace,
   SysinfoView,
@@ -42,13 +41,20 @@ import { ComponentDebugProvider } from "./contexts/ComponentDebugContext";
 import { SoundProvider } from "./contexts/SoundProvider";
 import { ComponentDebugOverlay } from "./components/dev";
 import {
+  AgentPageParams,
+  getThemeByWorkspacePage,
+  getThemeWorkspacePage,
+  isThemeWorkspacePage,
+  LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
   Page,
   PageParams,
-  AgentPageParams,
   ProjectDetailPageParams,
+  SettingsPageParams,
+  ThemeWorkspacePage,
+  WorkspaceTheme,
 } from "./types/page";
+import { SettingsTabs } from "./types/settings";
 import { open } from "@tauri-apps/plugin-dialog";
-import { createProject, createContent } from "./lib/api/project";
 import { toast } from "sonner";
 
 const AppContainer = styled.div`
@@ -74,10 +80,6 @@ const PageWrapper = styled.div<{ $isActive: boolean }>`
   display: ${(props) => (props.$isActive ? "block" : "none")};
 `;
 
-/**
- * 全屏页面容器（无 padding）
- * 用于终端等需要全屏显示的插件
- */
 const FullscreenWrapper = styled.div<{ $isActive: boolean }>`
   flex: 1;
   min-height: 0;
@@ -87,13 +89,25 @@ const FullscreenWrapper = styled.div<{ $isActive: boolean }>`
   position: relative;
 `;
 
+const THEME_WORKSPACE_PAGES: ThemeWorkspacePage[] = [
+  "workspace-general",
+  "workspace-social-media",
+  "workspace-poster",
+  "workspace-music",
+  "workspace-knowledge",
+  "workspace-planning",
+  "workspace-document",
+  "workspace-video",
+  "workspace-novel",
+];
+
 function AppContent() {
   const [showSplash, setShowSplash] = useState(true);
   const [currentPage, setCurrentPage] = useState<Page>("agent");
   const [pageParams, setPageParams] = useState<PageParams>({});
+  const [agentHasMessages, setAgentHasMessages] = useState(false);
   const { needsOnboarding, completeOnboarding } = useOnboardingState();
 
-  // 推荐标签引导创建项目相关状态
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [pendingRecommendation, setPendingRecommendation] = useState<{
     shortLabel: string;
@@ -102,20 +116,127 @@ function AppContent() {
     projectName: string;
   } | null>(null);
 
-  // 带参数的页面导航
-  const handleNavigate = useCallback((page: Page, params?: PageParams) => {
-    setCurrentPage(page);
-    if (params) {
-      setPageParams(params);
-    } else {
-      setPageParams({});
-    }
-  }, []);
+  const resolveWorkspacePage = useCallback(
+    (workspaceTheme?: WorkspaceTheme): ThemeWorkspacePage => {
+      if (workspaceTheme) {
+        return getThemeWorkspacePage(workspaceTheme);
+      }
 
-  // 推荐标签点击处理 - 打开创建项目对话框
+      if (typeof window !== "undefined") {
+        const savedPage = localStorage.getItem(
+          LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
+        );
+
+        if (
+          savedPage &&
+          THEME_WORKSPACE_PAGES.includes(savedPage as ThemeWorkspacePage)
+        ) {
+          return savedPage as ThemeWorkspacePage;
+        }
+      }
+
+      return getThemeWorkspacePage("general");
+    },
+    [],
+  );
+
+  const handleNavigate = useCallback(
+    (page: Page, params?: PageParams) => {
+      if (page === "workspace") {
+        setCurrentPage("agent");
+        setPageParams(
+          (params as AgentPageParams | undefined) || {
+            theme: "general",
+            lockTheme: false,
+          },
+        );
+        return;
+      }
+
+      if (page === "api-server") {
+        setCurrentPage("settings");
+        setPageParams({ tab: SettingsTabs.ApiServer } as SettingsPageParams);
+        return;
+      }
+
+      if (page === "provider-pool") {
+        setCurrentPage("settings");
+        setPageParams({ tab: SettingsTabs.Providers } as SettingsPageParams);
+        return;
+      }
+
+      if (page === "mcp") {
+        setCurrentPage("settings");
+        setPageParams({ tab: SettingsTabs.McpServer } as SettingsPageParams);
+        return;
+      }
+
+      if (page === "projects") {
+        const projectParams = params as
+          | {
+              projectId?: string;
+              workspaceTheme?: WorkspaceTheme;
+            }
+          | undefined;
+        const targetWorkspacePage = resolveWorkspacePage(
+          projectParams?.workspaceTheme,
+        );
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem(
+            LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
+            targetWorkspacePage,
+          );
+        }
+
+        setCurrentPage(targetWorkspacePage);
+        setPageParams({
+          ...(projectParams?.projectId
+            ? { projectId: projectParams.projectId }
+            : {}),
+          workspaceViewMode: "project-management",
+        });
+        return;
+      }
+
+      if (page === "project-detail") {
+        const projectParams = params as ProjectDetailPageParams | undefined;
+        const targetWorkspacePage = resolveWorkspacePage(
+          projectParams?.workspaceTheme,
+        );
+        const workspaceViewMode = projectParams?.projectId
+          ? "project-detail"
+          : "project-management";
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem(
+            LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
+            targetWorkspacePage,
+          );
+        }
+
+        setCurrentPage(targetWorkspacePage);
+        setPageParams({
+          ...(projectParams?.projectId
+            ? { projectId: projectParams.projectId }
+            : {}),
+          workspaceViewMode,
+        });
+        return;
+      }
+
+      if (isThemeWorkspacePage(page) && typeof window !== "undefined") {
+        localStorage.setItem(LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY, page);
+      }
+
+      setCurrentPage(page);
+      setPageParams(params ? { ...params } : {});
+    },
+    [resolveWorkspacePage],
+  );
+
   const _handleRequestRecommendation = useCallback(
     (shortLabel: string, fullPrompt: string, currentTheme: string) => {
-      // 主题标签映射
       const themeLabels: Record<string, string> = {
         "social-media": "社媒",
         poster: "海报",
@@ -142,12 +263,10 @@ function AppContent() {
     [],
   );
 
-  // 创建项目并创建初始内容
   const handleCreateProjectFromRecommendation = async (
     name: string,
     type: ProjectType,
   ) => {
-    // 选择项目目录
     const selectedPath = await open({
       directory: true,
       title: "选择项目目录",
@@ -167,14 +286,12 @@ function AppContent() {
       throw new Error("请选择单个项目目录");
     }
 
-    // 创建项目
     const project = await createProject({
       name,
       rootPath: projectPath,
       workspaceType: type,
     });
 
-    // 如果有待处理的推荐内容，创建初始 Content
     if (pendingRecommendation) {
       const content = await createContent({
         project_id: project.id,
@@ -182,24 +299,26 @@ function AppContent() {
         body: pendingRecommendation.fullPrompt,
       });
 
-      // 导航到 Agent 页面
       handleNavigate("agent", {
         projectId: project.id,
         contentId: content.id,
       });
 
-      // 清除待处理的推荐
       setPendingRecommendation(null);
+    } else if (isUserProjectType(type)) {
+      handleNavigate(getThemeWorkspacePage(type as WorkspaceTheme), {
+        projectId: project.id,
+        workspaceViewMode: "project-management",
+      });
     } else {
-      // 没有初始内容，直接导航到项目页面
-      handleNavigate("projects");
+      handleNavigate("agent", {
+        projectId: project.id,
+      });
     }
 
     toast.success("项目创建成功");
   };
 
-  // Deep Link 处理 Hook
-  // _Requirements: 5.2_
   const {
     connectPayload,
     relayInfo,
@@ -211,24 +330,16 @@ function AppContent() {
     handleCancel,
   } = useDeepLink();
 
-  // Relay Registry 管理 Hook
-  // _Requirements: 2.1, 7.2, 7.3_
-  const {
-    error: registryError,
-    refresh: _refreshRegistry, // 保留以供后续错误处理 UI 使用
-  } = useRelayRegistry();
+  const { error: registryError, refresh: _refreshRegistry } =
+    useRelayRegistry();
 
-  // 处理 Registry 加载失败
-  // _Requirements: 7.2, 7.3_
   useEffect(() => {
     if (registryError) {
       console.warn("[App] Registry 加载失败:", registryError);
-      // 显示 toast 通知用户
       showRegistryLoadError(registryError.message);
     }
   }, [registryError]);
 
-  // 页面切换时重置滚动位置
   useEffect(() => {
     const mainElement = document.querySelector("main");
     if (mainElement) {
@@ -240,23 +351,35 @@ function AppContent() {
     setShowSplash(false);
   }, []);
 
-  /**
-   * 渲染所有页面（保持挂载状态）
-   *
-   * 所有页面组件都会被渲染，但只有当前页面可见
-   * 这样可以保持页面状态，避免切换时重置
-   *
-   * _需求: 2.2, 3.2_
-   */
+  const renderThemeWorkspaces = () => {
+    return THEME_WORKSPACE_PAGES.map((page) => {
+      const theme = getThemeByWorkspacePage(page);
+
+      return (
+        <div
+          key={page}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: currentPage === page ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <WorkbenchPage
+            onNavigate={handleNavigate}
+            projectId={(pageParams as AgentPageParams).projectId}
+            contentId={(pageParams as AgentPageParams).contentId}
+            theme={theme}
+            viewMode={(pageParams as AgentPageParams).workspaceViewMode}
+          />
+        </div>
+      );
+    });
+  };
+
   const renderAllPages = () => {
     return (
       <>
-        {/* Provider Pool 页面 */}
-        <PageWrapper $isActive={currentPage === "provider-pool"}>
-          <ProviderPoolPage />
-        </PageWrapper>
-
-        {/* 图片生成页面 */}
         <div
           style={{
             flex: 1,
@@ -265,15 +388,9 @@ function AppContent() {
             flexDirection: "column",
           }}
         >
-          <ImageGenPage onNavigate={setCurrentPage} />
+          <ImageGenPage onNavigate={handleNavigate} />
         </div>
 
-        {/* API Server 页面 */}
-        <PageWrapper $isActive={currentPage === "api-server"}>
-          <ApiServerPage />
-        </PageWrapper>
-
-        {/* Agent 页面 */}
         <div
           style={{
             flex: 1,
@@ -283,35 +400,18 @@ function AppContent() {
           }}
         >
           <AgentChatPage
+            key={`${(pageParams as AgentPageParams).projectId || ""}:${(pageParams as AgentPageParams).contentId || ""}:${(pageParams as AgentPageParams).theme || ""}:${(pageParams as AgentPageParams).lockTheme ? "1" : "0"}`}
+            onNavigate={handleNavigate}
             projectId={(pageParams as AgentPageParams).projectId}
             contentId={(pageParams as AgentPageParams).contentId}
+            theme={(pageParams as AgentPageParams).theme}
+            lockTheme={(pageParams as AgentPageParams).lockTheme}
+            onHasMessagesChange={setAgentHasMessages}
           />
         </div>
 
-        {/* 项目页面 */}
-        <PageWrapper $isActive={currentPage === "projects"}>
-          <ProjectsPage onNavigate={handleNavigate} />
-        </PageWrapper>
+        {renderThemeWorkspaces()}
 
-        {/* 项目详情页 */}
-        {currentPage === "project-detail" &&
-          (pageParams as ProjectDetailPageParams).projectId && (
-            <PageWrapper $isActive={true}>
-              <ProjectDetailPage
-                projectId={(pageParams as ProjectDetailPageParams).projectId}
-                onBack={() => handleNavigate("projects")}
-                onNavigateToChat={(contentId) => {
-                  handleNavigate("agent", {
-                    projectId: (pageParams as ProjectDetailPageParams)
-                      .projectId,
-                    contentId,
-                  });
-                }}
-              />
-            </PageWrapper>
-          )}
-
-        {/* 终端工作区 - 使用 div 包装以支持显示/隐藏 */}
         <div
           style={{
             flex: 1,
@@ -320,40 +420,29 @@ function AppContent() {
             flexDirection: "column",
           }}
         >
-          <TerminalWorkspace onNavigate={setCurrentPage} />
+          <TerminalWorkspace onNavigate={handleNavigate} />
         </div>
 
-        {/* 系统监控页面 */}
         <FullscreenWrapper $isActive={currentPage === "sysinfo"}>
           <SysinfoView />
         </FullscreenWrapper>
 
-        {/* 文件浏览器页面 */}
         <FullscreenWrapper $isActive={currentPage === "files"}>
           <FileBrowserView />
         </FullscreenWrapper>
 
-        {/* 内嵌浏览器页面 */}
         <FullscreenWrapper $isActive={currentPage === "web"}>
           <WebView />
         </FullscreenWrapper>
 
-        {/* Tools 页面 */}
         <PageWrapper $isActive={currentPage === "tools"}>
-          <ToolsPage onNavigate={setCurrentPage} />
+          <ToolsPage onNavigate={handleNavigate} />
         </PageWrapper>
 
-        {/* MCP 页面 */}
-        <PageWrapper $isActive={currentPage === "mcp"}>
-          <McpPanel />
-        </PageWrapper>
-
-        {/* Plugins 页面 */}
         <PageWrapper $isActive={currentPage === "plugins"}>
           <PluginsPage />
         </PageWrapper>
 
-        {/* Settings 页面 - 使用新版 V2 布局 */}
         <div
           style={{
             flex: 1,
@@ -362,43 +451,52 @@ function AppContent() {
             flexDirection: "column",
           }}
         >
-          <SettingsPageV2 />
+          <SettingsPageV2
+            onNavigate={handleNavigate}
+            initialTab={(pageParams as SettingsPageParams).tab}
+          />
         </div>
-
-        {/* 动态插件页面已移除 */}
       </>
     );
   };
 
-  // 引导完成回调
   const handleOnboardingComplete = useCallback(() => {
     completeOnboarding();
   }, [completeOnboarding]);
 
-  // 1. 显示启动画面
   if (showSplash) {
     return <SplashScreen onComplete={handleSplashComplete} />;
   }
 
-  // 2. 检测中，显示空白
   if (needsOnboarding === null) {
     return null;
   }
 
-  // 3. 需要引导时显示引导向导
   if (needsOnboarding) {
     return <OnboardingWizard onComplete={handleOnboardingComplete} />;
   }
 
-  // 4. 正常主界面
+  const currentAgentParams = pageParams as AgentPageParams;
+  const shouldHideSidebarForAgent =
+    currentPage === "agent" &&
+    agentHasMessages &&
+    Boolean(currentAgentParams.lockTheme);
+
+  const shouldShowAppSidebar =
+    currentPage !== "settings" &&
+    currentPage !== "image-gen" &&
+    !isThemeWorkspacePage(currentPage) &&
+    !shouldHideSidebarForAgent;
+
   return (
     <SoundProvider>
       <ComponentDebugProvider>
         <AppContainer>
-          <AppSidebar currentPage={currentPage} onNavigate={handleNavigate} />
+          {shouldShowAppSidebar && (
+            <AppSidebar currentPage={currentPage} onNavigate={handleNavigate} />
+          )}
           <MainContent>{renderAllPages()}</MainContent>
-          {/* ProxyCast Connect 确认弹窗 */}
-          {/* _Requirements: 5.2_ */}
+
           <ConnectConfirmDialog
             open={isDialogOpen}
             relay={relayInfo}
@@ -411,13 +509,12 @@ function AppContent() {
             onConfirm={handleConfirm}
             onCancel={handleCancel}
           />
-          {/* 创建项目对话框 - 用于推荐标签引导创建 */}
+
           <CreateProjectDialog
             open={projectDialogOpen}
             onOpenChange={(open) => {
               setProjectDialogOpen(open);
               if (!open) {
-                // 用户取消，清除待处理的推荐
                 setPendingRecommendation(null);
               }
             }}
@@ -425,7 +522,7 @@ function AppContent() {
             defaultType={pendingRecommendation?.projectType}
             defaultName={pendingRecommendation?.projectName}
           />
-          {/* 组件视图调试覆盖层 */}
+
           <ComponentDebugOverlay />
         </AppContainer>
       </ComponentDebugProvider>
@@ -433,6 +530,5 @@ function AppContent() {
   );
 }
 
-// Export the App component wrapped with i18n patch support
 const App = withI18nPatch(AppContent);
 export default App;

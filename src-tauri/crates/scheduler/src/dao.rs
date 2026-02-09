@@ -4,7 +4,7 @@
 
 use super::types::{ScheduledTask, TaskFilter, TaskStatus};
 use rusqlite::{params, Connection};
-use tracing::{error, warn};
+use tracing::warn;
 
 pub struct SchedulerDao;
 

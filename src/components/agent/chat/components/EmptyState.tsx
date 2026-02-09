@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import styled, { keyframes, css } from "styled-components";
 import {
   ArrowRight,
@@ -14,9 +14,10 @@ import {
   Music,
 } from "lucide-react";
 import { getConfig } from "@/hooks/useTauri";
-import type { CreationMode } from "./types";
+import type { CreationMode, EntryTaskSlotValues, EntryTaskType } from "./types";
 import { CREATION_MODE_CONFIG } from "./constants";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -30,9 +31,18 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { ProjectSelector } from "@/components/projects/ProjectSelector";
-import { useProjects } from "@/hooks/useProjects";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import {
+  composeEntryPrompt,
+  createDefaultEntrySlotValues,
+  formatEntryTaskPreview,
+  getEntryTaskRecommendations,
+  getEntryTaskTemplate,
+  SOCIAL_MEDIA_ENTRY_TASKS,
+  validateEntryTaskSlots,
+} from "../utils/entryPromptComposer";
+import { ChatModelSelector } from "./ChatModelSelector";
 
 // Import Assets
 import iconXhs from "@/assets/platforms/xhs.png";
@@ -285,6 +295,60 @@ const GridItem = styled.div<{ $active?: boolean }>`
   }
 `;
 
+const EntryTaskContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px 4px 20px;
+  border-bottom: 1px dashed hsl(var(--border) / 0.8);
+`;
+
+const EntryTaskTabs = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+`;
+
+const EntryTaskTab = styled.button<{ $active?: boolean }>`
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  border: 1px solid
+    ${(props) =>
+      props.$active ? "hsl(var(--primary))" : "hsl(var(--border) / 0.8)"};
+  color: ${(props) =>
+    props.$active ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))"};
+  background: ${(props) =>
+    props.$active ? "hsl(var(--primary) / 0.08)" : "hsl(var(--background))"};
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: hsl(var(--primary) / 0.6);
+    color: hsl(var(--foreground));
+  }
+`;
+
+const EntryTaskPreview = styled.div`
+  font-size: 14px;
+  line-height: 1.6;
+  color: hsl(var(--foreground));
+`;
+
+const SlotToken = styled.span`
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 13px;
+`;
+
+const SlotGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+`;
+
 interface EmptyStateProps {
   input: string;
   setInput: (value: string) => void;
@@ -297,13 +361,18 @@ interface EmptyStateProps {
   activeTheme?: string;
   /** 主题变更回调 */
   onThemeChange?: (theme: string) => void;
+  /** 是否显示主题切换 Tabs */
+  showThemeTabs?: boolean;
   /** 推荐标签点击回调 */
   onRecommendationClick?: (shortLabel: string, fullPrompt: string) => void;
-  /** 当前选中的项目 ID */
-  projectId?: string | null;
-  /** 项目变更回调 */
-  onProjectChange?: (projectId: string) => void;
+  providerType: string;
+  setProviderType: (type: string) => void;
+  model: string;
+  setModel: (model: string) => void;
+  onManageProviders?: () => void;
 }
+
+const ENTRY_THEME_ID = "social-media";
 
 // Scenarios Configuration - 与 ProjectType 统一
 const ALL_CATEGORIES = [
@@ -359,7 +428,7 @@ const CREATION_THEMES = [
  * 格式: [简化标题, 完整 Prompt]
  * 简化标题用于显示，完整 Prompt 用于点击发送
  */
-const RECOMMENDATIONS: Record<string, [string, string][]> = {
+const THEME_RECOMMENDATIONS: Record<string, [string, string][]> = {
   "social-media": [
     [
       "爆款标题生成",
@@ -492,6 +561,45 @@ const THEME_ICONS: Record<string, string> = {
   novel: "📖",
 };
 
+const THEME_HEADLINES: Record<string, { lead: string; focus: string }> = {
+  general: {
+    lead: "你想在这个平台",
+    focus: "完成什么？",
+  },
+  "social-media": {
+    lead: "今天想做什么",
+    focus: "社媒爆款内容？",
+  },
+  poster: {
+    lead: "今天想生成什么",
+    focus: "视觉海报作品？",
+  },
+  video: {
+    lead: "今天要打磨哪条",
+    focus: "短视频脚本？",
+  },
+  music: {
+    lead: "今天想写一首什么样的",
+    focus: "歌曲故事？",
+  },
+  novel: {
+    lead: "今天想开启哪段",
+    focus: "小说剧情？",
+  },
+  document: {
+    lead: "今天要输出哪份",
+    focus: "办公文档？",
+  },
+  knowledge: {
+    lead: "今天想深入研究什么",
+    focus: "知识主题？",
+  },
+  planning: {
+    lead: "今天要规划什么",
+    focus: "行动方案？",
+  },
+};
+
 export const EmptyState: React.FC<EmptyStateProps> = ({
   input,
   setInput,
@@ -500,57 +608,14 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   onCreationModeChange,
   activeTheme = "general",
   onThemeChange,
+  showThemeTabs = false,
   onRecommendationClick,
-  projectId: externalProjectId,
-  onProjectChange,
+  providerType,
+  setProviderType,
+  model,
+  setModel,
+  onManageProviders,
 }) => {
-  // 项目管理 - 内部状态（当外部未提供时使用）
-  const { defaultProject, getOrCreateDefault } = useProjects();
-  const [internalProjectId, setInternalProjectId] = useState<string | null>(
-    null,
-  );
-
-  // 使用外部或内部的 projectId
-  const projectId = externalProjectId ?? internalProjectId;
-
-  // 初始化默认项目
-  useEffect(() => {
-    if (!externalProjectId && !internalProjectId) {
-      if (defaultProject) {
-        // 通知父组件
-        if (onProjectChange) {
-          onProjectChange(defaultProject.id);
-        } else {
-          setInternalProjectId(defaultProject.id);
-        }
-      } else {
-        getOrCreateDefault().then((p) => {
-          // 通知父组件
-          if (onProjectChange) {
-            onProjectChange(p.id);
-          } else {
-            setInternalProjectId(p.id);
-          }
-        });
-      }
-    }
-  }, [
-    externalProjectId,
-    internalProjectId,
-    defaultProject,
-    getOrCreateDefault,
-    onProjectChange,
-  ]);
-
-  // 处理项目变更
-  const handleProjectChange = (newProjectId: string) => {
-    if (onProjectChange) {
-      onProjectChange(newProjectId);
-    } else {
-      setInternalProjectId(newProjectId);
-    }
-  };
-
   // 从配置中读取启用的主题
   const [enabledThemes, setEnabledThemes] = useState<string[]>(
     DEFAULT_ENABLED_THEMES,
@@ -604,12 +669,86 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const [ratio, setRatio] = useState("3:4");
   const [style, setStyle] = useState("minimal");
   const [depth, setDepth] = useState("deep");
+  const [entryTaskType, setEntryTaskType] = useState<EntryTaskType>("direct");
+  const [entrySlotValues, setEntrySlotValues] = useState<EntryTaskSlotValues>(
+    () => createDefaultEntrySlotValues("direct"),
+  );
   // Popover 打开状态
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false);
   const [stylePopoverOpen, setStylePopoverOpen] = useState(false);
 
+  const isEntryTheme = activeTheme === ENTRY_THEME_ID;
+
+  useEffect(() => {
+    if (!isEntryTheme) {
+      return;
+    }
+
+    if (!SOCIAL_MEDIA_ENTRY_TASKS.includes(entryTaskType)) {
+      setEntryTaskType("direct");
+      setEntrySlotValues(createDefaultEntrySlotValues("direct"));
+    }
+  }, [isEntryTheme, entryTaskType]);
+
+  useEffect(() => {
+    setEntrySlotValues(createDefaultEntrySlotValues(entryTaskType));
+  }, [entryTaskType]);
+
+  const entryTemplate = useMemo(
+    () => getEntryTaskTemplate(entryTaskType),
+    [entryTaskType],
+  );
+
+  const entryPreview = useMemo(
+    () => formatEntryTaskPreview(entryTaskType, entrySlotValues),
+    [entryTaskType, entrySlotValues],
+  );
+
+  const currentRecommendations = useMemo(() => {
+    if (isEntryTheme) {
+      return getEntryTaskRecommendations(entryTaskType);
+    }
+    return THEME_RECOMMENDATIONS[activeTheme] || [];
+  }, [activeTheme, entryTaskType, isEntryTheme]);
+
+  const handleEntrySlotChange = (key: string, value: string) => {
+    setEntrySlotValues((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
   const handleSend = () => {
-    if (!input.trim()) return;
+    if (!input.trim() && !isEntryTheme) return;
+
+    if (isEntryTheme) {
+      const validation = validateEntryTaskSlots(entryTaskType, entrySlotValues);
+      if (!validation.valid) {
+        const missingFields = validation.missing
+          .map((slot) => slot.label)
+          .join("、");
+        toast.error(`请先填写：${missingFields}`);
+        return;
+      }
+
+      const composedPrompt = composeEntryPrompt({
+        taskType: entryTaskType,
+        slotValues: entrySlotValues,
+        userInput: input,
+        activeTheme,
+        creationMode,
+        context: {
+          platform: getPlatformLabel(platform),
+          ratio,
+          style,
+          depth,
+        },
+      });
+
+      onSend(composedPrompt);
+      return;
+    }
+
     let prefix = "";
     if (activeTheme === "social-media") prefix = `[社媒创作: ${platform}] `;
     if (activeTheme === "poster") prefix = `[图文生成: ${ratio}, ${style}] `;
@@ -679,37 +818,93 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     return val;
   };
 
+  const themeHeadline = THEME_HEADLINES[activeTheme] || THEME_HEADLINES.general;
+
   return (
     <Container>
       <ContentWrapper>
         <Header>
           <MainTitle>
-            你想在这个平台 <br />
-            <span>完成什么？</span>
+            {themeHeadline.lead} <br />
+            <span>{themeHeadline.focus}</span>
           </MainTitle>
         </Header>
 
-        <TabsContainer>
-          {categories.map((cat) => (
-            <TabItem
-              key={cat.id}
-              $active={activeTheme === cat.id}
-              onClick={() => handleThemeChange(cat.id)}
-            >
-              <span
-                className={
-                  activeTheme === cat.id ? "text-primary" : "opacity-70"
-                }
+        {showThemeTabs && (
+          <TabsContainer>
+            {categories.map((cat) => (
+              <TabItem
+                key={cat.id}
+                $active={activeTheme === cat.id}
+                onClick={() => handleThemeChange(cat.id)}
               >
-                {cat.icon}
-              </span>
-              {cat.label}
-            </TabItem>
-          ))}
-        </TabsContainer>
+                <span
+                  className={
+                    activeTheme === cat.id ? "text-primary" : "opacity-70"
+                  }
+                >
+                  {cat.icon}
+                </span>
+                {cat.label}
+              </TabItem>
+            ))}
+          </TabsContainer>
+        )}
 
         {/* 输入卡片 */}
         <InputCard>
+          {isEntryTheme && (
+            <EntryTaskContainer>
+              <EntryTaskTabs>
+                {SOCIAL_MEDIA_ENTRY_TASKS.map((task) => {
+                  const template = getEntryTaskTemplate(task);
+                  return (
+                    <EntryTaskTab
+                      key={task}
+                      $active={entryTaskType === task}
+                      onClick={() => setEntryTaskType(task)}
+                      title={template.description}
+                    >
+                      {template.label}
+                    </EntryTaskTab>
+                  );
+                })}
+              </EntryTaskTabs>
+
+              <EntryTaskPreview>
+                {entryPreview.split(/(\[[^\]]+\])/g).map((chunk, index) => {
+                  const isToken = /^\[[^\]]+\]$/.test(chunk);
+                  if (!chunk) return null;
+                  if (!isToken) {
+                    return (
+                      <React.Fragment key={`${chunk}-${index}`}>
+                        {chunk}
+                      </React.Fragment>
+                    );
+                  }
+
+                  return (
+                    <SlotToken key={`${chunk}-${index}`}>{chunk}</SlotToken>
+                  );
+                })}
+              </EntryTaskPreview>
+
+              <SlotGrid>
+                {entryTemplate.slots.map((slot) => (
+                  <Input
+                    key={slot.key}
+                    value={entrySlotValues[slot.key] ?? ""}
+                    onChange={(event) =>
+                      handleEntrySlotChange(slot.key, event.target.value)
+                    }
+                    placeholder={slot.placeholder}
+                    className="h-9 text-xs"
+                  />
+                ))}
+              </SlotGrid>
+            </EntryTaskContainer>
+          )}
+
           <StyledTextarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -719,13 +914,14 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
           <Toolbar>
             <ToolLoginLeft>
-              {/* 项目选择器 - PRD 4.2：始终显示，默认选中「默认项目」，按主题筛选 */}
-              <ProjectSelector
-                value={projectId}
-                onChange={handleProjectChange}
-                workspaceType={activeTheme}
-                placeholder="选择项目"
-                className="h-8 text-xs min-w-[120px]"
+              <ChatModelSelector
+                providerType={providerType}
+                setProviderType={setProviderType}
+                model={model}
+                setModel={setModel}
+                compactTrigger
+                popoverSide="top"
+                onManageProviders={onManageProviders}
               />
 
               {activeTheme === "social-media" && (
@@ -1002,7 +1198,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             <Button
               size="sm"
               onClick={handleSend}
-              disabled={!input.trim()}
+              disabled={!input.trim() && !isEntryTheme}
               className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 rounded-xl shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95"
             >
               开始生成
@@ -1013,7 +1209,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
         {/* Dynamic Inspiration/Tips based on Tab - Styled nicely */}
         <div className="w-full max-w-[800px] flex flex-wrap gap-3 justify-center">
-          {RECOMMENDATIONS[activeTheme]?.map(([shortLabel, fullPrompt]) => (
+          {currentRecommendations.map(([shortLabel, fullPrompt]) => (
             <Badge
               key={shortLabel}
               variant="secondary"
@@ -1024,9 +1220,6 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                   onRecommendationClick(shortLabel, fullPrompt);
                 } else {
                   setInput(fullPrompt);
-                  setTimeout(() => {
-                    onSend(fullPrompt);
-                  }, 100);
                 }
               }}
             >

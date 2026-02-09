@@ -13,7 +13,6 @@ import { useSessionFiles } from "./hooks/useSessionFiles";
 import { useContentSync } from "./hooks/useContentSync";
 import { ChatNavbar } from "./components/ChatNavbar";
 import { ChatSidebar } from "./components/ChatSidebar";
-import { ChatSettings } from "./components/ChatSettings";
 import { MessageList } from "./components/MessageList";
 import { Inputbar } from "./components/Inputbar";
 import { EmptyState } from "./components/EmptyState";
@@ -59,11 +58,33 @@ import {
   type ProjectMemory,
   type Character,
 } from "@/lib/api/memory";
+import type { Page, PageParams } from "@/types/page";
+import { SettingsTabs } from "@/types/settings";
 
 import type { MessageImage } from "./types";
 import type { ThemeType, LayoutMode } from "@/components/content-creator/types";
 import type { A2UIFormData } from "@/components/content-creator/a2ui/types";
 import { getFileToStepMap } from "./utils/workflowMapping";
+
+const SUPPORTED_ENTRY_THEMES: ThemeType[] = [
+  "general",
+  "social-media",
+  "poster",
+  "music",
+  "knowledge",
+  "planning",
+  "document",
+  "video",
+  "novel",
+];
+
+function normalizeInitialTheme(value?: string): ThemeType {
+  if (!value) return "general";
+  if (SUPPORTED_ENTRY_THEMES.includes(value as ThemeType)) {
+    return value as ThemeType;
+  }
+  return "general";
+}
 
 const PageContainer = styled.div`
   display: flex;
@@ -156,21 +177,33 @@ export function AgentChatPage({
   onNavigate: _onNavigate,
   projectId: externalProjectId,
   contentId,
+  theme: initialTheme,
+  lockTheme = false,
   onRecommendationClick: _onRecommendationClick,
+  onHasMessagesChange,
 }: {
-  onNavigate?: (page: string) => void;
+  onNavigate?: (page: Page, params?: PageParams) => void;
   projectId?: string;
   contentId?: string;
+  theme?: string;
+  lockTheme?: boolean;
   onRecommendationClick?: (shortLabel: string, fullPrompt: string) => void;
+  onHasMessagesChange?: (hasMessages: boolean) => void;
 }) {
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState("");
 
   // 内容创作相关状态
-  const [activeTheme, setActiveTheme] = useState<string>("general");
+  const [activeTheme, setActiveTheme] = useState<string>(
+    normalizeInitialTheme(initialTheme),
+  );
   const [creationMode, setCreationMode] = useState<CreationMode>("guided");
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("chat");
+
+  useEffect(() => {
+    if (!initialTheme) return;
+    setActiveTheme(normalizeInitialTheme(initialTheme));
+  }, [initialTheme]);
 
   // 内部 projectId 状态（当外部未提供时使用）
   const [internalProjectId, setInternalProjectId] = useState<string | null>(
@@ -265,7 +298,9 @@ export function AgentChatPage({
       setProject(p);
       // 直接使用 projectType 作为 theme（类型已统一）
       const theme = projectTypeToTheme(p.workspaceType);
-      setActiveTheme(theme);
+      if (!lockTheme || !initialTheme) {
+        setActiveTheme(theme);
+      }
 
       // 2. 加载 Memory
       const memory = await getProjectMemory(projectId);
@@ -275,8 +310,14 @@ export function AgentChatPage({
       if (contentId) {
         const content = await getContent(contentId);
         if (content) {
+          const canvasTheme = (
+            lockTheme && initialTheme
+              ? normalizeInitialTheme(initialTheme)
+              : theme
+          ) as ThemeType;
+
           const initialState =
-            createInitialCanvasState(theme, content.body || "") ||
+            createInitialCanvasState(canvasTheme, content.body || "") ||
             createInitialDocumentState(content.body || "");
           setCanvasState(initialState);
           setLayoutMode("chat-canvas");
@@ -285,7 +326,7 @@ export function AgentChatPage({
     };
 
     loadData();
-  }, [projectId, contentId]);
+  }, [projectId, contentId, lockTheme, initialTheme]);
 
   // 生成系统提示词（包含项目 Memory）
   const systemPrompt = useMemo(() => {
@@ -432,7 +473,7 @@ export function AgentChatPage({
     console.log("[AgentChatPage] 恢复会话元数据:", sessionId, sessionMeta);
 
     // 从会话元数据恢复主题（类型已统一，直接使用）
-    if (sessionMeta.theme) {
+    if (sessionMeta.theme && (!lockTheme || !initialTheme)) {
       console.log("[AgentChatPage] 恢复主题:", sessionMeta.theme);
       setActiveTheme(sessionMeta.theme);
     }
@@ -444,7 +485,7 @@ export function AgentChatPage({
     }
 
     restoredMetaSessionId.current = sessionId;
-  }, [sessionId, sessionMeta]);
+  }, [sessionId, sessionMeta, lockTheme, initialTheme]);
 
   // 当 sessionFiles 加载完成时，恢复文件到 taskFiles
   useEffect(() => {
@@ -619,9 +660,11 @@ export function AgentChatPage({
       images?: MessageImage[],
       webSearch?: boolean,
       thinking?: boolean,
+      textOverride?: string,
     ) => {
-      if (!input.trim() && (!images || images.length === 0)) return;
-      let text = input;
+      const sourceText = textOverride ?? input;
+      if (!sourceText.trim() && (!images || images.length === 0)) return;
+      let text = sourceText;
 
       // 如果有引用的角色，注入角色信息
       if (mentionedCharacters.length > 0) {
@@ -660,8 +703,33 @@ export function AgentChatPage({
     processedMessageIds.current.clear();
   }, [clearMessages]);
 
+  const handleBackHome = useCallback(() => {
+    clearMessages({
+      showToast: false,
+    });
+    setInput("");
+    setLayoutMode("chat");
+    setShowSidebar(true);
+    setCanvasState(null);
+    setGeneralCanvasState(DEFAULT_CANVAS_STATE);
+    setTaskFiles([]);
+    setSelectedFileId(undefined);
+    processedMessageIds.current.clear();
+    setInternalProjectId(null);
+    setProject(null);
+    setProjectMemory(null);
+    setActiveTheme("general");
+    setCreationMode("guided");
+    _onNavigate?.("agent", { theme: "general", lockTheme: false });
+  }, [clearMessages, _onNavigate]);
+
   // 当开始对话时自动折叠侧边栏
   const hasMessages = messages.length > 0;
+
+  useEffect(() => {
+    onHasMessagesChange?.(hasMessages);
+  }, [hasMessages, onHasMessagesChange]);
+
   useEffect(() => {
     if (hasMessages) {
       setShowSidebar(false);
@@ -1208,6 +1276,12 @@ export function AgentChatPage({
   // 判断是否应该显示聊天布局（有消息）
   const showChatLayout = hasMessages;
 
+  const handleManageProviders = useCallback(() => {
+    _onNavigate?.("settings", {
+      tab: SettingsTabs.Providers,
+    });
+  }, [_onNavigate]);
+
   // 聊天区域内容
   const chatContent = (
     <ChatContainer>
@@ -1239,15 +1313,22 @@ export function AgentChatPage({
           input={input}
           setInput={setInput}
           onSend={(text) => {
-            setInput(text);
-            setTimeout(() => handleSend([], false, false), 0);
+            handleSend([], false, false, text);
           }}
+          providerType={providerType}
+          setProviderType={setProviderType}
+          model={model}
+          setModel={setModel}
+          onManageProviders={handleManageProviders}
           creationMode={creationMode}
           onCreationModeChange={setCreationMode}
           activeTheme={activeTheme}
-          onThemeChange={setActiveTheme}
-          projectId={projectId}
-          onProjectChange={(newProjectId) => setInternalProjectId(newProjectId)}
+          onThemeChange={(theme) => {
+            if (!lockTheme) {
+              setActiveTheme(theme);
+            }
+          }}
+          showThemeTabs={false}
           onRecommendationClick={(shortLabel, fullPrompt) => {
             // 直接将推荐提示词放入输入框，不创建项目
             setInput(fullPrompt);
@@ -1263,6 +1344,11 @@ export function AgentChatPage({
             onSend={handleSend}
             onStop={stopSending}
             isLoading={isSending}
+            providerType={providerType}
+            setProviderType={setProviderType}
+            model={model}
+            setModel={setModel}
+            onManageProviders={handleManageProviders}
             disabled={!processStatus.running && false}
             onClearMessages={handleClearMessages}
             onToggleCanvas={handleToggleCanvas}
@@ -1380,14 +1466,18 @@ export function AgentChatPage({
 
       <MainArea>
         <ChatNavbar
-          providerType={providerType}
-          setProviderType={setProviderType}
-          model={model}
-          setModel={setModel}
           isRunning={isSending}
           onToggleHistory={handleToggleSidebar}
           onToggleFullscreen={() => {}}
-          onToggleSettings={() => setShowSettings(!showSettings)}
+          projectId={projectId ?? null}
+          onProjectChange={(newProjectId) => setInternalProjectId(newProjectId)}
+          workspaceType={activeTheme}
+          onBackHome={handleBackHome}
+          onToggleSettings={() => {
+            _onNavigate?.("settings", {
+              tab: SettingsTabs.ChatAppearance,
+            });
+          }}
         />
 
         {/* 同步状态指示器 */}
@@ -1427,8 +1517,6 @@ export function AgentChatPage({
           canvasContent={canvasContent}
         />
       </MainArea>
-
-      {showSettings && <ChatSettings onClose={() => setShowSettings(false)} />}
     </PageContainer>
   );
 }

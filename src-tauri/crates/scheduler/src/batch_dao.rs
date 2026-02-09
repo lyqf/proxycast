@@ -6,8 +6,7 @@ use super::batch::{BatchTask, BatchTaskStatus};
 use super::template::TaskTemplate;
 use anyhow::{Context, Result};
 use proxycast_core::database::DbConnection;
-use rusqlite::params;
-use std::sync::{Arc, Mutex};
+use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 /// 批量任务 DAO
@@ -162,15 +161,19 @@ impl BatchTaskDao {
                 options: serde_json::from_str(&options_json)?,
                 tasks: serde_json::from_str(&tasks_json)?,
                 results: results_json
-                    .map(|json| serde_json::from_str(&json))
-                    .transpose()?
+                    .as_deref()
+                    .map(|json| serde_json::from_str(json))
+                    .transpose()
+                    .unwrap_or_default()
                     .unwrap_or_default(),
                 created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.into(),
                 started_at: started_at
-                    .map(|s| chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.into()))
+                    .as_deref()
+                    .map(|s| chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.into()))
                     .transpose()?,
                 completed_at: completed_at
-                    .map(|s| chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.into()))
+                    .as_deref()
+                    .map(|s| chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.into()))
                     .transpose()?,
             };
 
@@ -241,15 +244,19 @@ impl BatchTaskDao {
                 options: serde_json::from_str(&options_json)?,
                 tasks: serde_json::from_str(&tasks_json)?,
                 results: results_json
-                    .map(|json| serde_json::from_str(&json))
-                    .transpose()?
+                    .as_deref()
+                    .map(|json| serde_json::from_str(json))
+                    .transpose()
+                    .unwrap_or_default()
                     .unwrap_or_default(),
                 created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.into(),
                 started_at: started_at
-                    .map(|s| chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.into()))
+                    .as_deref()
+                    .map(|s| chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.into()))
                     .transpose()?,
                 completed_at: completed_at
-                    .map(|s| chrono::DateTime::parse_from_rfc3339(&s).map(|dt| dt.into()))
+                    .as_deref()
+                    .map(|s| chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.into()))
                     .transpose()?,
             };
 

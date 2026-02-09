@@ -8,6 +8,7 @@ import type { MessageImage } from "../../types";
 import type { Character } from "@/lib/api/memory";
 import { TaskFileList, type TaskFile } from "../TaskFiles";
 import { FolderOpen, ChevronUp } from "lucide-react";
+import { ChatModelSelector } from "../ChatModelSelector";
 
 // 任务文件触发器区域（在输入框上方，与输入框对齐）
 const TaskFilesArea = styled.div`
@@ -74,6 +75,7 @@ interface InputbarProps {
     images?: MessageImage[],
     webSearch?: boolean,
     thinking?: boolean,
+    textOverride?: string,
   ) => void;
   /** 停止生成回调 */
   onStop?: () => void;
@@ -98,6 +100,11 @@ interface InputbarProps {
   characters?: Character[];
   /** 选择角色回调 */
   onSelectCharacter?: (character: Character) => void;
+  providerType?: string;
+  setProviderType?: (type: string) => void;
+  model?: string;
+  setModel?: (model: string) => void;
+  onManageProviders?: () => void;
 }
 
 export const Inputbar: React.FC<InputbarProps> = ({
@@ -117,6 +124,11 @@ export const Inputbar: React.FC<InputbarProps> = ({
   onTaskFileClick,
   characters = [],
   onSelectCharacter,
+  providerType,
+  setProviderType,
+  model,
+  setModel,
+  onManageProviders,
 }) => {
   const [activeTools, setActiveTools] = useState<Record<string, boolean>>({});
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
@@ -360,6 +372,23 @@ export const Inputbar: React.FC<InputbarProps> = ({
         onPaste={handlePaste}
         isFullscreen={isFullscreen}
         isCanvasOpen={isCanvasOpen}
+        leftExtra={
+          !isFullscreen &&
+          providerType &&
+          setProviderType &&
+          model &&
+          setModel ? (
+            <ChatModelSelector
+              providerType={providerType}
+              setProviderType={setProviderType}
+              model={model}
+              setModel={setModel}
+              compactTrigger
+              popoverSide="top"
+              onManageProviders={onManageProviders}
+            />
+          ) : undefined
+        }
       />
     </div>
   );
