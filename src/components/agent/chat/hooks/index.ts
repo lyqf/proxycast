@@ -14,6 +14,7 @@ export type { Topic } from "./useAgentChat";
 interface UseAgentChatUnifiedOptions {
   systemPrompt?: string;
   onWriteFile?: (content: string, fileName: string) => void;
+  workspaceId: string;
 }
 
 /**
@@ -26,7 +27,7 @@ interface UseAgentChatUnifiedOptions {
  * 切换方式：
  * localStorage.setItem("proxycast_agent_backend", "aster")
  */
-export function useAgentChatUnified(options: UseAgentChatUnifiedOptions = {}) {
+export function useAgentChatUnified(options: UseAgentChatUnifiedOptions) {
   const backend = getAgentBackend();
 
   // 根据配置选择 hook

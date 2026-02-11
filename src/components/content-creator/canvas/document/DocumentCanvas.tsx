@@ -9,7 +9,7 @@ import styled from "styled-components";
 import type { DocumentCanvasProps, ExportFormat, PlatformType } from "./types";
 import { DocumentToolbar } from "./DocumentToolbar";
 import { DocumentRenderer } from "./DocumentRenderer";
-import { DocumentEditor } from "./DocumentEditor";
+import { NotionEditor } from "./editor";
 import { PlatformTabs } from "./PlatformTabs";
 
 const Container = styled.div`
@@ -17,7 +17,7 @@ const Container = styled.div`
   flex-direction: column;
   height: 100%;
   background: hsl(var(--background));
-  border-left: 1px solid hsl(var(--border));
+  border-right: 1px solid hsl(var(--border));
 `;
 
 const ContentArea = styled.div`
@@ -185,7 +185,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
 
         <ContentArea>
           {state.isEditing ? (
-            <DocumentEditor
+            <NotionEditor
               content={editingContent}
               onChange={setEditingContent}
               onSave={handleSave}

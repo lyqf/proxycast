@@ -62,8 +62,8 @@ impl AgentDao {
         session: &AgentSession,
     ) -> Result<(), rusqlite::Error> {
         conn.execute(
-            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 session.id,
                 session.model,
@@ -71,6 +71,7 @@ impl AgentDao {
                 session.title,
                 session.created_at,
                 session.updated_at,
+                session.working_dir,
             ],
         )?;
         Ok(())
@@ -82,7 +83,7 @@ impl AgentDao {
         session_id: &str,
     ) -> Result<Option<AgentSession>, rusqlite::Error> {
         let mut stmt = conn.prepare(
-            "SELECT id, model, system_prompt, title, created_at, updated_at
+            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
              FROM agent_sessions WHERE id = ?",
         )?;
 
@@ -97,6 +98,7 @@ impl AgentDao {
                 title: row.get(3)?,
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
+                working_dir: row.get(6)?,
             }))
         } else {
             Ok(None)
@@ -120,7 +122,7 @@ impl AgentDao {
     /// 获取所有会话（不包含消息）
     pub fn list_sessions(conn: &Connection) -> Result<Vec<AgentSession>, rusqlite::Error> {
         let mut stmt = conn.prepare(
-            "SELECT id, model, system_prompt, title, created_at, updated_at
+            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
              FROM agent_sessions ORDER BY updated_at DESC",
         )?;
 
@@ -133,6 +135,7 @@ impl AgentDao {
                 title: row.get(3)?,
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
+                working_dir: row.get(6)?,
             })
         })?;
 

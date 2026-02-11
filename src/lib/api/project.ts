@@ -245,10 +245,30 @@ export async function createProject(
   return normalizeProject(project);
 }
 
+/** 获取统一 workspace 项目根目录 */
+export async function getWorkspaceProjectsRoot(): Promise<string> {
+  return invoke<string>("workspace_get_projects_root");
+}
+
+/** 按项目名称解析固定项目目录 */
+export async function resolveProjectRootPath(name: string): Promise<string> {
+  return invoke<string>("workspace_resolve_project_path", { name });
+}
+
 /** 获取项目列表 */
 export async function listProjects(): Promise<Project[]> {
   const projects = await invoke<RawProject[]>("workspace_list");
   return projects.map((project) => normalizeProject(project));
+}
+
+/** 通过根路径获取项目 */
+export async function getProjectByRootPath(
+  rootPath: string,
+): Promise<Project | null> {
+  const project = await invoke<RawProject | null>("workspace_get_by_path", {
+    rootPath,
+  });
+  return project ? normalizeProject(project) : null;
 }
 
 /** 获取项目详情 */
@@ -406,7 +426,7 @@ export function getCreateProjectErrorMessage(message: string): string {
     return "创建项目失败，请查看日志";
   }
   if (message.includes("路径已存在")) {
-    return message;
+    return "项目目录已存在，请更换项目名称或清理同名目录";
   }
   if (message.includes("no such column") || message.includes("has no column")) {
     return "数据库结构过旧，请重启应用以执行迁移";
@@ -415,6 +435,23 @@ export function getCreateProjectErrorMessage(message: string): string {
     return "项目目录无效，请重新选择";
   }
   return message;
+}
+
+/** 提取异常中的错误消息 */
+export function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+
+  return String(error);
 }
 
 /** 格式化字数 */
@@ -449,60 +486,4 @@ export function formatRelativeTime(timestamp: number): string {
   } else {
     return new Date(timestamp).toLocaleDateString();
   }
-}
-
-/** 项目名称计数器（用于生成唯一的项目名称） */
-let projectNameCounter = 0;
-
-/** 重置项目名称计数器（用于测试或重新开始计数） */
-export function resetProjectNameCounter() {
-  projectNameCounter = 0;
-}
-
-/**
- * 生成项目名称（按规则）
- * 格式: 项目-YYYY-MM-DD-NNN
- */
-export function generateProjectName(type?: ProjectType): string {
-  const now = new Date();
-  const dateStr = now
-    .toLocaleDateString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-    .replace(/\//g, "-");
-
-  const typeLabel = type ? getProjectTypeLabel(type) : "项目";
-
-  // 每次调用时递增计数器
-  projectNameCounter++;
-
-  // 格式: 类型-YYYY-MM-DD-NNN (例如: 社媒内容-2026-02-01-001)
-  const seq = String(projectNameCounter).padStart(3, "0");
-  return `${typeLabel}-${dateStr}-${seq}`;
-}
-
-/**
- * 获取默认项目根路径（用于自动创建项目）
- * 如果用户未选择目录，则使用此默认路径
- */
-export function getDefaultProjectPath(): string {
-  // 在用户主目录下创建 ProxyCast 项目文件夹
-  const homeDir =
-    (typeof window !== "undefined" &&
-      (window as any).__TAURI__?.path?.homeDir?.()) ||
-    "~/Documents/ProxyCast";
-
-  const now = new Date();
-  const dateStr = now
-    .toLocaleDateString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-    .replace(/\//g, "-");
-
-  const seq = String(projectNameCounter).padStart(3, "0");
-  return `${homeDir}/Project-${dateStr}-${seq}`;
 }

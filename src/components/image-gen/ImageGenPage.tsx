@@ -1,6 +1,6 @@
 /**
  * @file 图片生成页面
- * @description 对齐 LobeHub 风格的绘画工作台布局与交互
+ * @description 对齐成熟产品风格的绘画工作台布局与交互
  * @module components/image-gen/ImageGenPage
  */
 
@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { useImageGen } from "./useImageGen";
+import type { GeneratedImage } from "./types";
 import type { Page } from "@/types/page";
 
 interface ImageGenPageProps {
@@ -167,6 +168,39 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("文件读取失败"));
     reader.readAsDataURL(file);
   });
+}
+
+function resolveBatchImages(
+  images: GeneratedImage[],
+  selectedImageId: string | null,
+): GeneratedImage[] {
+  if (!selectedImageId) {
+    return [];
+  }
+
+  const batchMatch = selectedImageId.match(/^img-(\d+)-\d+$/);
+  if (!batchMatch) {
+    const single = images.find((item) => item.id === selectedImageId);
+    return single ? [single] : [];
+  }
+
+  const batchPrefix = `img-${batchMatch[1]}-`;
+  return images
+    .filter((item) => item.id.startsWith(batchPrefix))
+    .sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function getStatusText(status: GeneratedImage["status"]): string {
+  switch (status) {
+    case "complete":
+      return "已完成";
+    case "error":
+      return "失败";
+    case "generating":
+      return "生成中";
+    default:
+      return "待生成";
+  }
 }
 
 const Container = styled.div`
@@ -449,6 +483,63 @@ const PreviewImage = styled.img`
   object-fit: contain;
 `;
 
+const BatchGrid = styled.div`
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  align-content: start;
+  overflow: auto;
+`;
+
+const BatchItem = styled.button<{ $active: boolean }>`
+  border: 1px solid
+    ${({ $active }) => ($active ? "hsl(var(--primary))" : "hsl(var(--border))")};
+  border-radius: 10px;
+  background: hsl(var(--background));
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+`;
+
+const BatchPreviewWrap = styled.div`
+  border-radius: 8px;
+  background: hsl(var(--muted) / 0.25);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+`;
+
+const BatchPlaceholder = styled.div`
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  color: hsl(var(--muted-foreground));
+`;
+
+const BatchMeta = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+`;
+
 const CanvasActions = styled.div`
   position: absolute;
   top: 12px;
@@ -551,7 +642,10 @@ export function ImageGenPage({ onNavigate }: ImageGenPageProps) {
     setSelectedModelId,
     selectedSize,
     setSelectedSize,
+    images,
     selectedImage,
+    selectedImageId,
+    setSelectedImageId,
     generating,
     generateImage,
     deleteImage,
@@ -587,6 +681,12 @@ export function ImageGenPage({ onNavigate }: ImageGenPageProps) {
 
   const canGenerate =
     !!prompt.trim() && !!selectedProvider && !!selectedModelId && !generating;
+
+  const selectedBatchImages = useMemo(() => {
+    return resolveBatchImages(images, selectedImageId);
+  }, [images, selectedImageId]);
+
+  const shouldShowBatchGrid = selectedBatchImages.length > 1;
 
   const handleCountSelect = (count: number) => {
     setImageCount(count);
@@ -843,7 +943,49 @@ export function ImageGenPage({ onNavigate }: ImageGenPageProps) {
 
         <Workspace>
           <Canvas>
-            {selectedImage?.status === "complete" && selectedImage.url ? (
+            {shouldShowBatchGrid ? (
+              <BatchGrid>
+                {selectedBatchImages.map((item, index) => {
+                  const parsedSize = parseSize(item.size);
+                  const previewStyle = parsedSize
+                    ? {
+                        aspectRatio: `${parsedSize.width}/${parsedSize.height}`,
+                      }
+                    : undefined;
+
+                  return (
+                    <BatchItem
+                      key={item.id}
+                      $active={item.id === selectedImageId}
+                      onClick={() => setSelectedImageId(item.id)}
+                    >
+                      <BatchPreviewWrap style={previewStyle}>
+                        {item.status === "complete" && item.url ? (
+                          <img
+                            src={item.url}
+                            alt={item.prompt || `生成图片 ${index + 1}`}
+                          />
+                        ) : (
+                          <BatchPlaceholder>
+                            {item.status === "error" ? (
+                              <ImageIcon size={28} />
+                            ) : (
+                              <Loader2 size={28} className="animate-spin" />
+                            )}
+                            <span>{getStatusText(item.status)}</span>
+                          </BatchPlaceholder>
+                        )}
+                      </BatchPreviewWrap>
+
+                      <BatchMeta>
+                        <span>第 {index + 1} 张</span>
+                        <span>{getStatusText(item.status)}</span>
+                      </BatchMeta>
+                    </BatchItem>
+                  );
+                })}
+              </BatchGrid>
+            ) : selectedImage?.status === "complete" && selectedImage.url ? (
               <>
                 <PreviewImage
                   src={selectedImage.url}
@@ -880,6 +1022,25 @@ export function ImageGenPage({ onNavigate }: ImageGenPageProps) {
                 <h2>绘画</h2>
               </Empty>
             )}
+
+            {shouldShowBatchGrid &&
+              selectedImage?.status === "complete" &&
+              selectedImage.url && (
+                <CanvasActions>
+                  <CanvasActionButton
+                    title="在浏览器打开"
+                    onClick={() => window.open(selectedImage.url, "_blank")}
+                  >
+                    <ExternalLink size={16} />
+                  </CanvasActionButton>
+                  <CanvasActionButton
+                    title="删除"
+                    onClick={() => deleteImage(selectedImage.id)}
+                  >
+                    <Trash2 size={16} />
+                  </CanvasActionButton>
+                </CanvasActions>
+              )}
           </Canvas>
 
           <PromptDock>

@@ -111,7 +111,7 @@ export function useLayoutTransition(
           transform:
             transitionState === "entering" || transitionState === "entered"
               ? "translateX(0)"
-              : "translateX(100%)",
+              : "translateX(-100%)",
           opacity:
             transitionState === "entering" || transitionState === "entered"
               ? 1

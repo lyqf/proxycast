@@ -15,13 +15,13 @@ import {
   ContentListItem,
   listProjects,
   createProject,
+  resolveProjectRootPath,
   updateProject,
   deleteProject,
   isUserProjectType,
   getContentStats,
   getCreateProjectErrorMessage,
-  generateProjectName,
-  getDefaultProjectPath,
+  extractErrorMessage,
 } from "@/lib/api/project";
 import { ProjectCard } from "./ProjectCard";
 import { NewProjectCard } from "./NewProjectCard";
@@ -30,7 +30,6 @@ import { CreateProjectDialog } from "./CreateProjectDialog";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { ContentListPage } from "./ContentListPage";
 import { toast } from "sonner";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Page, PageParams } from "@/types/page";
 
 interface ProjectsPageProps {
@@ -164,27 +163,8 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
 
   // 创建项目
   const handleCreateProject = async (name: string, type: ProjectType) => {
-    // 选择项目目录
-    const selectedPath = await openDialog({
-      directory: true,
-      title: "选择项目目录",
-    });
-
-    if (!selectedPath) {
-      // 用户取消选择，抛出错误让对话框知道
-      throw new Error("用户取消选择目录");
-    }
-
     try {
-      const projectPath = Array.isArray(selectedPath)
-        ? selectedPath.length === 1
-          ? selectedPath[0]
-          : null
-        : selectedPath;
-
-      if (!projectPath) {
-        throw new Error("请选择单个项目目录");
-      }
+      const projectPath = await resolveProjectRootPath(name);
 
       await createProject({
         name,
@@ -196,41 +176,10 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
       loadProjects();
     } catch (error) {
       console.error("创建项目失败:", error);
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : typeof error === "string"
-            ? error
-            : error && typeof error === "object" && "message" in error
-              ? String((error as { message?: unknown }).message)
-              : String(error);
+      const errorMessage = extractErrorMessage(error);
       const friendlyMessage = getCreateProjectErrorMessage(errorMessage);
       toast.error(`创建项目失败: ${friendlyMessage}`);
       throw error;
-    }
-  };
-
-  // 快速创建项目（不弹窗，直接用规则创建）
-  const handleQuickCreateProject = async (type: ProjectType = "general") => {
-    // 生成规则名称
-    const name = generateProjectName(type);
-
-    try {
-      // 使用默认项目路径
-      const rootPath = getDefaultProjectPath();
-
-      await createProject({
-        name,
-        rootPath,
-        workspaceType: type,
-      });
-
-      // 静默成功，不显示 toast
-      console.log("[ProjectsPage] 快速创建项目成功:", name);
-      loadProjects();
-    } catch (error) {
-      console.error("快速创建项目失败:", error);
-      // 静默失败，不提示用户
     }
   };
 
@@ -382,17 +331,7 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
             <p className="mb-4">还没有项目</p>
             <Button
               onClick={() => {
-                // 将 ProjectFilter 转换为 ProjectType
-                let projectType: ProjectType = "general";
-                const filter = currentFilter as string;
-                if (
-                  filter !== "all" &&
-                  filter !== "favorites" &&
-                  filter !== "archived"
-                ) {
-                  projectType = currentFilter as ProjectType;
-                }
-                handleQuickCreateProject(projectType);
+                setCreateDialogOpen(true);
               }}
             >
               创建第一个项目
@@ -410,17 +349,7 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
             {(currentFilter as string) !== "archived" && (
               <NewProjectCard
                 onClick={() => {
-                  // 快速创建项目，不弹窗
-                  let projectType: ProjectType = "general";
-                  const filter = currentFilter as string;
-                  if (
-                    filter !== "all" &&
-                    filter !== "favorites" &&
-                    filter !== "archived"
-                  ) {
-                    projectType = currentFilter as ProjectType;
-                  }
-                  handleQuickCreateProject(projectType);
+                  setCreateDialogOpen(true);
                 }}
               />
             )}

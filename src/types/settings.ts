@@ -31,7 +31,6 @@ export enum SettingsTabs {
   Providers = "providers",
   Assistant = "assistant",
   Skills = "skills",
-  Memory = "memory",
   ImageGen = "image-gen",
   Voice = "voice",
 
@@ -79,7 +78,6 @@ export const SETTINGS_GROUPS: Record<SettingsGroupKey, SettingsTabs[]> = {
     SettingsTabs.Providers,
     SettingsTabs.Assistant,
     SettingsTabs.Skills,
-    SettingsTabs.Memory,
     SettingsTabs.ImageGen,
     SettingsTabs.Voice,
   ],

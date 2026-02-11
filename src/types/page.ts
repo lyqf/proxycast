@@ -76,6 +76,7 @@ export type Page =
   | "tools"
   | "plugins"
   | "settings"
+  | "memory"
   | "terminal"
   | "sysinfo"
   | "files"
@@ -121,6 +122,8 @@ export interface AgentPageParams {
   theme?: string;
   /** 是否锁定主题（锁定后不在首屏显示主题切换） */
   lockTheme?: boolean;
+  /** 首页点击触发的新会话标记（时间戳） */
+  newChatAt?: number;
   /** 工作台视图模式（仅主题工作台使用） */
   workspaceViewMode?: WorkspaceViewMode;
 }

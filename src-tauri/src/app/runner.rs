@@ -1135,6 +1135,8 @@ pub fn run() {
             commands::workspace_cmd::workspace_set_default,
             commands::workspace_cmd::workspace_get_default,
             commands::workspace_cmd::workspace_get_by_path,
+            commands::workspace_cmd::workspace_get_projects_root,
+            commands::workspace_cmd::workspace_resolve_project_path,
             commands::workspace_cmd::get_or_create_default_project,
             commands::workspace_cmd::get_project_context,
             commands::workspace_cmd::build_project_system_prompt,
@@ -1228,6 +1230,8 @@ pub fn run() {
             commands::usage_stats_cmd::get_daily_usage_trends,
             // Memory Management commands
             commands::memory_management_cmd::get_conversation_memory_stats,
+            commands::memory_management_cmd::get_conversation_memory_overview,
+            commands::memory_management_cmd::request_conversation_memory_analysis,
             commands::memory_management_cmd::cleanup_conversation_memory,
             // Voice Test commands
             commands::voice_test_cmd::test_tts,

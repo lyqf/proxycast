@@ -109,10 +109,14 @@ export function useProjects(): UseProjectsReturn {
   /** 创建项目 */
   const create = useCallback(
     async (request: CreateProjectRequest): Promise<Project> => {
+      const rootPath = await invoke<string>("workspace_resolve_project_path", {
+        name: request.name,
+      });
+
       const project = await invoke<Project>("workspace_create", {
         request: {
           name: request.name,
-          rootPath: request.name, // 使用名称作为路径
+          rootPath,
           workspaceType: request.workspaceType,
         },
       });

@@ -52,6 +52,7 @@ export interface ConfirmResponse {
 interface UseAsterAgentChatOptions {
   systemPrompt?: string;
   onWriteFile?: (content: string, fileName: string) => void;
+  workspaceId: string;
 }
 
 // 音效相关（复用）
@@ -98,6 +99,54 @@ const playTypewriterSound = () => {
   }
 };
 
+// 持久化 helpers
+const loadPersisted = <T>(key: string, defaultValue: T): T => {
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  return defaultValue;
+};
+
+const savePersisted = (key: string, value: unknown) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const loadTransient = <T>(key: string, defaultValue: T): T => {
+  try {
+    const stored = sessionStorage.getItem(key);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (key.startsWith("aster_messages") && Array.isArray(parsed)) {
+        return parsed.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp),
+        })) as unknown as T;
+      }
+      return parsed;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  return defaultValue;
+};
+
+const saveTransient = (key: string, value: unknown) => {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.error(e);
+  }
+};
+
 /**
  * 将前端 Provider 类型映射到 Aster Provider 名称
  */
@@ -127,13 +176,65 @@ const mapProviderName = (providerType: string): string => {
   return mapping[providerType.toLowerCase()] || providerType;
 };
 
-export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
-  const { onWriteFile } = options;
+export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
+  const { onWriteFile, workspaceId } = options;
+
+  const getRequiredWorkspaceId = useCallback((): string => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) {
+      throw new Error("缺少项目工作区，请先选择项目后再使用 Agent");
+    }
+    return resolvedWorkspaceId;
+  }, [workspaceId]);
+
+  const getScopedKey = useCallback(
+    (key: string): string => {
+      const resolvedWorkspaceId = workspaceId?.trim();
+      return resolvedWorkspaceId
+        ? `${key}_${resolvedWorkspaceId}`
+        : `${key}_global`;
+    },
+    [workspaceId],
+  );
+
+  const getScopedSessionKey = useCallback(
+    () => getScopedKey("aster_curr_sessionId"),
+    [getScopedKey],
+  );
+  const getScopedMessagesKey = useCallback(
+    () => getScopedKey("aster_messages"),
+    [getScopedKey],
+  );
+  const getScopedPersistedSessionKey = useCallback(
+    () => getScopedKey("aster_last_sessionId"),
+    [getScopedKey],
+  );
 
   // 状态
   const [isInitialized, setIsInitialized] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    if (!workspaceId?.trim()) {
+      return null;
+    }
+
+    const scopedSessionId = loadTransient<string | null>(
+      `aster_curr_sessionId_${workspaceId.trim()}`,
+      null,
+    );
+    if (scopedSessionId) {
+      return scopedSessionId;
+    }
+
+    return loadPersisted<string | null>(
+      `aster_last_sessionId_${workspaceId.trim()}`,
+      null,
+    );
+  });
+  const [messages, setMessages] = useState<Message[]>(() =>
+    workspaceId?.trim()
+      ? loadTransient<Message[]>(`aster_messages_${workspaceId.trim()}`, [])
+      : [],
+  );
   const [topics, setTopics] = useState<Topic[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [pendingActions, setPendingActions] = useState<ActionRequired[]>([]);
@@ -149,6 +250,9 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
   // Refs
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const currentAssistantMsgIdRef = useRef<string | null>(null);
+  const restoredWorkspaceRef = useRef<string | null>(null);
+  const hydratedSessionRef = useRef<string | null>(null);
+  const skipAutoRestoreRef = useRef(false);
 
   // 持久化 provider/model
   useEffect(() => {
@@ -158,6 +262,69 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
   useEffect(() => {
     localStorage.setItem("agent_pref_model", model);
   }, [model]);
+
+  useEffect(() => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) {
+      return;
+    }
+
+    const scopedSessionKey = getScopedSessionKey();
+    const scopedPersistedSessionKey = getScopedPersistedSessionKey();
+
+    saveTransient(scopedSessionKey, sessionId);
+    savePersisted(scopedPersistedSessionKey, sessionId);
+
+    if (sessionId) {
+      savePersisted(
+        `agent_session_workspace_${sessionId}`,
+        resolvedWorkspaceId,
+      );
+    }
+  }, [
+    getScopedPersistedSessionKey,
+    getScopedSessionKey,
+    sessionId,
+    workspaceId,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      return;
+    }
+    saveTransient(getScopedMessagesKey(), messages);
+  }, [getScopedMessagesKey, messages, workspaceId]);
+
+  // workspace 变化时恢复对应会话状态
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      setSessionId(null);
+      setMessages([]);
+      setPendingActions([]);
+      restoredWorkspaceRef.current = null;
+      hydratedSessionRef.current = null;
+      skipAutoRestoreRef.current = false;
+      return;
+    }
+
+    const scopedSessionId =
+      loadTransient<string | null>(getScopedSessionKey(), null) ??
+      loadPersisted<string | null>(getScopedPersistedSessionKey(), null);
+
+    const scopedMessages = loadTransient<Message[]>(getScopedMessagesKey(), []);
+
+    setSessionId(scopedSessionId);
+    setMessages(scopedMessages);
+    setPendingActions([]);
+    restoredWorkspaceRef.current = null;
+    hydratedSessionRef.current = null;
+    skipAutoRestoreRef.current = false;
+  }, [
+    getScopedMessagesKey,
+    getScopedPersistedSessionKey,
+    getScopedSessionKey,
+    workspaceId,
+  ]);
 
   // 初始化 Aster Agent
   useEffect(() => {
@@ -184,6 +351,33 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
     init();
   }, []);
 
+  useEffect(() => {
+    if (!isInitialized) {
+      return;
+    }
+
+    if (!workspaceId?.trim()) {
+      setTopics([]);
+      return;
+    }
+
+    listAsterSessions()
+      .then((sessions) => {
+        const topicList: Topic[] = sessions.map((s: AsterSessionInfo) => ({
+          id: s.id,
+          title:
+            s.name ||
+            `话题 ${new Date(s.created_at * 1000).toLocaleDateString("zh-CN")}`,
+          createdAt: new Date(s.created_at * 1000),
+          messagesCount: s.messages_count ?? 0,
+        }));
+        setTopics(topicList);
+      })
+      .catch((error) => {
+        console.error("[AsterChat] 加载话题失败:", error);
+      });
+  }, [isInitialized, workspaceId]);
+
   // 加载话题列表
   const loadTopics = useCallback(async () => {
     try {
@@ -207,15 +401,17 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
     if (sessionId) return sessionId;
 
     try {
-      const newSessionId = await createAsterSession();
+      const resolvedWorkspaceId = getRequiredWorkspaceId();
+      const newSessionId = await createAsterSession(resolvedWorkspaceId);
       setSessionId(newSessionId);
+      skipAutoRestoreRef.current = false;
       return newSessionId;
     } catch (error) {
       console.error("[AsterChat] 创建会话失败:", error);
-      toast.error("创建会话失败");
+      toast.error(`创建会话失败: ${error}`);
       return null;
     }
-  }, [sessionId]);
+  }, [getRequiredWorkspaceId, sessionId]);
 
   // 辅助函数：追加文本到 contentParts
   const appendTextToParts = (
@@ -477,10 +673,13 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
           model_name: model,
         };
 
+        const resolvedWorkspaceId = getRequiredWorkspaceId();
+
         await sendAsterMessageStream(
           content,
           activeSessionId,
           eventName,
+          resolvedWorkspaceId,
           imagesToSend,
           providerConfig,
         );
@@ -492,7 +691,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
         if (unlisten) unlisten();
       }
     },
-    [ensureSession, onWriteFile, providerType, model],
+    [ensureSession, getRequiredWorkspaceId, onWriteFile, providerType, model],
   );
 
   // 停止发送
@@ -547,6 +746,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
   const clearMessages = useCallback(() => {
     setMessages([]);
     setSessionId(null);
+    setPendingActions([]);
+    restoredWorkspaceRef.current = null;
+    hydratedSessionRef.current = null;
+    skipAutoRestoreRef.current = true;
     toast.success("新话题已创建");
   }, []);
 
@@ -567,8 +770,9 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
   // 切换话题
   const switchTopic = useCallback(
     async (topicId: string) => {
-      if (topicId === sessionId) return;
+      if (topicId === sessionId && messages.length > 0) return;
 
+      skipAutoRestoreRef.current = false;
       try {
         const detail = await getAsterSession(topicId);
         const loadedMessages: Message[] = detail.messages.map((msg, index) => {
@@ -601,12 +805,90 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
       } catch (error) {
         console.error("[AsterChat] 切换话题失败:", error);
         setMessages([]);
-        setSessionId(topicId);
+        setSessionId(null);
+        saveTransient(getScopedSessionKey(), null);
+        savePersisted(getScopedPersistedSessionKey(), null);
         toast.error("加载对话历史失败");
       }
     },
-    [sessionId],
+    [
+      getScopedPersistedSessionKey,
+      getScopedSessionKey,
+      messages.length,
+      sessionId,
+    ],
   );
+
+  // 自动恢复当前 workspace 最近会话
+  useEffect(() => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) return;
+    if (!isInitialized) return;
+    if (skipAutoRestoreRef.current) return;
+    if (sessionId) return;
+    if (topics.length === 0) return;
+    if (restoredWorkspaceRef.current === resolvedWorkspaceId) return;
+
+    restoredWorkspaceRef.current = resolvedWorkspaceId;
+
+    const scopedCandidate =
+      loadTransient<string | null>(getScopedSessionKey(), null) ||
+      loadPersisted<string | null>(getScopedPersistedSessionKey(), null);
+    const mappedFallbackCandidate =
+      topics.find(
+        (topic) =>
+          loadPersisted<string | null>(
+            `agent_session_workspace_${topic.id}`,
+            null,
+          ) === resolvedWorkspaceId,
+      )?.id || null;
+
+    const targetSessionId = scopedCandidate || mappedFallbackCandidate;
+    if (!targetSessionId) {
+      return;
+    }
+
+    switchTopic(targetSessionId).catch((error) => {
+      console.warn("[AsterChat] 自动恢复会话失败:", error);
+      saveTransient(getScopedSessionKey(), null);
+      savePersisted(getScopedPersistedSessionKey(), null);
+    });
+  }, [
+    getScopedPersistedSessionKey,
+    getScopedSessionKey,
+    isInitialized,
+    sessionId,
+    switchTopic,
+    topics,
+    workspaceId,
+  ]);
+
+  useEffect(() => {
+    if (sessionId) {
+      skipAutoRestoreRef.current = false;
+    }
+  }, [sessionId]);
+
+  // 有 sessionId 但消息为空时，主动回填历史
+  useEffect(() => {
+    if (!sessionId) return;
+
+    if (messages.length > 0) {
+      hydratedSessionRef.current = sessionId;
+      return;
+    }
+
+    if (hydratedSessionRef.current === sessionId) {
+      return;
+    }
+
+    hydratedSessionRef.current = sessionId;
+
+    switchTopic(sessionId).catch((error) => {
+      console.warn("[AsterChat] 会话水合失败:", error);
+      hydratedSessionRef.current = null;
+    });
+  }, [messages.length, sessionId, switchTopic]);
 
   // 删除话题
   const deleteTopic = useCallback(
@@ -629,6 +911,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions = {}) {
 
   const handleStopProcess = useCallback(async () => {
     setSessionId(null);
+    setMessages([]);
+    setPendingActions([]);
+    restoredWorkspaceRef.current = null;
+    hydratedSessionRef.current = null;
   }, []);
 
   return {

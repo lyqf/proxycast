@@ -2,7 +2,7 @@
  * 设置分类 Hook
  *
  * 定义设置页面的分组和导航项
- * 参考 LobeHub 的 useCategory 设计
+ * 参考成熟产品的分组导航设计
  */
 
 import { useMemo } from "react";
@@ -16,7 +16,6 @@ import {
   Brain,
   Bot,
   Blocks,
-  BrainCircuit,
   Image,
   Mic,
   Server,
@@ -122,11 +121,6 @@ export function useSettingsCategory(): CategoryGroup[] {
           key: SettingsTabs.Skills,
           label: t("settings.tab.skills", "技能管理"),
           icon: Blocks,
-        },
-        {
-          key: SettingsTabs.Memory,
-          label: t("settings.tab.memory", "记忆设置"),
-          icon: BrainCircuit,
         },
         {
           key: SettingsTabs.ImageGen,

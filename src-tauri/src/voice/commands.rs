@@ -10,6 +10,17 @@ use super::config;
 use super::recording_service::{AudioDeviceInfo, RecordingServiceState};
 use tauri::State;
 
+fn normalize_shortcut(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 /// 获取所有可用的麦克风设备
 #[command]
 pub async fn list_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
@@ -29,16 +40,58 @@ pub async fn save_voice_input_config(
     voice_config: VoiceInputConfig,
 ) -> Result<(), String> {
     let old_config = config::load_voice_config()?;
+    let old_enabled = old_config.enabled;
+    let new_enabled = voice_config.enabled;
 
-    if old_config.shortcut != voice_config.shortcut {
-        super::shortcut::update(&app, &voice_config.shortcut)?;
-    }
+    if old_enabled && new_enabled {
+        if old_config.shortcut != voice_config.shortcut {
+            super::shortcut::update(&app, &voice_config.shortcut)?;
+        }
 
-    if old_config.enabled != voice_config.enabled {
-        if voice_config.enabled {
-            super::shortcut::register(&app, &voice_config.shortcut)?;
-        } else {
-            super::shortcut::unregister(&app)?;
+        let old_translate_shortcut = normalize_shortcut(old_config.translate_shortcut.clone());
+        let new_translate_shortcut = normalize_shortcut(voice_config.translate_shortcut.clone());
+        let instruction_changed =
+            old_config.translate_instruction_id != voice_config.translate_instruction_id;
+
+        if old_translate_shortcut != new_translate_shortcut || instruction_changed {
+            match (
+                old_translate_shortcut.as_deref(),
+                new_translate_shortcut.as_deref(),
+            ) {
+                (Some(_), Some(new_shortcut)) => {
+                    super::shortcut::update_translate(
+                        &app,
+                        new_shortcut,
+                        &voice_config.translate_instruction_id,
+                    )?;
+                }
+                (None, Some(new_shortcut)) => {
+                    super::shortcut::register_translate(
+                        &app,
+                        new_shortcut,
+                        &voice_config.translate_instruction_id,
+                    )?;
+                }
+                (Some(_), None) => {
+                    super::shortcut::unregister_translate(&app)?;
+                }
+                (None, None) => {}
+            }
+        }
+    } else if old_enabled && !new_enabled {
+        super::shortcut::unregister(&app)?;
+        let _ = super::shortcut::unregister_translate(&app);
+    } else if !old_enabled && new_enabled {
+        super::shortcut::register(&app, &voice_config.shortcut)?;
+
+        if let Some(translate_shortcut) =
+            normalize_shortcut(voice_config.translate_shortcut.clone())
+        {
+            super::shortcut::register_translate(
+                &app,
+                &translate_shortcut,
+                &voice_config.translate_instruction_id,
+            )?;
         }
     }
 

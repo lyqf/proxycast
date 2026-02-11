@@ -792,9 +792,38 @@ export interface MemoryStatsResponse {
   memory_count: number;
 }
 
+export interface MemoryCategoryStat {
+  category: "identity" | "context" | "preference" | "experience" | "activity";
+  count: number;
+}
+
+export interface MemoryEntryPreview {
+  id: string;
+  session_id: string;
+  file_type: string;
+  category: "identity" | "context" | "preference" | "experience" | "activity";
+  title: string;
+  summary: string;
+  updated_at: number;
+  tags: string[];
+}
+
+export interface MemoryOverviewResponse {
+  stats: MemoryStatsResponse;
+  categories: MemoryCategoryStat[];
+  entries: MemoryEntryPreview[];
+}
+
 export interface CleanupMemoryResult {
   cleaned_entries: number;
   freed_space: number;
+}
+
+export interface MemoryAnalysisResult {
+  analyzed_sessions: number;
+  analyzed_messages: number;
+  generated_entries: number;
+  deduplicated_entries: number;
 }
 
 /**
@@ -802,6 +831,28 @@ export interface CleanupMemoryResult {
  */
 export async function getMemoryStats(): Promise<MemoryStatsResponse> {
   return safeInvoke("get_conversation_memory_stats");
+}
+
+/**
+ * 获取记忆总览（含分类与条目）
+ */
+export async function getMemoryOverview(
+  limit?: number,
+): Promise<MemoryOverviewResponse> {
+  return safeInvoke("get_conversation_memory_overview", { limit });
+}
+
+/**
+ * 请求记忆分析（从历史会话提取记忆）
+ */
+export async function requestMemoryAnalysis(
+  fromTimestamp?: number,
+  toTimestamp?: number,
+): Promise<MemoryAnalysisResult> {
+  return safeInvoke("request_conversation_memory_analysis", {
+    fromTimestamp,
+    toTimestamp,
+  });
 }
 
 /**

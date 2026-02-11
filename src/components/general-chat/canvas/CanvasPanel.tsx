@@ -58,7 +58,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full bg-background border-l border-border">
+    <div className="flex flex-col h-full bg-background border-r border-border">
       {/* 工具栏 */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/50">
         <div className="flex items-center gap-2">

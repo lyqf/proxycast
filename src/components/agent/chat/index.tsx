@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import styled from "styled-components";
 import { useAgentChat } from "./hooks/useAgentChat";
 import { useSessionFiles } from "./hooks/useSessionFiles";
@@ -179,6 +180,7 @@ export function AgentChatPage({
   contentId,
   theme: initialTheme,
   lockTheme = false,
+  newChatAt,
   onRecommendationClick: _onRecommendationClick,
   onHasMessagesChange,
 }: {
@@ -187,6 +189,7 @@ export function AgentChatPage({
   contentId?: string;
   theme?: string;
   lockTheme?: boolean;
+  newChatAt?: number;
   onRecommendationClick?: (shortLabel: string, fullPrompt: string) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }) {
@@ -349,7 +352,6 @@ export function AgentChatPage({
 
   // 使用 Agent Chat Hook（传递系统提示词）
   const {
-    processStatus,
     providerType,
     setProviderType,
     model,
@@ -374,6 +376,7 @@ export function AgentChatPage({
       // 使用 ref 调用最新的 handleWriteFile
       handleWriteFileRef.current?.(content, fileName);
     },
+    workspaceId: projectId ?? "",
   });
 
   // 会话文件持久化 hook
@@ -422,7 +425,10 @@ export function AgentChatPage({
         getContent(contentId)
           .then((existingContent) => {
             if (existingContent) {
-              syncContent(contentId, content);
+              const existingBody = existingContent.body || "";
+              if (existingBody !== content) {
+                syncContent(contentId, content);
+              }
             } else {
               console.warn(
                 "[AgentChatPage] contentId 对应的内容不存在，跳过同步:",
@@ -453,6 +459,9 @@ export function AgentChatPage({
   // 追踪已恢复元数据和文件的会话 ID
   const restoredMetaSessionId = useRef<string | null>(null);
   const restoredFilesSessionId = useRef<string | null>(null);
+  const handledNewChatRequestRef = useRef<string | null>(null);
+  // 用于追踪是否已触发过 AI 引导
+  const hasTriggeredGuide = useRef(false);
 
   // 当 sessionMeta 加载完成时，恢复主题和创建模式
   useEffect(() => {
@@ -664,6 +673,12 @@ export function AgentChatPage({
     ) => {
       const sourceText = textOverride ?? input;
       if (!sourceText.trim() && (!images || images.length === 0)) return;
+
+      if (!projectId) {
+        toast.error("请先选择项目后再开始对话");
+        return;
+      }
+
       let text = sourceText;
 
       // 如果有引用的角色，注入角色信息
@@ -685,7 +700,7 @@ export function AgentChatPage({
       setMentionedCharacters([]); // 清空引用的角色
       await sendMessage(text, images || [], webSearch, thinking);
     },
-    [input, mentionedCharacters, sendMessage],
+    [input, mentionedCharacters, projectId, sendMessage],
   );
 
   const handleClearMessages = useCallback(() => {
@@ -702,6 +717,35 @@ export function AgentChatPage({
     setSelectedFileId(undefined);
     processedMessageIds.current.clear();
   }, [clearMessages]);
+
+  // 响应首页导航触发的新会话请求
+  useEffect(() => {
+    if (!newChatAt) {
+      return;
+    }
+
+    const requestKey = `${newChatAt}:${projectId ?? ""}`;
+    if (handledNewChatRequestRef.current === requestKey) {
+      return;
+    }
+    handledNewChatRequestRef.current = requestKey;
+
+    clearMessages({
+      showToast: false,
+    });
+    setInput("");
+    setLayoutMode("chat");
+    setShowSidebar(true);
+    setCanvasState(null);
+    setGeneralCanvasState(DEFAULT_CANVAS_STATE);
+    setTaskFiles([]);
+    setSelectedFileId(undefined);
+    setMentionedCharacters([]);
+    processedMessageIds.current.clear();
+    restoredMetaSessionId.current = null;
+    restoredFilesSessionId.current = null;
+    hasTriggeredGuide.current = false;
+  }, [newChatAt, projectId, clearMessages]);
 
   const handleBackHome = useCallback(() => {
     clearMessages({
@@ -1228,8 +1272,6 @@ export function AgentChatPage({
     [sendMessage],
   );
 
-  // 用于追踪是否已触发过 AI 引导
-  const hasTriggeredGuide = useRef(false);
   // 存储 triggerAIGuide 函数引用，避免在 useEffect 依赖中包含函数
   const triggerAIGuideRef = useRef(triggerAIGuide);
   triggerAIGuideRef.current = triggerAIGuide;
@@ -1349,7 +1391,7 @@ export function AgentChatPage({
             model={model}
             setModel={setModel}
             onManageProviders={handleManageProviders}
-            disabled={!processStatus.running && false}
+            disabled={!projectId}
             onClearMessages={handleClearMessages}
             onToggleCanvas={handleToggleCanvas}
             isCanvasOpen={layoutMode === "chat-canvas"}
@@ -1505,7 +1547,7 @@ export function AgentChatPage({
             }}
           >
             {syncStatus === "syncing" && "正在同步..."}
-            {syncStatus === "success" && "✓ 已保存"}
+            {syncStatus === "success" && "✓ 已同步"}
             {syncStatus === "error" && "⚠ 同步失败，将自动重试"}
           </div>
         )}

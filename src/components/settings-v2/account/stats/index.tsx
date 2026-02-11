@@ -1,7 +1,7 @@
 /**
  * 数据统计页面组件
  *
- * 参考 LobeHub 的 stats 实现
+ * 参考成熟产品的数据统计实现
  * 功能包括：使用统计数据展示、Token 消耗统计等
  */
 
@@ -16,104 +16,43 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-interface UsageStats {
-  /** 总对话数 */
-  total_conversations: number;
-  /** 总消息数 */
-  total_messages: number;
-  /** 总 Token 消耗 */
-  total_tokens: number;
-  /** 总使用时间（分钟） */
-  total_time_minutes: number;
-  /** 本月对话数 */
-  monthly_conversations: number;
-  /** 本月消息数 */
-  monthly_messages: number;
-  /** 本月 Token 消耗 */
-  monthly_tokens: number;
-  /** 今日对话数 */
-  today_conversations: number;
-  /** 今日消息数 */
-  today_messages: number;
-  /** 今日 Token 消耗 */
-  today_tokens: number;
-}
-
-interface ModelUsage {
-  model: string;
-  conversations: number;
-  tokens: number;
-  percentage: number;
-}
-
-interface DailyUsage {
-  date: string;
-  conversations: number;
-  tokens: number;
-}
+import {
+  getDailyUsageTrends,
+  getModelUsageRanking,
+  getUsageStats,
+  type DailyUsage,
+  type ModelUsage,
+  type UsageStatsResponse,
+} from "@/hooks/useTauri";
 
 export function StatsSettings() {
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<UsageStats | null>(null);
+  const [stats, setStats] = useState<UsageStatsResponse | null>(null);
   const [modelUsage, setModelUsage] = useState<ModelUsage[]>([]);
   const [dailyUsage, setDailyUsage] = useState<DailyUsage[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<"week" | "month" | "all">("month");
 
   const loadStats = useCallback(async () => {
     setLoading(true);
+    setError(null);
+
     try {
-      // TODO: 实现获取统计数据 API
-      // const data = await getUsageStats(timeRange);
-      // setStats(data.stats);
-      // setModelUsage(data.modelUsage);
-      // setDailyUsage(data.dailyUsage);
-
-      // 模拟数据
-      setStats({
-        total_conversations: 328,
-        total_messages: 4521,
-        total_tokens: 1258000,
-        total_time_minutes: 1840,
-        monthly_conversations: 67,
-        monthly_messages: 892,
-        monthly_tokens: 245000,
-        today_conversations: 5,
-        today_messages: 42,
-        today_tokens: 12000,
-      });
-
-      setModelUsage([
-        { model: "GPT-4", conversations: 145, tokens: 580000, percentage: 46 },
-        {
-          model: "GPT-3.5",
-          conversations: 128,
-          tokens: 420000,
-          percentage: 33,
-        },
-        {
-          model: "Claude 3",
-          conversations: 55,
-          tokens: 258000,
-          percentage: 21,
-        },
+      const [usageStats, ranking, trends] = await Promise.all([
+        getUsageStats(timeRange),
+        getModelUsageRanking(timeRange),
+        getDailyUsageTrends(timeRange),
       ]);
 
-      // 生成模拟的每日数据
-      const days = timeRange === "week" ? 7 : timeRange === "month" ? 30 : 90;
-      const mockDaily: DailyUsage[] = [];
-      for (let i = days - 1; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        mockDaily.push({
-          date: date.toISOString().split("T")[0],
-          conversations: Math.floor(Math.random() * 10) + 1,
-          tokens: Math.floor(Math.random() * 15000) + 2000,
-        });
-      }
-      setDailyUsage(mockDaily);
+      setStats(usageStats);
+      setModelUsage(ranking);
+      setDailyUsage(trends);
     } catch (e) {
       console.error("加载统计数据失败:", e);
+      setError(e instanceof Error ? e.message : "加载统计数据失败");
+      setStats(null);
+      setModelUsage([]);
+      setDailyUsage([]);
     } finally {
       setLoading(false);
     }
@@ -169,6 +108,11 @@ export function StatsSettings() {
     </div>
   );
 
+  const maxDailyTokens =
+    dailyUsage.length > 0
+      ? Math.max(...dailyUsage.map((day) => day.tokens))
+      : 0;
+
   return (
     <div className="space-y-4 max-w-4xl">
       {/* 时间范围选择 */}
@@ -221,6 +165,12 @@ export function StatsSettings() {
         </div>
       </div>
 
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -241,7 +191,6 @@ export function StatsSettings() {
                 icon={Coins}
                 label="Token"
                 value={formatNumber(stats.today_tokens)}
-                trend={12}
               />
               <StatCard
                 icon={Timer}
@@ -265,13 +214,11 @@ export function StatsSettings() {
                 label="对话"
                 value={stats.monthly_conversations.toString()}
                 subvalue={`${stats.monthly_messages} 条消息`}
-                trend={8}
               />
               <StatCard
                 icon={Coins}
                 label="Token"
                 value={formatNumber(stats.monthly_tokens)}
-                trend={15}
               />
               <StatCard
                 icon={Timer}
@@ -312,33 +259,39 @@ export function StatsSettings() {
           {/* 模型使用排行 */}
           <div className="rounded-lg border p-4">
             <h3 className="text-sm font-medium mb-4">模型使用排行</h3>
-            <div className="space-y-3">
-              {modelUsage.map((model, index) => (
-                <div key={model.model} className="space-y-1">
-                  <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">
-                        #{index + 1}
-                      </span>
-                      <span className="font-medium">{model.model}</span>
+            {modelUsage.length > 0 ? (
+              <div className="space-y-3">
+                {modelUsage.map((model, index) => (
+                  <div key={model.model} className="space-y-1">
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">
+                          #{index + 1}
+                        </span>
+                        <span className="font-medium">{model.model}</span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <span>{model.conversations} 次对话</span>
+                        <span>{formatNumber(model.tokens)} Token</span>
+                        <span className="text-primary font-medium">
+                          {model.percentage}%
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span>{model.conversations} 次对话</span>
-                      <span>{formatNumber(model.tokens)} Token</span>
-                      <span className="text-primary font-medium">
-                        {model.percentage}%
-                      </span>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all"
+                        style={{ width: `${Math.min(model.percentage, 100)}%` }}
+                      />
                     </div>
                   </div>
-                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary rounded-full transition-all"
-                      style={{ width: `${model.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                暂无模型使用数据
+              </div>
+            )}
           </div>
 
           {/* 每日使用趋势 */}
@@ -352,9 +305,8 @@ export function StatsSettings() {
             </div>
             <div className="h-40 flex items-end gap-1">
               {dailyUsage.map((day, _index) => {
-                const maxTokens = Math.max(...dailyUsage.map((d) => d.tokens));
                 const height =
-                  maxTokens > 0 ? (day.tokens / maxTokens) * 100 : 0;
+                  maxDailyTokens > 0 ? (day.tokens / maxDailyTokens) * 100 : 0;
                 return (
                   <div
                     key={day.date}
@@ -409,7 +361,8 @@ export function StatsSettings() {
                 const dayData = dailyUsage[index];
                 const getIntensity = (tokens: number) => {
                   if (!dayData) return "bg-muted";
-                  const max = Math.max(...dailyUsage.map((d) => d.tokens));
+                  if (maxDailyTokens <= 0) return "bg-primary/10";
+                  const max = maxDailyTokens;
                   const ratio = tokens / max;
                   if (ratio < 0.2) return "bg-primary/10";
                   if (ratio < 0.4) return "bg-primary/30";

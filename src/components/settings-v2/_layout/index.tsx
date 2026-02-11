@@ -2,7 +2,7 @@
  * 设置页面主布局组件
  *
  * 采用左侧边栏 + 右侧内容的布局
- * 参考 LobeHub 的设置布局设计
+ * 参考成熟产品的设置布局设计
  */
 
 import { useState, ReactNode, useEffect } from "react";
@@ -37,13 +37,12 @@ import { HotkeysSettings } from "../general/hotkeys";
 // 聊天外观设置
 import { ChatAppearanceSettings } from "../general/chat-appearance";
 // 记忆设置
-import { MemorySettings } from "../agent/memory";
 // 语音服务设置
 import { VoiceSettings } from "../agent/voice";
-// 图像生成设置
-import { ImageGenSettings } from "../agent/image-gen";
 // 助理服务设置
 import { AssistantSettings } from "../agent/assistant";
+// 图像生成设置
+import { ImageGenSettings } from "../agent/image-gen";
 // 数据统计
 import { StatsSettings } from "../account/stats";
 // 个人资料
@@ -203,14 +202,6 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
         <>
           <SettingHeader title="技能管理" />
           <ExtensionsSettings />
-        </>
-      );
-
-    case SettingsTabs.Memory:
-      return (
-        <>
-          <SettingHeader title="记忆设置" />
-          <MemorySettings />
         </>
       );
 

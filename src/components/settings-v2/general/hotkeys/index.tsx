@@ -1,17 +1,27 @@
 /**
  * 快捷键设置页面
  *
- * 显示和配置应用快捷键
- * 参考 LobeHub 的 Hotkey 设置设计
+ * 显示应用中已实现的快捷键
  */
 
-// import { useState } from 'react';
+import { useCallback, useEffect, useState } from "react";
 import styled from "styled-components";
+import { Loader2 } from "lucide-react";
+import { getExperimentalConfig } from "@/hooks/useTauri";
+import {
+  getVoiceInputConfig,
+  type VoiceInputConfig,
+} from "@/lib/api/asrProvider";
 
 const Container = styled.div`
   display: flex;
   flex-direction: column;
   gap: 24px;
+`;
+
+const HeaderHint = styled.div`
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
 `;
 
 const Section = styled.div`
@@ -56,9 +66,30 @@ const HotkeyDescription = styled.div`
   color: hsl(var(--muted-foreground));
 `;
 
+const HotkeyMeta = styled.div`
+  margin-top: 2px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+`;
+
 const HotkeyValue = styled.div`
   display: flex;
+  align-items: center;
   gap: 4px;
+`;
+
+const StatusBadge = styled.span<{ $enabled: boolean }>`
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid
+    ${({ $enabled }) =>
+      $enabled ? "hsl(var(--primary) / 0.3)" : "hsl(var(--border))"};
+  color: ${({ $enabled }) =>
+    $enabled ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))"};
+  background: ${({ $enabled }) =>
+    $enabled ? "hsl(var(--primary) / 0.08)" : "hsl(var(--muted) / 0.35)"};
 `;
 
 const KeyBadge = styled.span`
@@ -81,61 +112,105 @@ interface HotkeyConfig {
   label: string;
   description: string;
   keys: string[];
+  enabled: boolean;
+  source: string;
 }
 
-const desktopHotkeys: HotkeyConfig[] = [
-  {
-    id: "toggle-main-window",
-    label: "显示/隐藏主窗口",
-    description: "全局快捷键显示或隐藏主窗口",
-    keys: ["Control", "E"],
-  },
-  {
-    id: "open-settings",
-    label: "应用设置",
-    description: "打开应用设置页面",
-    keys: ["Command Or Control", ","],
-  },
-];
+function formatShortcutKeys(shortcut: string): string[] {
+  const map: Record<string, string> = {
+    CommandOrControl: "⌘/Ctrl",
+    Command: "⌘",
+    Control: "Ctrl",
+    Ctrl: "Ctrl",
+    Alt: "Alt",
+    Option: "⌥",
+    Shift: "⇧",
+    Super: "Super",
+  };
 
-const essentialHotkeys: HotkeyConfig[] = [
-  {
-    id: "command-panel",
-    label: "命令面板",
-    description: "打开全局命令面板快速访问功能",
-    keys: ["⌘", "K"],
-  },
-  {
-    id: "search",
-    label: "搜索",
-    description: "唤起当前页面主要搜索框",
-    keys: ["⌘", "J"],
-  },
-  {
-    id: "switch-assistant",
-    label: "快捷切换助理",
-    description: "通过按住 Ctrl 加数字 0-9 切换固定在侧边栏的助理",
-    keys: ["^", "1-9"],
-  },
-  {
-    id: "switch-default-chat",
-    label: "切换至默认会话",
-    description: "切换至会话标签并进入 Lobe AI",
-    keys: ["^", "·"],
-  },
-  {
-    id: "toggle-left-panel",
-    label: "显示/隐藏左侧面板",
-    description: "显示或隐藏左侧面板",
-    keys: ["⌘", "["],
-  },
-  {
-    id: "toggle-right-panel",
-    label: "显示/隐藏右侧面板",
-    description: "显示或隐藏右侧面板",
-    keys: ["⌘", "]"],
-  },
-];
+  return shortcut
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => map[part] ?? part);
+}
+
+interface HotkeyState {
+  globalHotkeys: HotkeyConfig[];
+  localHotkeys: HotkeyConfig[];
+}
+
+function buildHotkeys(
+  screenshotEnabled: boolean,
+  screenshotShortcut: string,
+  voiceConfig: VoiceInputConfig,
+): HotkeyState {
+  const globalHotkeys: HotkeyConfig[] = [
+    {
+      id: "screenshot-chat",
+      label: "截图对话",
+      description: "触发全局截图并打开截图对话窗口",
+      keys: formatShortcutKeys(screenshotShortcut),
+      enabled: screenshotEnabled,
+      source: "实验功能 → 截图对话",
+    },
+    {
+      id: "voice-input",
+      label: "语音输入",
+      description: "按下开始录音，松开后识别并输出",
+      keys: formatShortcutKeys(voiceConfig.shortcut),
+      enabled: voiceConfig.enabled,
+      source: "语音服务",
+    },
+    {
+      id: "voice-translate",
+      label: "语音翻译模式",
+      description: "独立快捷键触发语音识别并执行翻译指令",
+      keys: voiceConfig.translate_shortcut
+        ? formatShortcutKeys(voiceConfig.translate_shortcut)
+        : ["未设置"],
+      enabled: voiceConfig.enabled && !!voiceConfig.translate_shortcut,
+      source: `语音服务 → 指令 ${voiceConfig.translate_instruction_id}`,
+    },
+  ];
+
+  const localHotkeys: HotkeyConfig[] = [
+    {
+      id: "terminal-search",
+      label: "终端搜索",
+      description: "在终端页面打开搜索框",
+      keys: ["⌘/Ctrl", "F"],
+      enabled: true,
+      source: "终端页面",
+    },
+    {
+      id: "terminal-font-plus",
+      label: "终端字体放大",
+      description: "在终端页面增大字体",
+      keys: ["⌘/Ctrl", "+"],
+      enabled: true,
+      source: "终端页面",
+    },
+    {
+      id: "terminal-font-minus",
+      label: "终端字体缩小",
+      description: "在终端页面减小字体",
+      keys: ["⌘/Ctrl", "-"],
+      enabled: true,
+      source: "终端页面",
+    },
+    {
+      id: "terminal-font-reset",
+      label: "终端字体重置",
+      description: "在终端页面重置字体大小",
+      keys: ["⌘/Ctrl", "0"],
+      enabled: true,
+      source: "终端页面",
+    },
+  ];
+
+  return { globalHotkeys, localHotkeys };
+}
 
 function HotkeySection({
   title,
@@ -152,8 +227,12 @@ function HotkeySection({
           <HotkeyInfo>
             <HotkeyLabel>{hotkey.label}</HotkeyLabel>
             <HotkeyDescription>{hotkey.description}</HotkeyDescription>
+            <HotkeyMeta>{hotkey.source}</HotkeyMeta>
           </HotkeyInfo>
           <HotkeyValue>
+            <StatusBadge $enabled={hotkey.enabled}>
+              {hotkey.enabled ? "已启用" : "未启用"}
+            </StatusBadge>
             {hotkey.keys.map((key, index) => (
               <KeyBadge key={index}>{key}</KeyBadge>
             ))}
@@ -165,10 +244,77 @@ function HotkeySection({
 }
 
 export function HotkeysSettings() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [globalHotkeys, setGlobalHotkeys] = useState<HotkeyConfig[]>([]);
+  const [localHotkeys, setLocalHotkeys] = useState<HotkeyConfig[]>([]);
+
+  const loadHotkeys = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [experimentalConfig, voiceConfig] = await Promise.all([
+        getExperimentalConfig(),
+        getVoiceInputConfig(),
+      ]);
+
+      const built = buildHotkeys(
+        experimentalConfig.screenshot_chat.enabled,
+        experimentalConfig.screenshot_chat.shortcut,
+        voiceConfig,
+      );
+
+      setGlobalHotkeys(built.globalHotkeys);
+      setLocalHotkeys(built.localHotkeys);
+    } catch (loadError) {
+      console.error("加载快捷键信息失败:", loadError);
+      setError(loadError instanceof Error ? loadError.message : "加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHotkeys();
+  }, [loadHotkeys]);
+
   return (
     <Container>
-      <HotkeySection title="桌面端" hotkeys={desktopHotkeys} />
-      <HotkeySection title="基础" hotkeys={essentialHotkeys} />
+      <HeaderHint>
+        仅展示当前版本已实现的快捷键；全局快捷键会随配置实时更新。
+      </HeaderHint>
+
+      {loading ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+          }}
+        >
+          <Loader2 size={16} className="animate-spin" />
+          正在加载快捷键信息...
+        </div>
+      ) : error ? (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: "1px solid hsl(var(--destructive) / 0.4)",
+            color: "hsl(var(--destructive))",
+            fontSize: 13,
+          }}
+        >
+          加载快捷键失败：{error}
+        </div>
+      ) : (
+        <>
+          <HotkeySection title="全局快捷键" hotkeys={globalHotkeys} />
+          <HotkeySection title="页面内快捷键" hotkeys={localHotkeys} />
+        </>
+      )}
     </Container>
   );
 }

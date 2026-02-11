@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { safeListen } from "@/lib/dev-bridge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -47,6 +48,10 @@ const DEFAULT_CONFIG: TerminalAIConfig = {
   contextLines: 50,
   autoExecute: false, // 默认需要手动批准
 };
+
+interface WorkspaceSummary {
+  id: string;
+}
 
 /**
  * 加载持久化数据
@@ -101,6 +106,7 @@ export function useTerminalAI(
 
   // 会话 ID
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const workspaceIdRef = useRef<string | null>(null);
 
   // 终端控制状态
   const [terminalSessionId, setTerminalSessionId] = useState<string | null>(
@@ -152,6 +158,23 @@ export function useTerminalAI(
     initAgent();
   }, []);
 
+  const ensureWorkspaceId = useCallback(async (): Promise<string> => {
+    if (workspaceIdRef.current) {
+      return workspaceIdRef.current;
+    }
+
+    const workspace = await invoke<WorkspaceSummary | null>(
+      "workspace_get_default",
+    );
+    const resolvedWorkspaceId = workspace?.id?.trim();
+    if (!resolvedWorkspaceId) {
+      throw new Error("未找到默认工作区，请先创建或选择项目");
+    }
+
+    workspaceIdRef.current = resolvedWorkspaceId;
+    return resolvedWorkspaceId;
+  }, []);
+
   /**
    * 确保会话存在
    */
@@ -169,10 +192,13 @@ export function useTerminalAI(
 
 请用简洁清晰的语言回答，必要时提供代码示例。`;
 
+      const resolvedWorkspaceId = await ensureWorkspaceId();
       const response = await createAgentSession(
         providerId,
+        resolvedWorkspaceId,
         modelId,
         systemPrompt,
+        undefined,
       );
 
       setSessionId(response.session_id);
@@ -182,7 +208,7 @@ export function useTerminalAI(
       toast.error("创建 AI 会话失败");
       return null;
     }
-  }, [sessionId, providerId, modelId]);
+  }, [sessionId, providerId, modelId, ensureWorkspaceId]);
 
   /**
    * 获取终端上下文
@@ -421,9 +447,12 @@ export function useTerminalAI(
         // 如果已连接终端，启用 terminal_mode（使用 TerminalTool 替代 BashTool）
         const useTerminalMode = terminalSessionId !== null;
 
+        const resolvedWorkspaceId = await ensureWorkspaceId();
+
         await sendAgentMessageStream(
           messageContent,
           eventName,
+          resolvedWorkspaceId,
           activeSessionId,
           modelId,
           imagesToSend,
@@ -440,7 +469,14 @@ export function useTerminalAI(
         }
       }
     },
-    [ensureSession, getTerminalContext, modelId, providerId, terminalSessionId],
+    [
+      ensureSession,
+      ensureWorkspaceId,
+      getTerminalContext,
+      modelId,
+      providerId,
+      terminalSessionId,
+    ],
   );
 
   /**

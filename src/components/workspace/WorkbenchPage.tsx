@@ -18,7 +18,16 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -28,11 +37,14 @@ import {
   createContent,
   createProject,
   formatRelativeTime,
-  generateProjectName,
   getContentTypeLabel,
   getDefaultContentTypeForProject,
-  getDefaultProjectPath,
   getProjectTypeLabel,
+  getWorkspaceProjectsRoot,
+  getProjectByRootPath,
+  getCreateProjectErrorMessage,
+  extractErrorMessage,
+  resolveProjectRootPath,
   listContents,
   listProjects,
   updateContent,
@@ -65,7 +77,7 @@ export function WorkbenchPage({
   viewMode: initialViewMode,
 }: WorkbenchPageProps) {
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
-  const [showRightSidebar, setShowRightSidebar] = useState(true);
+  const [showRightSidebar, setShowRightSidebar] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(
     initialViewMode ?? (initialContentId ? "workspace" : "project-management"),
   );
@@ -84,6 +96,14 @@ export function WorkbenchPage({
 
   const [projectQuery, setProjectQuery] = useState("");
   const [contentQuery, setContentQuery] = useState("");
+
+  const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [workspaceProjectsRoot, setWorkspaceProjectsRoot] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [resolvedProjectPath, setResolvedProjectPath] = useState("");
+  const [pathChecking, setPathChecking] = useState(false);
+  const [pathConflictMessage, setPathConflictMessage] = useState("");
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -117,7 +137,6 @@ export function WorkbenchPage({
   const handleEnterWorkspace = useCallback((contentId: string) => {
     setSelectedContentId(contentId);
     setWorkspaceMode("workspace");
-    setShowRightSidebar(true);
   }, []);
 
   const handleOpenProjectDetail = useCallback(() => {
@@ -200,22 +219,44 @@ export function WorkbenchPage({
     [initialContentId],
   );
 
+  const handleOpenCreateProjectDialog = useCallback(() => {
+    setNewProjectName(`${getProjectTypeLabel(theme as ProjectType)}项目`);
+    setResolvedProjectPath("");
+    setPathConflictMessage("");
+    setPathChecking(false);
+    setCreateProjectDialogOpen(true);
+  }, [theme]);
+
   const handleCreateProject = useCallback(async () => {
+    const name = newProjectName.trim();
+
+    if (!name) {
+      toast.error("请输入项目名称");
+      return;
+    }
+
+    setCreatingProject(true);
     try {
-      const projectName = generateProjectName(theme as ProjectType);
-      const rootPath = getDefaultProjectPath();
-      await createProject({
-        name: projectName,
+      const rootPath = await resolveProjectRootPath(name);
+      const createdProject = await createProject({
+        name,
         rootPath,
         workspaceType: theme as ProjectType,
       });
+      setCreateProjectDialogOpen(false);
+      setSelectedProjectId(createdProject.id);
+      setProjectQuery("");
       toast.success("已创建新项目");
       await loadProjects();
     } catch (error) {
       console.error("创建项目失败:", error);
-      toast.error("创建项目失败");
+      const errorMessage = extractErrorMessage(error);
+      const friendlyMessage = getCreateProjectErrorMessage(errorMessage);
+      toast.error(`创建项目失败: ${friendlyMessage}`);
+    } finally {
+      setCreatingProject(false);
     }
-  }, [loadProjects, theme]);
+  }, [loadProjects, newProjectName, theme]);
 
   const handleCreateContent = useCallback(async () => {
     if (!selectedProjectId) {
@@ -270,7 +311,7 @@ export function WorkbenchPage({
     setSelectedContentId(initialContentId ?? null);
     setWorkspaceMode(nextMode);
     setShowLeftSidebar(true);
-    setShowRightSidebar(nextMode === "workspace");
+    setShowRightSidebar(false);
     setContents([]);
     void loadProjects();
   }, [
@@ -280,6 +321,109 @@ export function WorkbenchPage({
     loadProjects,
     theme,
   ]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadWorkspaceProjectsRoot = async () => {
+      try {
+        const root = await getWorkspaceProjectsRoot();
+        if (mounted) {
+          setWorkspaceProjectsRoot(root);
+        }
+      } catch (error) {
+        console.error("加载 workspace 目录失败:", error);
+      }
+    };
+
+    void loadWorkspaceProjectsRoot();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!createProjectDialogOpen) {
+      setResolvedProjectPath("");
+      setPathChecking(false);
+      setPathConflictMessage("");
+      return;
+    }
+
+    const projectName = newProjectName.trim();
+    if (!projectName) {
+      setResolvedProjectPath("");
+      setPathChecking(false);
+      setPathConflictMessage("");
+      return;
+    }
+
+    let mounted = true;
+
+    const resolvePath = async () => {
+      try {
+        const path = await resolveProjectRootPath(projectName);
+        if (mounted) {
+          setResolvedProjectPath(path);
+        }
+      } catch (error) {
+        console.error("解析项目目录失败:", error);
+        if (mounted) {
+          setResolvedProjectPath("");
+          setPathConflictMessage("");
+          setPathChecking(false);
+        }
+      }
+    };
+
+    void resolvePath();
+
+    return () => {
+      mounted = false;
+    };
+  }, [createProjectDialogOpen, newProjectName]);
+
+  useEffect(() => {
+    if (!createProjectDialogOpen || !resolvedProjectPath) {
+      setPathChecking(false);
+      setPathConflictMessage("");
+      return;
+    }
+
+    let mounted = true;
+    setPathChecking(true);
+
+    const checkPathConflict = async () => {
+      try {
+        const existingProject = await getProjectByRootPath(resolvedProjectPath);
+        if (!mounted) {
+          return;
+        }
+
+        if (existingProject) {
+          setPathConflictMessage(`路径已存在项目：${existingProject.name}`);
+        } else {
+          setPathConflictMessage("");
+        }
+      } catch (error) {
+        console.error("检查项目路径冲突失败:", error);
+        if (mounted) {
+          setPathConflictMessage("");
+        }
+      } finally {
+        if (mounted) {
+          setPathChecking(false);
+        }
+      }
+    };
+
+    void checkPathConflict();
+
+    return () => {
+      mounted = false;
+    };
+  }, [createProjectDialogOpen, resolvedProjectPath]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -321,35 +465,19 @@ export function WorkbenchPage({
         </Button>
 
         {workspaceMode === "workspace" && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setShowLeftSidebar((visible) => !visible)}
-              title={showLeftSidebar ? "隐藏左侧栏" : "显示左侧栏"}
-            >
-              {showLeftSidebar ? (
-                <PanelLeftClose className="h-4 w-4" />
-              ) : (
-                <PanelLeftOpen className="h-4 w-4" />
-              )}
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setShowRightSidebar((visible) => !visible)}
-              title={showRightSidebar ? "隐藏右侧栏" : "显示右侧栏"}
-            >
-              {showRightSidebar ? (
-                <PanelRightClose className="h-4 w-4" />
-              ) : (
-                <PanelRightOpen className="h-4 w-4" />
-              )}
-            </Button>
-          </>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setShowLeftSidebar((visible) => !visible)}
+            title={showLeftSidebar ? "隐藏左侧栏" : "显示左侧栏"}
+          >
+            {showLeftSidebar ? (
+              <PanelLeftClose className="h-4 w-4" />
+            ) : (
+              <PanelLeftOpen className="h-4 w-4" />
+            )}
+          </Button>
         )}
 
         {workspaceMode !== "project-management" && (
@@ -370,6 +498,22 @@ export function WorkbenchPage({
           <div className="text-xs text-muted-foreground truncate">
             {selectedProject.name}
           </div>
+        )}
+
+        {workspaceMode === "workspace" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 ml-auto"
+            onClick={() => setShowRightSidebar((visible) => !visible)}
+            title={showRightSidebar ? "隐藏右侧栏" : "显示右侧栏"}
+          >
+            {showRightSidebar ? (
+              <PanelRightClose className="h-4 w-4" />
+            ) : (
+              <PanelRightOpen className="h-4 w-4" />
+            )}
+          </Button>
         )}
       </header>
 
@@ -405,9 +549,7 @@ export function WorkbenchPage({
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
-                    onClick={() => {
-                      void handleCreateProject();
-                    }}
+                    onClick={handleOpenCreateProjectDialog}
                     title="新建项目"
                   >
                     <Plus className="h-4 w-4" />
@@ -546,9 +688,7 @@ export function WorkbenchPage({
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    void handleCreateProject();
-                  }}
+                  onClick={handleOpenCreateProjectDialog}
                 >
                   <FolderOpen className="h-4 w-4 mr-1" />
                   新建项目
@@ -585,7 +725,6 @@ export function WorkbenchPage({
                 onBack={handleBackToProjectManagement}
                 onNavigateToChat={() => {
                   setWorkspaceMode("workspace");
-                  setShowRightSidebar(true);
                 }}
               />
             )
@@ -596,9 +735,7 @@ export function WorkbenchPage({
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    void handleCreateProject();
-                  }}
+                  onClick={handleOpenCreateProjectDialog}
                 >
                   <FolderOpen className="h-4 w-4 mr-1" />
                   新建项目
@@ -618,6 +755,7 @@ export function WorkbenchPage({
           ) : (
             <div className="flex-1 min-h-0">
               <AgentChatPage
+                key={`${selectedProjectId || ""}:${selectedContentId || ""}:${theme || ""}:workspace`}
                 onNavigate={onNavigate}
                 projectId={selectedProjectId}
                 contentId={selectedContentId}
@@ -654,6 +792,97 @@ export function WorkbenchPage({
           </aside>
         )}
       </div>
+
+      <Dialog
+        open={createProjectDialogOpen}
+        onOpenChange={(open) => {
+          if (!creatingProject) {
+            setCreateProjectDialogOpen(open);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>新建项目</DialogTitle>
+            <DialogDescription>
+              请输入项目名称，项目将创建到固定 workspace 目录。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="workspace-project-name">项目名称</Label>
+              <Input
+                id="workspace-project-name"
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                placeholder="请输入项目名称"
+                autoFocus
+                disabled={creatingProject}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="workspace-project-type">项目类型</Label>
+              <Input
+                id="workspace-project-type"
+                value={getProjectTypeLabel(theme as ProjectType)}
+                disabled
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="workspace-project-path">workspace 目录</Label>
+              <Input
+                id="workspace-project-path"
+                value={workspaceProjectsRoot}
+                placeholder="加载中..."
+                readOnly
+              />
+              <p className="text-xs text-muted-foreground break-all">
+                将创建到：
+                {resolvedProjectPath
+                  ? resolvedProjectPath
+                  : newProjectName.trim()
+                    ? `${workspaceProjectsRoot || "..."}/${newProjectName.trim()}`
+                    : "请输入项目名称"}
+              </p>
+              {pathChecking && (
+                <p className="text-xs text-muted-foreground">正在检查路径...</p>
+              )}
+              {!pathChecking && pathConflictMessage && (
+                <p className="text-xs text-destructive">
+                  {pathConflictMessage}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateProjectDialogOpen(false)}
+              disabled={creatingProject}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                void handleCreateProject();
+              }}
+              disabled={
+                creatingProject ||
+                pathChecking ||
+                !!pathConflictMessage ||
+                !newProjectName.trim() ||
+                !workspaceProjectsRoot.trim()
+              }
+            >
+              {creatingProject ? "创建中..." : "创建项目"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

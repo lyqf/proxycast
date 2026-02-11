@@ -351,20 +351,35 @@ export interface SkillInfo {
   path?: string;
 }
 
+const requireWorkspaceId = (
+  workspaceId?: string,
+  fallbackWorkspaceId?: string,
+): string => {
+  const resolvedWorkspaceId = (workspaceId ?? fallbackWorkspaceId)?.trim();
+  if (!resolvedWorkspaceId) {
+    throw new Error("workspaceId 不能为空，请先选择项目工作区");
+  }
+  return resolvedWorkspaceId;
+};
+
 /**
  * 创建 Agent 会话
  */
 export async function createAgentSession(
   providerType: string,
+  workspaceId: string,
   model?: string,
   systemPrompt?: string,
   skills?: SkillInfo[],
 ): Promise<CreateSessionResponse> {
+  const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
+
   return await safeInvoke("agent_create_session", {
     providerType,
     model,
     systemPrompt,
     skills,
+    workspaceId: resolvedWorkspaceId,
   });
 }
 
@@ -401,7 +416,7 @@ export async function sendAgentMessage(
  *     // 处理文本增量
  *   }
  * });
- * await sendAgentMessageStream(message, eventName, sessionId, model, undefined, provider);
+ * await sendAgentMessageStream(message, eventName, workspaceId, sessionId, model, undefined, provider);
  * ```
  *
  * @deprecated 请使用 sendAsterMessageStream 代替
@@ -409,12 +424,16 @@ export async function sendAgentMessage(
 export async function sendAgentMessageStream(
   message: string,
   eventName: string,
+  workspaceId: string,
   sessionId?: string,
   model?: string,
   images?: ImageInput[],
   provider?: string,
   _terminalMode?: boolean,
+  projectId?: string,
 ): Promise<void> {
+  const resolvedWorkspaceId = requireWorkspaceId(workspaceId, projectId);
+
   // 使用 Aster Agent 实现
   return await safeInvoke("aster_agent_chat_stream", {
     request: {
@@ -428,6 +447,8 @@ export async function sendAgentMessageStream(
             model_name: model || "claude-sonnet-4-20250514",
           }
         : undefined,
+      project_id: projectId,
+      workspace_id: resolvedWorkspaceId,
     },
   });
 }
@@ -725,9 +746,12 @@ export async function sendAsterMessageStream(
   message: string,
   sessionId: string,
   eventName: string,
+  workspaceId: string,
   images?: ImageInput[],
   providerConfig?: AsterProviderConfig,
 ): Promise<void> {
+  const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
+
   return await safeInvoke("aster_agent_chat_stream", {
     request: {
       message,
@@ -735,6 +759,7 @@ export async function sendAsterMessageStream(
       event_name: eventName,
       images,
       provider_config: providerConfig,
+      workspace_id: resolvedWorkspaceId,
     },
   });
 }
@@ -750,10 +775,17 @@ export async function stopAsterSession(sessionId: string): Promise<boolean> {
  * 创建 Aster 会话
  */
 export async function createAsterSession(
+  workspaceId: string,
   workingDir?: string,
   name?: string,
 ): Promise<string> {
-  return await safeInvoke("aster_session_create", { workingDir, name });
+  const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
+
+  return await safeInvoke("aster_session_create", {
+    workingDir,
+    workspaceId: resolvedWorkspaceId,
+    name,
+  });
 }
 
 /**

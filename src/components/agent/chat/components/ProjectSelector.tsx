@@ -14,13 +14,15 @@ import { cn } from "@/lib/utils";
 import {
   Project,
   ProjectType,
-  listProjects,
   createProject,
-  generateProjectName,
-  getDefaultProjectPath,
+  getCreateProjectErrorMessage,
+  extractErrorMessage,
+  listProjects,
+  resolveProjectRootPath,
   TYPE_CONFIGS,
 } from "@/lib/api/project";
 import { toast } from "sonner";
+import { CreateProjectDialog } from "@/components/projects/CreateProjectDialog";
 
 interface ProjectSelectorProps {
   /** 当前激活的主题（用于过滤项目） */
@@ -39,7 +41,7 @@ export function ProjectSelector({
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // 加载项目列表
   useEffect(() => {
@@ -90,18 +92,22 @@ export function ProjectSelector({
     return result;
   }, [projects, activeTheme, searchQuery]);
 
-  // 快速创建项目
-  const handleQuickCreate = async () => {
-    setCreating(true);
+  const defaultProjectType = useMemo(() => {
+    const themeType = activeTheme as ProjectType;
+    if (Object.prototype.hasOwnProperty.call(TYPE_CONFIGS, themeType)) {
+      return themeType;
+    }
+    return "general" as ProjectType;
+  }, [activeTheme]);
+
+  const handleCreateProject = async (name: string, type: ProjectType) => {
     try {
-      const projectType = activeTheme as ProjectType;
-      const name = generateProjectName(projectType);
-      const rootPath = getDefaultProjectPath();
+      const projectPath = await resolveProjectRootPath(name);
 
       const newProject = await createProject({
         name,
-        rootPath,
-        workspaceType: projectType,
+        rootPath: projectPath,
+        workspaceType: type,
       });
 
       toast.success("项目创建成功");
@@ -109,9 +115,10 @@ export function ProjectSelector({
       onSelectProject(newProject.id);
     } catch (error) {
       console.error("创建项目失败:", error);
-      toast.error("创建项目失败");
-    } finally {
-      setCreating(false);
+      const errorMessage = extractErrorMessage(error);
+      const friendlyMessage = getCreateProjectErrorMessage(errorMessage);
+      toast.error(`创建项目失败: ${friendlyMessage}`);
+      throw error;
     }
   };
 
@@ -142,11 +149,7 @@ export function ProjectSelector({
             className="pl-9"
           />
         </div>
-        <Button
-          onClick={handleQuickCreate}
-          disabled={creating}
-          className="gap-2"
-        >
+        <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
           <Plus className="h-4 w-4" />
           新建项目
         </Button>
@@ -165,7 +168,7 @@ export function ProjectSelector({
               {searchQuery ? "没有找到匹配的项目" : "还没有项目"}
             </p>
             {!searchQuery && (
-              <Button onClick={handleQuickCreate} disabled={creating}>
+              <Button onClick={() => setCreateDialogOpen(true)}>
                 创建第一个项目
               </Button>
             )}
@@ -218,6 +221,14 @@ export function ProjectSelector({
           </div>
         )}
       </ScrollArea>
+
+      <CreateProjectDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onSubmit={handleCreateProject}
+        defaultType={defaultProjectType}
+        defaultName={`${TYPE_CONFIGS[defaultProjectType].label}项目`}
+      />
     </div>
   );
 }

@@ -116,7 +116,7 @@ const loadTransient = <T>(key: string, defaultValue: T): T => {
     const stored = sessionStorage.getItem(key);
     if (stored) {
       const parsed = JSON.parse(stored);
-      if (key === "agent_messages" && Array.isArray(parsed)) {
+      if (key.startsWith("agent_messages") && Array.isArray(parsed)) {
         return parsed.map((msg: any) => ({
           ...msg,
           timestamp: new Date(msg.timestamp),
@@ -155,10 +155,34 @@ interface UseAgentChatOptions {
   systemPrompt?: string;
   /** 文件写入回调 */
   onWriteFile?: (content: string, fileName: string) => void;
+  /** 绑定的工作区 ID（用于本地 sandbox） */
+  workspaceId: string;
 }
 
-export function useAgentChat(options: UseAgentChatOptions = {}) {
-  const { systemPrompt, onWriteFile } = options;
+export function useAgentChat(options: UseAgentChatOptions) {
+  const { systemPrompt, onWriteFile, workspaceId } = options;
+
+  const getRequiredWorkspaceId = (): string => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) {
+      throw new Error("缺少项目工作区，请先选择项目后再使用 Agent");
+    }
+    return resolvedWorkspaceId;
+  };
+
+  const getScopedKey = (key: string): string => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    return resolvedWorkspaceId
+      ? `${key}_${resolvedWorkspaceId}`
+      : `${key}_global`;
+  };
+
+  const getScopedSessionKey = () => getScopedKey("agent_curr_sessionId");
+  const getScopedMessagesKey = () => getScopedKey("agent_messages");
+  const getScopedRoundCountKey = () => getScopedKey("agent_curr_roundCount");
+  const getScopedPersistedSessionKey = () =>
+    getScopedKey("agent_last_sessionId");
+
   const [processStatus, setProcessStatus] = useState<AgentProcessStatus>({
     running: false,
   });
@@ -180,12 +204,44 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   );
 
   // Session State
-  const [sessionId, setSessionId] = useState<string | null>(() =>
-    loadTransient("agent_curr_sessionId", null),
-  );
-  const [messages, setMessages] = useState<Message[]>(() =>
-    loadTransient("agent_messages", []),
-  );
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    if (!workspaceId?.trim()) {
+      return null;
+    }
+
+    const scopedSessionId = loadTransient<string | null>(
+      getScopedSessionKey(),
+      null,
+    );
+    if (scopedSessionId) {
+      return scopedSessionId;
+    }
+
+    const persistedSessionId = loadPersisted<string | null>(
+      getScopedPersistedSessionKey(),
+      null,
+    );
+    if (persistedSessionId) {
+      return persistedSessionId;
+    }
+
+    // 兼容旧版本（未按 workspace 分片）
+    return loadTransient<string | null>("agent_curr_sessionId", null);
+  });
+
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (!workspaceId?.trim()) {
+      return [];
+    }
+
+    const scopedMessages = loadTransient<Message[]>(getScopedMessagesKey(), []);
+    if (scopedMessages.length > 0) {
+      return scopedMessages;
+    }
+
+    // 兼容旧版本（未按 workspace 分片）
+    return loadTransient<Message[]>("agent_messages", []);
+  });
 
   // 话题列表
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -199,13 +255,20 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
   // 当前会话的轮数计数器（用于判断何时生成标题）
   const [_roundCount, _setRoundCount] = useState(() =>
-    loadTransient("agent_curr_roundCount", 0),
+    workspaceId?.trim()
+      ? loadTransient<number>(getScopedRoundCountKey(), 0)
+      : 0,
   );
 
   // 用于保存当前流式请求的取消函数
   const unlistenRef = useRef<UnlistenFn | null>(null);
   // 用于保存当前正在处理的消息 ID
   const currentAssistantMsgIdRef = useRef<string | null>(null);
+  // 自动恢复/水合状态跟踪
+  const restoredWorkspaceRef = useRef<string | null>(null);
+  const hydratedSessionRef = useRef<string | null>(null);
+  const skipAutoRestoreRef = useRef(false);
+  const sessionResetVersionRef = useRef(0);
 
   // Artifact 解析器 - 用于流式解析 AI 响应中的 artifact
   const {
@@ -261,24 +324,72 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   }, [providerType, providerConfig]);
 
   useEffect(() => {
-    saveTransient("agent_curr_sessionId", sessionId);
-  }, [sessionId]);
-  useEffect(() => {
-    saveTransient("agent_messages", messages);
-  }, [messages]);
-
-  // 当 systemPrompt 变化时，需要创建新会话以应用新的系统提示词
-  // 这对于内容创作模式切换非常重要
-  useEffect(() => {
-    if (systemPrompt !== undefined && sessionId) {
-      console.log(
-        "[useAgentChat] systemPrompt 变化，重置 session 以应用新提示词",
-      );
-      setSessionId(null);
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) {
+      return;
     }
-    // 注意：只在 systemPrompt 变化时触发，不包含 sessionId
+
+    const scopedSessionKey = getScopedSessionKey();
+    const scopedPersistedSessionKey = getScopedPersistedSessionKey();
+
+    saveTransient(scopedSessionKey, sessionId);
+    savePersisted(scopedPersistedSessionKey, sessionId);
+
+    if (sessionId) {
+      savePersisted(
+        `agent_session_workspace_${sessionId}`,
+        resolvedWorkspaceId,
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [systemPrompt]);
+  }, [sessionId, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      return;
+    }
+    saveTransient(getScopedMessagesKey(), messages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      return;
+    }
+    saveTransient(getScopedRoundCountKey(), _roundCount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_roundCount, workspaceId]);
+
+  // workspace 变化时恢复对应会话状态
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      setSessionId(null);
+      setMessages([]);
+      _setRoundCount(0);
+      setA2uiFormDataMap({});
+      restoredWorkspaceRef.current = null;
+      hydratedSessionRef.current = null;
+      skipAutoRestoreRef.current = false;
+      return;
+    }
+
+    const scopedSessionId =
+      loadTransient<string | null>(getScopedSessionKey(), null) ??
+      loadPersisted<string | null>(getScopedPersistedSessionKey(), null);
+
+    const scopedMessages = loadTransient<Message[]>(getScopedMessagesKey(), []);
+    const scopedRoundCount = loadTransient<number>(getScopedRoundCountKey(), 0);
+
+    setSessionId(scopedSessionId);
+    setMessages(scopedMessages);
+    _setRoundCount(scopedRoundCount);
+    setA2uiFormDataMap({});
+
+    restoredWorkspaceRef.current = null;
+    hydratedSessionRef.current = null;
+    skipAutoRestoreRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
 
   // 加载话题列表
   const loadTopics = async () => {
@@ -348,6 +459,16 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     loadTopics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // workspace 变化时刷新话题
+  useEffect(() => {
+    if (!workspaceId?.trim()) {
+      setTopics([]);
+      return;
+    }
+    loadTopics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
 
   // 监听截图对话消息事件
   useEffect(() => {
@@ -422,14 +543,17 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
       // Create new session with CURRENT provider/model as baseline
       // 传递 systemPrompt 用于内容创作等场景
+      const resolvedWorkspaceId = getRequiredWorkspaceId();
       const response = await createAgentSession(
         providerType,
+        resolvedWorkspaceId,
         model || undefined,
         systemPrompt, // 传递系统提示词
         undefined, // details.length > 0 ? details : undefined
       );
 
       setSessionId(response.session_id);
+      skipAutoRestoreRef.current = false;
       return response.session_id;
     } catch (error) {
       console.error("[AgentChat] Auto-creation failed:", error);
@@ -948,9 +1072,11 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
         hasSystemPrompt: !!systemPrompt,
       });
 
+      const resolvedWorkspaceId = getRequiredWorkspaceId();
       await sendAgentMessageStream(
         messageToSend,
         eventName,
+        resolvedWorkspaceId,
         activeSessionId, // 传递 sessionId 以保持上下文
         model || undefined,
         imagesToSend,
@@ -992,9 +1118,27 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     } = {},
   ) => {
     const { showToast = true, toastMessage = "新话题已创建" } = options;
+    const resolvedWorkspaceId = workspaceId?.trim();
+
+    sessionResetVersionRef.current += 1;
 
     setMessages([]);
     setSessionId(null);
+    _setRoundCount(0);
+    setA2uiFormDataMap({});
+    restoredWorkspaceRef.current = resolvedWorkspaceId || null;
+    hydratedSessionRef.current = null;
+    skipAutoRestoreRef.current = true;
+
+    if (resolvedWorkspaceId) {
+      saveTransient(`agent_curr_sessionId_${resolvedWorkspaceId}`, null);
+      savePersisted(`agent_last_sessionId_${resolvedWorkspaceId}`, null);
+      saveTransient(`agent_messages_${resolvedWorkspaceId}`, []);
+      saveTransient(`agent_curr_roundCount_${resolvedWorkspaceId}`, 0);
+    }
+
+    // 清理旧版本兼容键，避免被误用为恢复候选
+    saveTransient("agent_curr_sessionId", null);
 
     if (showToast) {
       toast.success(toastMessage);
@@ -1003,8 +1147,10 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
   // 切换话题
   const switchTopic = async (topicId: string) => {
-    if (topicId === sessionId) return;
+    if (topicId === sessionId && messages.length > 0) return;
 
+    const restoreRequestVersion = sessionResetVersionRef.current;
+    skipAutoRestoreRef.current = false;
     console.log("[useAgentChat] 切换话题:", topicId);
 
     try {
@@ -1067,18 +1213,115 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
         };
       });
 
+      if (restoreRequestVersion !== sessionResetVersionRef.current) {
+        console.log("[useAgentChat] 忽略过期会话切换:", topicId);
+        return;
+      }
+
       console.log("[useAgentChat] 转换后消息数量:", loadedMessages.length);
       setMessages(loadedMessages);
       setSessionId(topicId);
       toast.info("已切换话题");
     } catch (error) {
+      if (restoreRequestVersion !== sessionResetVersionRef.current) {
+        console.log("[useAgentChat] 忽略过期会话切换错误:", topicId);
+        return;
+      }
+
       console.error("[useAgentChat] 加载消息历史失败:", error);
-      // 如果加载失败，仍然切换话题但清空消息
+      // 加载失败时回退到新会话态，避免卡在无效会话
       setMessages([]);
-      setSessionId(topicId);
+      setSessionId(null);
+      saveTransient(getScopedSessionKey(), null);
+      savePersisted(getScopedPersistedSessionKey(), null);
       toast.error("加载对话历史失败");
     }
   };
+
+  // 自动恢复当前 workspace 最近会话
+  useEffect(() => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) return;
+    if (skipAutoRestoreRef.current) return;
+    if (sessionId) return;
+    if (topics.length === 0) return;
+    if (restoredWorkspaceRef.current === resolvedWorkspaceId) return;
+
+    restoredWorkspaceRef.current = resolvedWorkspaceId;
+
+    const scopedCandidate =
+      loadTransient<string | null>(getScopedSessionKey(), null) ||
+      loadPersisted<string | null>(getScopedPersistedSessionKey(), null);
+
+    const legacyCandidateRaw = loadTransient<string | null>(
+      "agent_curr_sessionId",
+      null,
+    );
+    const legacyCandidateWorkspace = legacyCandidateRaw
+      ? loadPersisted<string | null>(
+          `agent_session_workspace_${legacyCandidateRaw}`,
+          null,
+        )
+      : null;
+    const legacyCandidate =
+      legacyCandidateRaw &&
+      (!legacyCandidateWorkspace ||
+        legacyCandidateWorkspace === resolvedWorkspaceId)
+        ? legacyCandidateRaw
+        : null;
+
+    const mappedFallbackCandidate =
+      topics.find(
+        (topic) =>
+          loadPersisted<string | null>(
+            `agent_session_workspace_${topic.id}`,
+            null,
+          ) === resolvedWorkspaceId,
+      )?.id || null;
+    const fallbackCandidate =
+      mappedFallbackCandidate || (topics.length === 1 ? topics[0]?.id : null);
+    const targetSessionId =
+      scopedCandidate || legacyCandidate || fallbackCandidate;
+
+    if (!targetSessionId) {
+      return;
+    }
+
+    switchTopic(targetSessionId).catch((error) => {
+      console.warn("[useAgentChat] 自动恢复会话失败:", error);
+      saveTransient(getScopedSessionKey(), null);
+      savePersisted(getScopedPersistedSessionKey(), null);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, sessionId, topics]);
+
+  useEffect(() => {
+    if (sessionId) {
+      skipAutoRestoreRef.current = false;
+    }
+  }, [sessionId]);
+
+  // 如果有 sessionId 但消息为空，主动回填历史消息
+  useEffect(() => {
+    if (!sessionId) return;
+
+    if (messages.length > 0) {
+      hydratedSessionRef.current = sessionId;
+      return;
+    }
+
+    if (hydratedSessionRef.current === sessionId) {
+      return;
+    }
+
+    hydratedSessionRef.current = sessionId;
+
+    switchTopic(sessionId).catch((error) => {
+      console.warn("[useAgentChat] 会话水合失败:", error);
+      hydratedSessionRef.current = null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, messages.length]);
 
   // 删除话题
   const deleteTopic = async (topicId: string) => {
@@ -1495,9 +1738,11 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
       // 发送空消息，让 AI 根据系统提示词开始引导
       console.log("[AgentChat] triggerAIGuide 发送空消息触发引导");
+      const resolvedWorkspaceId = getRequiredWorkspaceId();
       await sendAgentMessageStream(
         "", // 空消息，让 AI 根据系统提示词开始引导
         eventName,
+        resolvedWorkspaceId,
         activeSessionId,
         model || undefined,
         undefined,

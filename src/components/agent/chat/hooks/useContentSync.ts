@@ -38,9 +38,21 @@ export function useContentSync(
   const lastSyncDataRef = useRef<{ contentId: string; body: string } | null>(
     null,
   );
+  const lastSuccessfulSyncRef = useRef<{
+    contentId: string;
+    body: string;
+  } | null>(null);
 
   const syncContent = useCallback(
     (contentId: string, body: string) => {
+      // 与最近一次成功同步内容一致时，跳过重复同步
+      if (
+        lastSuccessfulSyncRef.current?.contentId === contentId &&
+        lastSuccessfulSyncRef.current.body === body
+      ) {
+        return;
+      }
+
       // 保存最后的同步数据（用于重试）
       lastSyncDataRef.current = { contentId, body };
 
@@ -58,6 +70,7 @@ export function useContentSync(
 
         try {
           await updateContent(contentId, { body });
+          lastSuccessfulSyncRef.current = { contentId, body };
           setSyncStatus("success");
 
           // 3 秒后重置状态

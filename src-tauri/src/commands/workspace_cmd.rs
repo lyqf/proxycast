@@ -23,6 +23,36 @@ use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
 
+/// 获取统一的项目根目录（~/.proxycast/projects）
+fn get_workspace_projects_root_dir() -> Result<PathBuf, String> {
+    let home_dir = dirs::home_dir().ok_or_else(|| "无法获取主目录".to_string())?;
+    let root_dir = home_dir.join(".proxycast").join("projects");
+
+    std::fs::create_dir_all(&root_dir).map_err(|e| format!("创建 workspace 目录失败: {e}"))?;
+
+    Ok(root_dir)
+}
+
+/// 规范化项目目录名，避免非法路径字符
+fn sanitize_project_dir_name(name: &str) -> String {
+    let sanitized: String = name
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ if ch.is_control() => '_',
+            _ => ch,
+        })
+        .collect();
+
+    let trimmed = sanitized.trim().trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "未命名项目".to_string()
+    } else {
+        trimmed
+    }
+}
+
 /// Workspace 管理器状态
 #[allow(dead_code)]
 pub struct WorkspaceManagerState(pub Arc<RwLock<Option<WorkspaceManager>>>);
@@ -211,6 +241,22 @@ pub async fn workspace_get_by_path(
     Ok(workspace.map(|ws| ws.into()))
 }
 
+/// 获取统一 workspace 项目根目录
+#[tauri::command]
+pub async fn workspace_get_projects_root() -> Result<String, String> {
+    let root_dir = get_workspace_projects_root_dir()?;
+    Ok(root_dir.to_string_lossy().to_string())
+}
+
+/// 根据项目名称解析最终项目目录（固定在 workspace 根目录下）
+#[tauri::command]
+pub async fn workspace_resolve_project_path(name: String) -> Result<String, String> {
+    let root_dir = get_workspace_projects_root_dir()?;
+    let dir_name = sanitize_project_dir_name(&name);
+    let project_path = root_dir.join(dir_name);
+    Ok(project_path.to_string_lossy().to_string())
+}
+
 // ==================== 项目上下文相关命令 ====================
 
 /// 获取或创建默认项目
@@ -233,9 +279,10 @@ pub async fn get_or_create_default_project(
     }
 
     // 不存在则创建默认项目
+    let default_project_path = get_workspace_projects_root_dir()?.join("default");
     let workspace = manager.create_with_type(
         "默认项目".to_string(),
-        PathBuf::from("default"),
+        default_project_path,
         WorkspaceType::Persistent,
     )?;
 

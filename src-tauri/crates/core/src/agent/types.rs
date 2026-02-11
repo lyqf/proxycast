@@ -162,6 +162,8 @@ pub struct AgentSession {
     pub system_prompt: Option<String>,
     /// 会话标题（可选，用于 UI 显示）
     pub title: Option<String>,
+    /// 会话工作目录（对应 Workspace.root_path）
+    pub working_dir: Option<String>,
     /// 创建时间
     pub created_at: String,
     /// 最后活动时间

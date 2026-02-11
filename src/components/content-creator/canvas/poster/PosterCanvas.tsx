@@ -32,6 +32,7 @@ const Container = styled.div`
   flex-direction: column;
   height: 100%;
   background: hsl(var(--muted));
+  border-right: 1px solid hsl(var(--border));
 `;
 
 const MainArea = styled.div`

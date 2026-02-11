@@ -452,13 +452,17 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             system_prompt TEXT,
             title TEXT,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            working_dir TEXT
         )",
         [],
     )?;
 
     // Migration: 添加 title 列（如果不存在）
     let _ = conn.execute("ALTER TABLE agent_sessions ADD COLUMN title TEXT", []);
+
+    // Migration: 添加 working_dir 列（如果不存在）
+    let _ = conn.execute("ALTER TABLE agent_sessions ADD COLUMN working_dir TEXT", []);
 
     // Agent 消息表
     // 存储每个会话的消息历史

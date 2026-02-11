@@ -7,6 +7,7 @@ use chrono::Utc;
 use proxycast_core::agent::types::{AgentMessage, AgentSession, ContentPart, MessageContent};
 use proxycast_core::database::dao::agent::AgentDao;
 use proxycast_core::database::DbConnection;
+use proxycast_core::workspace::WorkspaceManager;
 use uuid::Uuid;
 
 use crate::event_converter::{TauriMessage, TauriMessageContent};
@@ -31,12 +32,48 @@ pub struct SessionDetail {
     pub messages: Vec<TauriMessage>,
 }
 
+/// 解析会话 working_dir（优先入参，其次 workspace_id）
+fn resolve_session_working_dir(
+    db: &DbConnection,
+    working_dir: Option<String>,
+    workspace_id: String,
+) -> Result<Option<String>, String> {
+    if let Some(path) = working_dir {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    let workspace_id = workspace_id.trim().to_string();
+    if workspace_id.is_empty() {
+        return Err("workspace_id 必填，请先选择项目工作区".to_string());
+    }
+
+    let manager = WorkspaceManager::new(db.clone());
+    if let Some(workspace) = manager.get(&workspace_id)? {
+        return Ok(Some(workspace.root_path.to_string_lossy().to_string()));
+    }
+
+    Err(format!("Workspace 不存在: {}", workspace_id))
+}
+
 /// 创建新会话
-pub fn create_session_sync(db: &DbConnection, name: Option<String>) -> Result<String, String> {
+pub fn create_session_sync(
+    db: &DbConnection,
+    name: Option<String>,
+    working_dir: Option<String>,
+    workspace_id: String,
+) -> Result<String, String> {
     let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
     let session_name = name.unwrap_or_else(|| "新对话".to_string());
     let session_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+    drop(conn);
+
+    let resolved_working_dir = resolve_session_working_dir(db, working_dir, workspace_id)?;
+
+    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
     let session = AgentSession {
         id: session_id.clone(),
@@ -44,6 +81,7 @@ pub fn create_session_sync(db: &DbConnection, name: Option<String>) -> Result<St
         messages: Vec::new(),
         system_prompt: None,
         title: Some(session_name),
+        working_dir: resolved_working_dir,
         created_at: now.clone(),
         updated_at: now,
     };

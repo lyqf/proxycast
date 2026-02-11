@@ -2,7 +2,7 @@
  * 设置侧边栏组件
  *
  * 显示分组的设置导航菜单
- * 参考 LobeHub 的 SettingsSidebar 设计
+ * 参考成熟产品的设置侧边栏设计
  */
 
 import styled from "styled-components";

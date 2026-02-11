@@ -5,7 +5,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import {
+  getWorkspaceProjectsRoot,
+  resolveProjectRootPath,
+  getProjectByRootPath,
   isUserProjectType,
   getProjectTypeLabel,
   getProjectTypeIcon,
@@ -14,6 +18,7 @@ import {
   getDefaultContentTypeForProject,
   getCanvasTypeForProjectType,
   getCreateProjectErrorMessage,
+  extractErrorMessage,
   normalizeProject,
   formatWordCount,
   formatRelativeTime,
@@ -24,11 +29,87 @@ import {
   type ContentStatus,
 } from "./project";
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
 // ============================================================================
 // 辅助函数测试
 // ============================================================================
 
 describe("项目管理 API", () => {
+  describe("workspace 路径 API", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("应该调用命令获取 workspace 根目录", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(
+        "/Users/test/.proxycast/projects",
+      );
+
+      const root = await getWorkspaceProjectsRoot();
+
+      expect(root).toBe("/Users/test/.proxycast/projects");
+      expect(invoke).toHaveBeenCalledWith("workspace_get_projects_root");
+    });
+
+    it("应该调用命令解析项目目录", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(
+        "/Users/test/.proxycast/projects/MyProject",
+      );
+
+      const path = await resolveProjectRootPath("MyProject");
+
+      expect(path).toBe("/Users/test/.proxycast/projects/MyProject");
+      expect(invoke).toHaveBeenCalledWith("workspace_resolve_project_path", {
+        name: "MyProject",
+      });
+    });
+
+    it("应该将空名称传给后端统一处理", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(
+        "/Users/test/.proxycast/projects/未命名项目",
+      );
+
+      const path = await resolveProjectRootPath("   ");
+
+      expect(path).toBe("/Users/test/.proxycast/projects/未命名项目");
+      expect(invoke).toHaveBeenCalledWith("workspace_resolve_project_path", {
+        name: "   ",
+      });
+    });
+
+    it("应该调用命令按路径获取项目", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce({
+        id: "p1",
+        name: "测试项目",
+        workspace_type: "general",
+        root_path: "/Users/test/.proxycast/projects/demo",
+      });
+
+      const project = await getProjectByRootPath(
+        "/Users/test/.proxycast/projects/demo",
+      );
+
+      expect(project?.id).toBe("p1");
+      expect(project?.rootPath).toBe("/Users/test/.proxycast/projects/demo");
+      expect(invoke).toHaveBeenCalledWith("workspace_get_by_path", {
+        rootPath: "/Users/test/.proxycast/projects/demo",
+      });
+    });
+
+    it("按路径查询不存在项目时应该返回 null", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(null);
+
+      const project = await getProjectByRootPath(
+        "/Users/test/.proxycast/projects/missing",
+      );
+
+      expect(project).toBeNull();
+    });
+  });
+
   describe("isUserProjectType", () => {
     it("应该正确识别用户级项目类型", () => {
       expect(isUserProjectType("general")).toBe(true);
@@ -151,7 +232,7 @@ describe("项目管理 API", () => {
 
     it("应该透传路径已存在错误", () => {
       expect(getCreateProjectErrorMessage("路径已存在: /tmp/project")).toBe(
-        "路径已存在: /tmp/project",
+        "项目目录已存在，请更换项目名称或清理同名目录",
       );
     });
 
@@ -174,6 +255,24 @@ describe("项目管理 API", () => {
       expect(getCreateProjectErrorMessage("[object Object]")).toBe(
         "创建项目失败，请查看日志",
       );
+    });
+  });
+
+  describe("extractErrorMessage", () => {
+    it("应该提取 Error 实例 message", () => {
+      expect(extractErrorMessage(new Error("abc"))).toBe("abc");
+    });
+
+    it("应该处理字符串错误", () => {
+      expect(extractErrorMessage("hello")).toBe("hello");
+    });
+
+    it("应该处理对象 message 字段", () => {
+      expect(extractErrorMessage({ message: "bad" })).toBe("bad");
+    });
+
+    it("应该兜底处理未知类型", () => {
+      expect(extractErrorMessage(123)).toBe("123");
     });
   });
 

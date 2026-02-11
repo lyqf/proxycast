@@ -6,6 +6,7 @@
 use crate::agent::{AgentMessage, AgentSession, AsterAgentState};
 use crate::database::dao::agent::AgentDao;
 use crate::database::DbConnection;
+use crate::workspace::WorkspaceManager;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -133,6 +134,7 @@ pub async fn agent_create_session(
     model: Option<String>,
     system_prompt: Option<String>,
     skills: Option<Vec<SkillInfo>>,
+    workspace_id: String,
 ) -> Result<CreateSessionResponse, String> {
     tracing::info!(
         "[Agent] 创建会话: provider_type={}, model={:?}, skills_count={:?}",
@@ -140,6 +142,18 @@ pub async fn agent_create_session(
         model,
         skills.as_ref().map(|s| s.len())
     );
+
+    let workspace_id = workspace_id.trim().to_string();
+    if workspace_id.is_empty() {
+        return Err("workspace_id 必填，请先选择项目工作区".to_string());
+    }
+
+    let workspace_manager = WorkspaceManager::new(db.inner().clone());
+    let workspace = workspace_manager
+        .get(&workspace_id)
+        .map_err(|e| format!("读取 workspace 失败: {e}"))?
+        .ok_or_else(|| format!("Workspace 不存在: {workspace_id}"))?;
+    let workspace_root = workspace.root_path.to_string_lossy().to_string();
 
     // 初始化 Agent（使用带数据库的版本）
     agent_state.init_agent_with_db(&db).await?;
@@ -166,6 +180,7 @@ pub async fn agent_create_session(
         messages: Vec::new(),
         system_prompt: final_system_prompt,
         title: None, // 初始会话没有标题，后续会自动生成
+        working_dir: Some(workspace_root),
         created_at: now.clone(),
         updated_at: now,
     };

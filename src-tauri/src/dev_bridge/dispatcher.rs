@@ -255,6 +255,7 @@ pub async fn handle_command(
                     messages: Vec::new(),
                     system_prompt,
                     title: None, // 初始会话没有标题，后续会自动生成
+                    working_dir: None,
                     created_at: now.clone(),
                     updated_at: now,
                 };

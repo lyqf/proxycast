@@ -1,7 +1,7 @@
 /**
  * 全局应用侧边栏
  *
- * 参考 LobeHub 的信息架构：用户区、搜索、主导航、助手分组、底部快捷入口
+ * 参考成熟产品的信息架构：用户区、搜索、主导航、助手分组、底部快捷入口
  */
 
 import { useState, useEffect, useMemo } from "react";
@@ -31,13 +31,13 @@ import {
 import * as LucideIcons from "lucide-react";
 import { getPluginsForSurface, PluginUIInfo } from "@/lib/api/pluginUI";
 import {
+  AgentPageParams,
   getThemeWorkspacePage,
   LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY,
   Page,
   PageParams,
   ThemeWorkspacePage,
 } from "@/types/page";
-import { SettingsTabs } from "@/types/settings";
 import { getConfig } from "@/hooks/useTauri";
 
 interface AppSidebarProps {
@@ -347,9 +347,8 @@ const FOOTER_MENU_ITEMS: SidebarNavItem[] = [
     id: "memory",
     label: "记忆",
     icon: BrainCircuit,
-    page: "settings",
-    params: { tab: SettingsTabs.Memory },
-    isActive: (currentPage) => currentPage === "settings",
+    page: "memory",
+    isActive: (currentPage) => currentPage === "memory",
   },
 ];
 
@@ -520,7 +519,16 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
       setActiveThemeKey(item.page);
       localStorage.setItem(LAST_THEME_WORKSPACE_PAGE_STORAGE_KEY, item.page);
     }
-    onNavigate(item.page, item.params);
+
+    const params: PageParams | undefined =
+      item.id === "home-general"
+        ? ({
+            ...(item.params as AgentPageParams | undefined),
+            newChatAt: Date.now(),
+          } as AgentPageParams)
+        : item.params;
+
+    onNavigate(item.page, params);
   };
 
   return (
@@ -531,6 +539,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
             onNavigate("agent", {
               theme: "general",
               lockTheme: false,
+              newChatAt: Date.now(),
             })
           }
         >
@@ -546,6 +555,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
             onNavigate("agent", {
               theme: "general",
               lockTheme: false,
+              newChatAt: Date.now(),
             })
           }
         >

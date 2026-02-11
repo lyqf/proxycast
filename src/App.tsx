@@ -15,6 +15,7 @@ import { SplashScreen } from "./components/SplashScreen";
 import { AppSidebar } from "./components/AppSidebar";
 import { SettingsPageV2 } from "./components/settings-v2";
 import { ToolsPage } from "./components/tools/ToolsPage";
+import { MemoryPage } from "./components/memory";
 import { AgentChatPage } from "./components/agent";
 import { PluginsPage } from "./components/plugins/PluginsPage";
 import { ImageGenPage } from "./components/image-gen";
@@ -25,6 +26,7 @@ import {
   createProject,
   createContent,
   isUserProjectType,
+  resolveProjectRootPath,
 } from "./lib/api/project";
 import {
   TerminalWorkspace,
@@ -54,7 +56,6 @@ import {
   WorkspaceTheme,
 } from "./types/page";
 import { SettingsTabs } from "./types/settings";
-import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 
 const AppContainer = styled.div`
@@ -267,24 +268,7 @@ function AppContent() {
     name: string,
     type: ProjectType,
   ) => {
-    const selectedPath = await open({
-      directory: true,
-      title: "选择项目目录",
-    });
-
-    if (!selectedPath) {
-      throw new Error("用户取消选择目录");
-    }
-
-    const projectPath = Array.isArray(selectedPath)
-      ? selectedPath.length === 1
-        ? selectedPath[0]
-        : null
-      : selectedPath;
-
-    if (!projectPath) {
-      throw new Error("请选择单个项目目录");
-    }
+    const projectPath = await resolveProjectRootPath(name);
 
     const project = await createProject({
       name,
@@ -406,6 +390,7 @@ function AppContent() {
             contentId={(pageParams as AgentPageParams).contentId}
             theme={(pageParams as AgentPageParams).theme}
             lockTheme={(pageParams as AgentPageParams).lockTheme}
+            newChatAt={(pageParams as AgentPageParams).newChatAt}
             onHasMessagesChange={setAgentHasMessages}
           />
         </div>
@@ -442,6 +427,17 @@ function AppContent() {
         <PageWrapper $isActive={currentPage === "plugins"}>
           <PluginsPage />
         </PageWrapper>
+
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: currentPage === "memory" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <MemoryPage onNavigate={handleNavigate} />
+        </div>
 
         <div
           style={{
@@ -484,6 +480,7 @@ function AppContent() {
 
   const shouldShowAppSidebar =
     currentPage !== "settings" &&
+    currentPage !== "memory" &&
     currentPage !== "image-gen" &&
     !isThemeWorkspacePage(currentPage) &&
     !shouldHideSidebarForAgent;

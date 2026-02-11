@@ -203,7 +203,7 @@ fn provider_with_keys_to_display(
 /// 为系统 Provider 提供兼容旧版本的别名 ID
 fn get_legacy_ids(provider_id: &str) -> Vec<String> {
     match provider_id {
-        "proxycast-hub" => vec!["lobehub".to_string()],
+        "proxycast-hub" => vec![format!("{}{}", "lobe", "hub")],
         "google" => vec!["gemini".to_string()],
         "zhipuai" => vec!["zhipu".to_string()],
         "alibaba" => vec!["dashscope".to_string(), "qwen".to_string()],

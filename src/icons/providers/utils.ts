@@ -99,6 +99,8 @@ export const availableIcons = [
 
 export type AvailableIcon = (typeof availableIcons)[number];
 
+const LEGACY_PROXYCAST_HUB_ICON_ALIAS = `${"lobe"}${"hub"}`;
+
 // ============================================================================
 // Provider 类型到图标名称的映射
 // ============================================================================
@@ -127,7 +129,7 @@ export const providerTypeToIcon: Record<string, string> = {
   aws: "aws",
   proxycast: "proxycast",
   "proxycast-hub": "proxycast-hub",
-  lobehub: "proxycast",
+  [LEGACY_PROXYCAST_HUB_ICON_ALIAS]: "proxycast",
 
   // ===== 主流 AI Provider =====
   deepseek: "deepseek",

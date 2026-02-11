@@ -82,6 +82,30 @@ impl ProxyCastSessionStore {
         // 3) 最终回退到进程当前目录
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
+
+    /// 标准化 working_dir（相对路径转绝对路径）
+    fn normalize_working_dir(path: PathBuf) -> PathBuf {
+        if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        }
+    }
+
+    /// 从数据库字段解析会话 working_dir（为空时回退默认 workspace）
+    fn parse_session_working_dir(
+        conn: &rusqlite::Connection,
+        working_dir: Option<String>,
+    ) -> PathBuf {
+        match working_dir {
+            Some(path) if !path.trim().is_empty() => {
+                Self::normalize_working_dir(PathBuf::from(path))
+            }
+            _ => Self::resolve_session_working_dir(conn),
+        }
+    }
 }
 
 #[async_trait]
@@ -101,9 +125,17 @@ impl SessionStore for ProxyCastSessionStore {
         let type_str = session_type.to_string();
 
         conn.execute(
-            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, type_str, None::<String>, name, now_str, now_str],
+            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                id,
+                type_str,
+                None::<String>,
+                name,
+                now_str,
+                now_str,
+                working_dir.to_string_lossy().to_string()
+            ],
         )
         .map_err(|e| anyhow!("创建会话失败: {e}"))?;
 
@@ -153,10 +185,19 @@ impl SessionStore for ProxyCastSessionStore {
         // 如果不存在，自动创建
         if !session_exists {
             let now = Utc::now().to_rfc3339();
+            let working_dir = Self::resolve_session_working_dir(&conn);
             conn.execute(
-                "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![id, "agent:default", None::<String>, "新对话", now, now],
+                "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    id,
+                    "agent:default",
+                    None::<String>,
+                    "新对话",
+                    now,
+                    now,
+                    working_dir.to_string_lossy().to_string()
+                ],
             )
             .map_err(|e| anyhow!("自动创建会话失败: {e}"))?;
             tracing::info!("[SessionStore] get_session 自动创建会话: {}", id);
@@ -164,7 +205,7 @@ impl SessionStore for ProxyCastSessionStore {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, model, system_prompt, title, created_at, updated_at
+                "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
                  FROM agent_sessions WHERE id = ?",
             )
             .map_err(|e| anyhow!("准备查询失败: {e}"))?;
@@ -178,11 +219,13 @@ impl SessionStore for ProxyCastSessionStore {
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             })
             .map_err(|e| anyhow!("会话不存在: {e}"))?;
 
-        let (id, model, _system_prompt, title, created_at, updated_at) = session_row;
+        let (id, model, _system_prompt, title, created_at, updated_at, db_working_dir) =
+            session_row;
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
             .map(|dt| dt.with_timezone(&Utc))
@@ -192,7 +235,7 @@ impl SessionStore for ProxyCastSessionStore {
             .unwrap_or_else(|_| Utc::now());
 
         let session_type = model.parse().unwrap_or(SessionType::User);
-        let working_dir = Self::resolve_session_working_dir(&conn);
+        let working_dir = Self::parse_session_working_dir(&conn, db_working_dir);
 
         let conversation = if include_messages {
             Some(self.load_conversation(&conn, &id)?)
@@ -246,16 +289,18 @@ impl SessionStore for ProxyCastSessionStore {
 
         if !session_exists {
             let now = Utc::now().to_rfc3339();
+            let working_dir = Self::resolve_session_working_dir(&conn);
             conn.execute(
-                "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 rusqlite::params![
                     session_id,
                     "agent:default",
                     None::<String>,
                     "新对话",
                     now,
-                    now
+                    now,
+                    working_dir.to_string_lossy().to_string()
                 ],
             )
             .map_err(|e| anyhow!("自动创建会话失败: {e}"))?;
@@ -373,10 +418,9 @@ impl SessionStore for ProxyCastSessionStore {
 
     async fn list_sessions(&self) -> Result<Vec<Session>> {
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
-        let default_working_dir = Self::resolve_session_working_dir(&conn);
 
         let mut stmt = conn.prepare(
-            "SELECT id, model, system_prompt, title, created_at, updated_at
+            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
              FROM agent_sessions ORDER BY updated_at DESC",
         )?;
 
@@ -387,43 +431,47 @@ impl SessionStore for ProxyCastSessionStore {
                 let title: Option<String> = row.get(3)?;
                 let created_at: String = row.get(4)?;
                 let updated_at: String = row.get(5)?;
+                let working_dir: Option<String> = row.get(6)?;
 
-                Ok((id, model, title, created_at, updated_at))
+                Ok((id, model, title, created_at, updated_at, working_dir))
             })?
             .filter_map(|r| r.ok())
-            .map(|(id, model, title, created_at, updated_at)| {
-                let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
-                let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
-                let session_type = model.parse().unwrap_or(SessionType::User);
+            .map(
+                |(id, model, title, created_at, updated_at, db_working_dir)| {
+                    let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now());
+                    let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now());
+                    let session_type = model.parse().unwrap_or(SessionType::User);
+                    let working_dir = Self::parse_session_working_dir(&conn, db_working_dir);
 
-                Session {
-                    id,
-                    working_dir: default_working_dir.clone(),
-                    name: title.unwrap_or_else(|| "未命名会话".to_string()),
-                    user_set_name: false,
-                    session_type,
-                    created_at,
-                    updated_at,
-                    extension_data: ExtensionData::default(),
-                    total_tokens: None,
-                    input_tokens: None,
-                    output_tokens: None,
-                    accumulated_total_tokens: None,
-                    accumulated_input_tokens: None,
-                    accumulated_output_tokens: None,
-                    schedule_id: None,
-                    recipe: None,
-                    user_recipe_values: None,
-                    conversation: None,
-                    message_count: 0,
-                    provider_name: None,
-                    model_config: None,
-                }
-            })
+                    Session {
+                        id,
+                        working_dir,
+                        name: title.unwrap_or_else(|| "未命名会话".to_string()),
+                        user_set_name: false,
+                        session_type,
+                        created_at,
+                        updated_at,
+                        extension_data: ExtensionData::default(),
+                        total_tokens: None,
+                        input_tokens: None,
+                        output_tokens: None,
+                        accumulated_total_tokens: None,
+                        accumulated_input_tokens: None,
+                        accumulated_output_tokens: None,
+                        schedule_id: None,
+                        recipe: None,
+                        user_recipe_values: None,
+                        conversation: None,
+                        message_count: 0,
+                        provider_name: None,
+                        model_config: None,
+                    }
+                },
+            )
             .collect();
 
         Ok(sessions)

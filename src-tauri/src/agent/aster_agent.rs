@@ -99,8 +99,13 @@ impl AsterAgentWrapper {
     }
 
     /// 创建新会话
-    pub fn create_session_sync(db: &DbConnection, name: Option<String>) -> Result<String, String> {
-        proxycast_agent::session_store::create_session_sync(db, name)
+    pub fn create_session_sync(
+        db: &DbConnection,
+        name: Option<String>,
+        working_dir: Option<String>,
+        workspace_id: String,
+    ) -> Result<String, String> {
+        proxycast_agent::session_store::create_session_sync(db, name, working_dir, workspace_id)
     }
 
     /// 列出所有会话

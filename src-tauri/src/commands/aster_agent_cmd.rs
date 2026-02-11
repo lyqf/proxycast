@@ -11,13 +11,33 @@ use crate::agent::{
 use crate::database::dao::agent::AgentDao;
 use crate::database::DbConnection;
 use crate::mcp::{McpManagerState, McpServerConfig};
+use crate::workspace::WorkspaceManager;
 use aster::agents::extension::{Envs, ExtensionConfig};
 use aster::conversation::message::Message;
+use aster::permission::{
+    ParameterRestriction, PermissionScope, RestrictionType, ToolPermission, ToolPermissionManager,
+};
+use aster::permission::{Permission, PermissionConfirmation, PrincipalType};
+use aster::sandbox::{
+    detect_best_sandbox, execute_in_sandbox, ResourceLimits, SandboxConfig as ProcessSandboxConfig,
+};
+use aster::tools::{
+    BashTool, PermissionBehavior, PermissionCheckResult, Tool, ToolContext, ToolError, ToolOptions,
+    ToolResult, MAX_OUTPUT_LENGTH,
+};
+use async_trait::async_trait;
 use futures::StreamExt;
 use proxycast_agent::event_converter::convert_agent_event;
 use proxycast_services::mcp_service::McpService;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+
+const DEFAULT_BASH_TIMEOUT_SECS: u64 = 300;
+const MAX_BASH_TIMEOUT_SECS: u64 = 1800;
 
 /// Aster Agent 状态信息
 #[derive(Debug, Serialize)]
@@ -195,6 +215,492 @@ pub struct AsterChatRequest {
     /// 项目 ID（可选，用于注入项目上下文到 System Prompt）
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Workspace ID（必填，用于校验会话与工作区一致性并启用本地 sandbox）
+    pub workspace_id: String,
+}
+
+/// 基于 aster::sandbox 的本地 bash 强隔离工具
+#[derive(Debug)]
+struct WorkspaceSandboxedBashTool {
+    delegate: BashTool,
+    sandbox_type_name: String,
+    base_sandbox_config: ProcessSandboxConfig,
+}
+
+impl WorkspaceSandboxedBashTool {
+    fn new(workspace_root: &str) -> Result<Self, String> {
+        let workspace_root = workspace_root.trim();
+        if workspace_root.is_empty() {
+            return Err("workspace 根目录为空".to_string());
+        }
+
+        let sandbox_type = detect_best_sandbox();
+        let sandbox_type_name = format!("{:?}", sandbox_type);
+        if sandbox_type_name == "None" {
+            return Err(
+                "未检测到可用本地 sandbox 执行器（macOS 需 sandbox-exec，Linux 需 bwrap/firejail）"
+                    .to_string(),
+            );
+        }
+
+        let workspace_path = PathBuf::from(workspace_root);
+        let mut read_only_paths = vec![
+            PathBuf::from("/usr"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/sbin"),
+            PathBuf::from("/etc"),
+            PathBuf::from("/System"),
+            PathBuf::from("/Library"),
+            workspace_path.clone(),
+        ];
+        read_only_paths.sort();
+        read_only_paths.dedup();
+
+        let mut writable_paths = vec![workspace_path.clone(), PathBuf::from("/tmp")];
+        if cfg!(target_os = "macos") {
+            writable_paths.push(PathBuf::from("/private/tmp"));
+        }
+        writable_paths.sort();
+        writable_paths.dedup();
+
+        let base_sandbox_config = ProcessSandboxConfig {
+            enabled: true,
+            sandbox_type,
+            allowed_paths: vec![workspace_path],
+            denied_paths: Vec::new(),
+            network_access: false,
+            environment_variables: HashMap::new(),
+            read_only_paths,
+            writable_paths,
+            allow_dev_access: false,
+            allow_proc_access: false,
+            allow_sys_access: false,
+            env_whitelist: Vec::new(),
+            tmpfs_size: "64M".to_string(),
+            unshare_all: true,
+            die_with_parent: true,
+            new_session: true,
+            docker: None,
+            custom_args: Vec::new(),
+            audit_logging: None,
+            resource_limits: None,
+        };
+
+        Ok(Self {
+            delegate: BashTool::new(),
+            sandbox_type_name,
+            base_sandbox_config,
+        })
+    }
+
+    fn sandbox_type(&self) -> &str {
+        &self.sandbox_type_name
+    }
+
+    fn build_sandbox_config(
+        &self,
+        context: &ToolContext,
+        timeout_secs: u64,
+    ) -> ProcessSandboxConfig {
+        let mut config = self.base_sandbox_config.clone();
+
+        let mut environment_variables = HashMap::new();
+        environment_variables.insert("ASTER_TERMINAL".to_string(), "1".to_string());
+        for (key, value) in &context.environment {
+            environment_variables.insert(key.clone(), value.clone());
+        }
+        if let Ok(path_env) = std::env::var("PATH") {
+            environment_variables
+                .entry("PATH".to_string())
+                .or_insert(path_env);
+        }
+
+        config.environment_variables = environment_variables;
+        config.resource_limits = Some(ResourceLimits {
+            max_memory: Some(1024 * 1024 * 1024),
+            max_cpu: Some(70),
+            max_processes: Some(32),
+            max_file_size: Some(50 * 1024 * 1024),
+            max_execution_time: Some(timeout_secs.saturating_mul(1000)),
+            max_file_descriptors: Some(256),
+        });
+        config
+    }
+
+    fn quote_shell(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+
+    fn build_shell_command(&self, command: &str, context: &ToolContext) -> (String, Vec<String>) {
+        #[cfg(target_os = "windows")]
+        {
+            return (
+                "powershell".to_string(),
+                vec![
+                    "-NoProfile".to_string(),
+                    "-NonInteractive".to_string(),
+                    "-Command".to_string(),
+                    command.to_string(),
+                ],
+            );
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let working_dir = context.working_directory.to_string_lossy().to_string();
+            let wrapped_command = format!("cd {} && {}", Self::quote_shell(&working_dir), command);
+            ("sh".to_string(), vec!["-lc".to_string(), wrapped_command])
+        }
+    }
+
+    fn format_output(stdout: &str, stderr: &str, exit_code: i32) -> String {
+        let mut output = String::new();
+
+        if !stdout.is_empty() {
+            output.push_str(stdout);
+        }
+
+        if !stderr.is_empty() {
+            if !output.is_empty() && !output.ends_with('\n') {
+                output.push('\n');
+            }
+            if !stdout.is_empty() {
+                output.push_str("--- stderr ---\n");
+            }
+            output.push_str(stderr);
+        }
+
+        if exit_code != 0 && output.is_empty() {
+            output = format!("Command exited with code {}", exit_code);
+        }
+
+        if output.len() <= MAX_OUTPUT_LENGTH {
+            return output;
+        }
+
+        let bytes = output.as_bytes();
+        let truncated = String::from_utf8_lossy(&bytes[..MAX_OUTPUT_LENGTH]).to_string();
+        format!(
+            "{}\n\n[output truncated: {} bytes total]",
+            truncated,
+            output.len()
+        )
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceSandboxedBashTool {
+    fn name(&self) -> &str {
+        self.delegate.name()
+    }
+
+    fn description(&self) -> &str {
+        self.delegate.description()
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        self.delegate.input_schema()
+    }
+
+    fn options(&self) -> ToolOptions {
+        self.delegate.options()
+    }
+
+    async fn check_permissions(
+        &self,
+        params: &serde_json::Value,
+        context: &ToolContext,
+    ) -> PermissionCheckResult {
+        self.delegate.check_permissions(params, context).await
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        if context.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
+
+        let permission = self.check_permissions(&params, context).await;
+        match permission.behavior {
+            PermissionBehavior::Allow => {}
+            PermissionBehavior::Deny => {
+                let message = permission
+                    .message
+                    .unwrap_or_else(|| "命令被安全策略拒绝".to_string());
+                return Err(ToolError::permission_denied(message));
+            }
+            PermissionBehavior::Ask => {
+                let message = permission
+                    .message
+                    .unwrap_or_else(|| "命令需要人工确认".to_string());
+                return Err(ToolError::permission_denied(message));
+            }
+        }
+
+        let command = params
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::invalid_params("Missing required parameter: command"))?;
+
+        let background = params
+            .get("background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if background {
+            return Err(ToolError::invalid_params(
+                "本地 sandbox 模式不支持 background=true",
+            ));
+        }
+
+        let timeout_secs = params
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(DEFAULT_BASH_TIMEOUT_SECS)
+            .min(MAX_BASH_TIMEOUT_SECS);
+
+        let sandbox_config = self.build_sandbox_config(context, timeout_secs);
+        let (entry, args) = self.build_shell_command(command, context);
+
+        let execution = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            execute_in_sandbox(&entry, &args, &sandbox_config),
+        )
+        .await
+        .map_err(|_| ToolError::timeout(Duration::from_secs(timeout_secs)))?
+        .map_err(|e| ToolError::execution_failed(format!("sandbox 执行失败: {e}")))?;
+
+        let output = Self::format_output(&execution.stdout, &execution.stderr, execution.exit_code);
+        if execution.exit_code == 0 {
+            Ok(ToolResult::success(output)
+                .with_metadata("exit_code", serde_json::json!(execution.exit_code))
+                .with_metadata("stdout_length", serde_json::json!(execution.stdout.len()))
+                .with_metadata("stderr_length", serde_json::json!(execution.stderr.len()))
+                .with_metadata("sandboxed", serde_json::json!(execution.sandboxed))
+                .with_metadata(
+                    "sandbox_type",
+                    serde_json::json!(format!("{:?}", execution.sandbox_type)),
+                ))
+        } else {
+            Ok(ToolResult::error(output)
+                .with_metadata("exit_code", serde_json::json!(execution.exit_code))
+                .with_metadata("stdout_length", serde_json::json!(execution.stdout.len()))
+                .with_metadata("stderr_length", serde_json::json!(execution.stderr.len()))
+                .with_metadata("sandboxed", serde_json::json!(execution.sandboxed))
+                .with_metadata(
+                    "sandbox_type",
+                    serde_json::json!(format!("{:?}", execution.sandbox_type)),
+                ))
+        }
+    }
+}
+
+/// 为指定工作区生成本地 sandbox 权限模板
+async fn apply_workspace_sandbox_permissions(
+    state: &AsterAgentState,
+    workspace_root: &str,
+) -> Result<(), String> {
+    let workspace_root = workspace_root.trim();
+    if workspace_root.is_empty() {
+        return Err("workspace 根目录为空".to_string());
+    }
+
+    let escaped_root = regex::escape(workspace_root);
+    let mut permissions = vec![
+        ToolPermission {
+            tool: "read".to_string(),
+            allowed: true,
+            priority: 100,
+            conditions: Vec::new(),
+            parameter_restrictions: vec![ParameterRestriction {
+                parameter: "path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(format!(r"^({escaped_root}|\.|\./|\.\./).*$")),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("read.path 必须在 workspace 内或相对路径".to_string()),
+            }],
+            scope: PermissionScope::Session,
+            reason: Some("仅允许读取当前 workspace 内容".to_string()),
+            expires_at: None,
+            metadata: HashMap::new(),
+        },
+        ToolPermission {
+            tool: "write".to_string(),
+            allowed: true,
+            priority: 100,
+            conditions: Vec::new(),
+            parameter_restrictions: vec![ParameterRestriction {
+                parameter: "path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(format!(r"^({escaped_root}|\.|\./|\.\./).*$")),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("write.path 必须在 workspace 内或相对路径".to_string()),
+            }],
+            scope: PermissionScope::Session,
+            reason: Some("仅允许写入当前 workspace 内容".to_string()),
+            expires_at: None,
+            metadata: HashMap::new(),
+        },
+        ToolPermission {
+            tool: "edit".to_string(),
+            allowed: true,
+            priority: 100,
+            conditions: Vec::new(),
+            parameter_restrictions: vec![ParameterRestriction {
+                parameter: "path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(format!(r"^({escaped_root}|\.|\./|\.\./).*$")),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("edit.path 必须在 workspace 内或相对路径".to_string()),
+            }],
+            scope: PermissionScope::Session,
+            reason: Some("仅允许编辑当前 workspace 内容".to_string()),
+            expires_at: None,
+            metadata: HashMap::new(),
+        },
+        ToolPermission {
+            tool: "glob".to_string(),
+            allowed: true,
+            priority: 100,
+            conditions: Vec::new(),
+            parameter_restrictions: vec![ParameterRestriction {
+                parameter: "path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(format!(r"^({escaped_root}|\.|\./|\.\./).*$")),
+                validator: None,
+                min: None,
+                max: None,
+                required: false,
+                description: Some("glob.path 必须在 workspace 内或相对路径".to_string()),
+            }],
+            scope: PermissionScope::Session,
+            reason: Some("仅允许在当前 workspace 搜索文件".to_string()),
+            expires_at: None,
+            metadata: HashMap::new(),
+        },
+        ToolPermission {
+            tool: "grep".to_string(),
+            allowed: true,
+            priority: 100,
+            conditions: Vec::new(),
+            parameter_restrictions: vec![ParameterRestriction {
+                parameter: "path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(format!(r"^({escaped_root}|\.|\./|\.\./).*$")),
+                validator: None,
+                min: None,
+                max: None,
+                required: false,
+                description: Some("grep.path 必须在 workspace 内或相对路径".to_string()),
+            }],
+            scope: PermissionScope::Session,
+            reason: Some("仅允许在当前 workspace 搜索内容".to_string()),
+            expires_at: None,
+            metadata: HashMap::new(),
+        },
+    ];
+
+    let allow_shell_pattern = format!(
+        r"^\s*(?:cd\s+({}|\.|\./|\.\./)(?:\s*(?:&&|;).*)?|pwd(?:\s*(?:&&|;).*)?|ls(?:\s+[^;&|]+)?(?:\s*(?:&&|;).*)?|find\s+({}|\.|\./|\.\./)[^;&|]*(?:\s*(?:&&|;).*)?|rg\b[^;&|]*(?:\s*(?:&&|;).*)?|grep\b[^;&|]*(?:\s*(?:&&|;).*)?|cat\s+({}|\.|\./|\.\./)[^;&|]*(?:\s*(?:&&|;).*)?)\s*$",
+        escaped_root, escaped_root, escaped_root
+    );
+
+    permissions.push(ToolPermission {
+        tool: "bash".to_string(),
+        allowed: true,
+        priority: 90,
+        conditions: Vec::new(),
+        parameter_restrictions: vec![
+            ParameterRestriction {
+                parameter: "command".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(allow_shell_pattern),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("bash.command 仅允许 workspace 内安全读操作".to_string()),
+            },
+            ParameterRestriction {
+                parameter: "command".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some("^(?!.*(?:\\|\\||&|`|\\$\\(|python\\s+-c|node\\s+-e|ruby\\s+-e|perl\\s+-e|curl\\s+|wget\\s+|ssh\\s+|scp\\s+|rsync\\s+|nc\\s+|telnet\\s+|sudo\\s+)).*$".to_string()),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("bash.command 禁止管道、联网与高风险执行".to_string()),
+            },
+        ],
+        scope: PermissionScope::Session,
+        reason: Some("本地 sandbox：bash 仅允许 workspace 内安全命令".to_string()),
+        expires_at: None,
+        metadata: HashMap::new(),
+    });
+
+    permissions.push(ToolPermission {
+        tool: "*".to_string(),
+        allowed: false,
+        priority: 10,
+        conditions: Vec::new(),
+        parameter_restrictions: Vec::new(),
+        scope: PermissionScope::Session,
+        reason: Some("本地 sandbox：未显式授权的工具默认拒绝".to_string()),
+        expires_at: None,
+        metadata: HashMap::new(),
+    });
+
+    let agent_arc = state.get_agent_arc();
+    let guard = agent_arc.read().await;
+    let agent = guard
+        .as_ref()
+        .ok_or_else(|| "Agent not initialized".to_string())?;
+    let registry_arc = agent.tool_registry().clone();
+    drop(guard);
+
+    let mut registry = registry_arc.write().await;
+    let mut permission_manager = ToolPermissionManager::new(None);
+    if let Some(existing_manager) = registry.permission_manager() {
+        for permission in existing_manager.get_permissions(None) {
+            let scope = permission.scope;
+            permission_manager.add_permission(permission, scope);
+        }
+    }
+
+    for permission in permissions {
+        permission_manager.add_permission(permission, PermissionScope::Session);
+    }
+    registry.set_permission_manager(Arc::new(permission_manager));
+
+    let workspace_bash_tool = WorkspaceSandboxedBashTool::new(workspace_root)?;
+    let sandbox_type = workspace_bash_tool.sandbox_type().to_string();
+    registry.register(Box::new(workspace_bash_tool));
+
+    tracing::info!(
+        "[AsterAgent] 已应用 workspace 本地 sandbox: root={}, type={}",
+        workspace_root,
+        sandbox_type
+    );
+
+    Ok(())
 }
 
 /// 图片输入
@@ -242,6 +748,33 @@ pub async fn aster_agent_chat_stream(
     // ProxyCastSessionStore 会在 add_message 时自动创建不存在的 session
     // 同时 get_session 也会自动创建不存在的 session
     let session_id = &request.session_id;
+
+    let workspace_id = request.workspace_id.trim().to_string();
+    if workspace_id.is_empty() {
+        return Err("workspace_id 必填，请先选择项目工作区".to_string());
+    }
+
+    let manager = WorkspaceManager::new(db.inner().clone());
+    let workspace = manager
+        .get(&workspace_id)
+        .map_err(|e| format!("读取 workspace 失败: {e}"))?
+        .ok_or_else(|| format!("Workspace 不存在: {workspace_id}"))?;
+    let workspace_root = workspace.root_path.to_string_lossy().to_string();
+
+    {
+        let db_conn = db.lock().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        if let Some(session) = AgentDao::get_session(&db_conn, session_id)
+            .map_err(|e| format!("读取 session 失败: {e}"))?
+        {
+            let session_dir = session.working_dir.unwrap_or_default();
+            if !session_dir.is_empty() && session_dir != workspace_root {
+                return Err(format!(
+                    "会话工作目录与 workspace 不匹配: session={}, workspace={}",
+                    session_dir, workspace_root
+                ));
+            }
+        }
+    }
 
     // 启动并注入 MCP extensions 到 Aster Agent
     let (_start_ok, start_fail) = ensure_proxycast_mcp_servers_running(&db, &mcp_manager).await;
@@ -354,6 +887,10 @@ pub async fn aster_agent_chat_stream(
         return Err("Provider 未配置，请先调用 aster_agent_configure_provider".to_string());
     }
 
+    apply_workspace_sandbox_permissions(&state, &workspace_root)
+        .await
+        .map_err(|e| format!("注入本地 sandbox 失败: {e}"))?;
+
     // 创建取消令牌
     let cancel_token = state.create_cancel_token(session_id).await;
 
@@ -445,10 +982,18 @@ pub async fn aster_agent_stop(
 #[tauri::command]
 pub async fn aster_session_create(
     db: State<'_, DbConnection>,
+    working_dir: Option<String>,
+    workspace_id: String,
     name: Option<String>,
 ) -> Result<String, String> {
     tracing::info!("[AsterAgent] 创建会话: name={:?}", name);
-    AsterAgentWrapper::create_session_sync(&db, name)
+
+    let workspace_id = workspace_id.trim().to_string();
+    if workspace_id.is_empty() {
+        return Err("workspace_id 必填，请先选择项目工作区".to_string());
+    }
+
+    AsterAgentWrapper::create_session_sync(&db, name, working_dir, workspace_id)
 }
 
 /// 列出所有会话
@@ -480,7 +1025,7 @@ pub struct ConfirmRequest {
 /// 确认权限请求（用于工具调用确认等）
 #[tauri::command]
 pub async fn aster_agent_confirm(
-    _state: State<'_, AsterAgentState>,
+    state: State<'_, AsterAgentState>,
     request: ConfirmRequest,
 ) -> Result<(), String> {
     tracing::info!(
@@ -489,9 +1034,23 @@ pub async fn aster_agent_confirm(
         request.confirmed
     );
 
-    // TODO: 实现权限确认逻辑
-    // 这需要 Aster 框架支持 confirmation_tx 通道
-    // 目前先返回成功
+    let permission = if request.confirmed {
+        Permission::AllowOnce
+    } else {
+        Permission::DenyOnce
+    };
+
+    let confirmation = PermissionConfirmation {
+        principal_type: PrincipalType::Tool,
+        permission,
+    };
+
+    let agent_arc = state.get_agent_arc();
+    let guard = agent_arc.read().await;
+    let agent = guard.as_ref().ok_or("Agent not initialized")?;
+    agent
+        .handle_confirmation(request.request_id.clone(), confirmation)
+        .await;
 
     Ok(())
 }
@@ -505,13 +1064,15 @@ mod tests {
         let json = r#"{
             "message": "Hello",
             "session_id": "test-session",
-            "event_name": "agent_stream"
+            "event_name": "agent_stream",
+            "workspace_id": "workspace-test"
         }"#;
 
         let request: AsterChatRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.message, "Hello");
         assert_eq!(request.session_id, "test-session");
         assert_eq!(request.event_name, "agent_stream");
+        assert_eq!(request.workspace_id, "workspace-test");
     }
 }
 

@@ -18,7 +18,7 @@ const Container = styled.div`
   flex-direction: column;
   height: 100%;
   background: hsl(var(--background));
-  border-left: 1px solid hsl(var(--border));
+  border-right: 1px solid hsl(var(--border));
 `;
 
 const Header = styled.div`

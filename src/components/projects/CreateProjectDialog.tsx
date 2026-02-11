@@ -20,9 +20,15 @@ import { cn } from "@/lib/utils";
 import {
   ProjectType,
   USER_PROJECT_TYPES,
+  extractErrorMessage,
+  getCreateProjectErrorMessage,
   getProjectTypeLabel,
   getProjectTypeIcon,
+  getProjectByRootPath,
+  getWorkspaceProjectsRoot,
+  resolveProjectRootPath,
 } from "@/lib/api/project";
+import { toast } from "sonner";
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -42,6 +48,10 @@ export function CreateProjectDialog({
   const [name, setName] = useState("");
   const [type, setType] = useState<ProjectType>(defaultType || "general");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [workspaceRootPath, setWorkspaceRootPath] = useState("");
+  const [resolvedProjectPath, setResolvedProjectPath] = useState("");
+  const [pathChecking, setPathChecking] = useState(false);
+  const [pathConflictMessage, setPathConflictMessage] = useState("");
 
   // 当对话框打开且 defaultType 变化时，更新类型选择
   useEffect(() => {
@@ -57,6 +67,113 @@ export function CreateProjectDialog({
     }
   }, [open, defaultName]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let mounted = true;
+
+    const loadWorkspaceRoot = async () => {
+      try {
+        const root = await getWorkspaceProjectsRoot();
+        if (mounted) {
+          setWorkspaceRootPath(root);
+        }
+      } catch (error) {
+        console.error("加载 workspace 目录失败:", error);
+        if (mounted) {
+          setWorkspaceRootPath("");
+        }
+      }
+    };
+
+    void loadWorkspaceRoot();
+
+    return () => {
+      mounted = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const projectName = name.trim();
+    if (!projectName) {
+      setResolvedProjectPath("");
+      setPathChecking(false);
+      setPathConflictMessage("");
+      return;
+    }
+
+    let mounted = true;
+
+    const resolvePath = async () => {
+      try {
+        const path = await resolveProjectRootPath(projectName);
+        if (mounted) {
+          setResolvedProjectPath(path);
+          setPathConflictMessage("");
+        }
+      } catch (error) {
+        console.error("解析项目目录失败:", error);
+        if (mounted) {
+          setResolvedProjectPath("");
+          setPathConflictMessage("");
+        }
+      }
+    };
+
+    void resolvePath();
+
+    return () => {
+      mounted = false;
+    };
+  }, [open, name]);
+
+  useEffect(() => {
+    if (!open || !resolvedProjectPath) {
+      setPathChecking(false);
+      setPathConflictMessage("");
+      return;
+    }
+
+    let mounted = true;
+    setPathChecking(true);
+
+    const checkPathConflict = async () => {
+      try {
+        const existingProject = await getProjectByRootPath(resolvedProjectPath);
+        if (!mounted) {
+          return;
+        }
+
+        if (existingProject) {
+          setPathConflictMessage(`路径已存在项目：${existingProject.name}`);
+        } else {
+          setPathConflictMessage("");
+        }
+      } catch (error) {
+        console.error("检查项目路径冲突失败:", error);
+        if (mounted) {
+          setPathConflictMessage("");
+        }
+      } finally {
+        if (mounted) {
+          setPathChecking(false);
+        }
+      }
+    };
+
+    void checkPathConflict();
+
+    return () => {
+      mounted = false;
+    };
+  }, [open, resolvedProjectPath]);
+
   const handleSubmit = async () => {
     if (!name.trim()) return;
 
@@ -67,12 +184,10 @@ export function CreateProjectDialog({
       setType(defaultType || "general");
       onOpenChange(false);
     } catch (error) {
-      // 如果是用户取消选择目录，不显示错误
-      if (error instanceof Error && error.message === "用户取消选择目录") {
-        // 用户取消，不做任何处理
-      } else {
-        console.error("创建项目失败:", error);
-      }
+      console.error("创建项目失败:", error);
+      const message = extractErrorMessage(error);
+      const friendlyMessage = getCreateProjectErrorMessage(message);
+      toast.error(`创建项目失败: ${friendlyMessage}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -84,7 +199,7 @@ export function CreateProjectDialog({
         <DialogHeader>
           <DialogTitle>新建项目</DialogTitle>
           <DialogDescription>
-            创建一个新的内容创作项目，选择项目类型以获得最佳体验。
+            创建一个新的内容创作项目，目录将固定在 workspace 目录下。
           </DialogDescription>
         </DialogHeader>
 
@@ -126,6 +241,36 @@ export function CreateProjectDialog({
               ))}
             </div>
           </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="workspace-root">workspace 目录</Label>
+            <Input
+              id="workspace-root"
+              value={workspaceRootPath}
+              placeholder="加载中..."
+              readOnly
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="project-path-preview">项目路径预览</Label>
+            <Input
+              id="project-path-preview"
+              value={resolvedProjectPath}
+              placeholder="请输入项目名称"
+              readOnly
+            />
+            <p className="text-xs text-muted-foreground break-all">
+              将创建到：
+              {resolvedProjectPath || "请输入项目名称"}
+            </p>
+            {pathChecking && (
+              <p className="text-xs text-muted-foreground">正在检查路径...</p>
+            )}
+            {!pathChecking && pathConflictMessage && (
+              <p className="text-xs text-destructive">{pathConflictMessage}</p>
+            )}
+          </div>
         </div>
 
         <DialogFooter>
@@ -134,7 +279,12 @@ export function CreateProjectDialog({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={!name.trim() || isSubmitting}
+            disabled={
+              !name.trim() ||
+              isSubmitting ||
+              pathChecking ||
+              !!pathConflictMessage
+            }
           >
             {isSubmitting ? "创建中..." : "创建"}
           </Button>

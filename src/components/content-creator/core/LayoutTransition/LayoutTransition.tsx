@@ -73,15 +73,6 @@ export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
 
     return (
       <Container>
-        <ChatPanel
-          $width={chatStyles.width as string}
-          $duration={parseInt(
-            chatStyles.transition?.match(/\d+/)?.[0] || "300",
-          )}
-        >
-          {chatContent}
-        </ChatPanel>
-
         <CanvasPanel
           $visible={isCanvasVisible}
           $transform={canvasStyles.transform as string}
@@ -92,6 +83,15 @@ export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
         >
           {canvasContent}
         </CanvasPanel>
+
+        <ChatPanel
+          $width={chatStyles.width as string}
+          $duration={parseInt(
+            chatStyles.transition?.match(/\d+/)?.[0] || "300",
+          )}
+        >
+          {chatContent}
+        </ChatPanel>
       </Container>
     );
   },
