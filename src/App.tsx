@@ -15,6 +15,7 @@ import { SplashScreen } from "./components/SplashScreen";
 import { AppSidebar } from "./components/AppSidebar";
 import { SettingsPageV2 } from "./components/settings-v2";
 import { ToolsPage } from "./components/tools/ToolsPage";
+import { ResourcesPage } from "./components/resources";
 import { MemoryPage } from "./components/memory";
 import { AgentChatPage } from "./components/agent";
 import { PluginsPage } from "./components/plugins/PluginsPage";
@@ -403,6 +404,7 @@ function AppContent() {
             contentId={(pageParams as AgentPageParams).contentId}
             theme={(pageParams as AgentPageParams).theme}
             lockTheme={(pageParams as AgentPageParams).lockTheme}
+            fromResources={(pageParams as AgentPageParams).fromResources}
             newChatAt={(pageParams as AgentPageParams).newChatAt}
             onHasMessagesChange={setAgentHasMessages}
           />
@@ -432,6 +434,17 @@ function AppContent() {
         <FullscreenWrapper $isActive={currentPage === "web"}>
           <WebView />
         </FullscreenWrapper>
+
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: currentPage === "resources" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <ResourcesPage onNavigate={handleNavigate} />
+        </div>
 
         <PageWrapper $isActive={currentPage === "tools"}>
           <ToolsPage onNavigate={handleNavigate} />
@@ -488,13 +501,14 @@ function AppContent() {
   const currentAgentParams = pageParams as AgentPageParams;
   const shouldHideSidebarForAgent =
     currentPage === "agent" &&
-    agentHasMessages &&
-    Boolean(currentAgentParams.lockTheme);
+    (Boolean(currentAgentParams.fromResources) ||
+      (agentHasMessages && Boolean(currentAgentParams.lockTheme)));
 
   const shouldShowAppSidebar =
     currentPage !== "settings" &&
     currentPage !== "memory" &&
     currentPage !== "image-gen" &&
+    currentPage !== "resources" &&
     !isThemeWorkspacePage(currentPage) &&
     !shouldHideSidebarForAgent;
 

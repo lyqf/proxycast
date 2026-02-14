@@ -1257,6 +1257,10 @@ impl ModelRegistryService {
             return &["ollama-cloud"];
         }
 
+        if host.contains("fal.run") {
+            return &["fal"];
+        }
+
         &[]
     }
 
@@ -1274,6 +1278,7 @@ impl ModelRegistryService {
             ApiProviderType::Vertexai => &["google-vertex", "google"],
             ApiProviderType::AwsBedrock => &["amazon-bedrock"],
             ApiProviderType::Ollama => &["ollama-cloud"],
+            ApiProviderType::Fal => &["fal", "openai"],
             ApiProviderType::Codex => &["codex"],
         }
     }

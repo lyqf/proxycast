@@ -10,7 +10,7 @@ pub mod dispatcher;
 #[cfg(debug_assertions)]
 use axum::{
     extract::State,
-    http::HeaderValue,
+    http::{HeaderValue, Method},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -78,14 +78,21 @@ impl DevBridgeServer {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let config = config.unwrap_or_default();
 
+        let allowed_origins = vec![
+            HeaderValue::from_static("http://localhost:1420"),
+            HeaderValue::from_static("http://127.0.0.1:1420"),
+            HeaderValue::from_static("http://localhost:5173"),
+            HeaderValue::from_static("http://127.0.0.1:5173"),
+        ];
+
         let app = Router::new()
             .route("/invoke", post(invoke_command))
             .route("/health", post(health_check))
             .layer(
-                // CORS 配置 - 允许 localhost:1420 访问
+                // CORS 配置 - 允许本地开发前端访问
                 CorsLayer::new()
-                    .allow_origin("http://localhost:1420".parse::<HeaderValue>().unwrap())
-                    .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
+                    .allow_origin(allowed_origins)
+                    .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
                     .allow_headers([axum::http::header::CONTENT_TYPE]),
             )
             .with_state(app_state);

@@ -1,6 +1,7 @@
 import React from "react";
 import {
   Box,
+  FolderOpen,
   Home,
   PanelLeftClose,
   PanelLeftOpen,
@@ -18,6 +19,7 @@ interface ChatNavbarProps {
   showHistoryToggle?: boolean;
   onToggleFullscreen: () => void;
   onBackToProjectManagement?: () => void;
+  onBackToResources?: () => void;
   onToggleSettings?: () => void;
   onBackHome?: () => void;
   projectId?: string | null;
@@ -37,6 +39,7 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
   showHistoryToggle = true,
   onToggleFullscreen: _onToggleFullscreen,
   onBackToProjectManagement,
+  onBackToResources,
   onToggleSettings,
   onBackHome,
   projectId = null,
@@ -56,6 +59,17 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
             title="返回首页"
           >
             <Home size={18} />
+          </Button>
+        )}
+        {onBackToResources && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={onBackToResources}
+          >
+            <FolderOpen size={16} className="mr-1.5" />
+            返回资源
           </Button>
         )}
         {showHistoryToggle && (

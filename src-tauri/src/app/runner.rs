@@ -1234,6 +1234,17 @@ pub fn run() {
             commands::memory_management_cmd::get_conversation_memory_overview,
             commands::memory_management_cmd::request_conversation_memory_analysis,
             commands::memory_management_cmd::cleanup_conversation_memory,
+            // Unified Memory commands
+            commands::unified_memory_cmd::unified_memory_list,
+            commands::unified_memory_cmd::unified_memory_get,
+            commands::unified_memory_cmd::unified_memory_create,
+            commands::unified_memory_cmd::unified_memory_update,
+            commands::unified_memory_cmd::unified_memory_delete,
+            commands::unified_memory_cmd::unified_memory_search,
+            commands::unified_memory_cmd::unified_memory_stats,
+            commands::unified_memory_cmd::unified_memory_analyze,
+            commands::memory_search_cmd::unified_memory_semantic_search,
+            commands::memory_search_cmd::unified_memory_hybrid_search,
             // Voice Test commands
             commands::voice_test_cmd::test_tts,
             commands::voice_test_cmd::get_available_voices,

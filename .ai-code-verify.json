@@ -1,0 +1,17 @@
+{
+  "$schema": "./scripts/ai-code-verify.schema.json",
+  "level": 0,
+  "enabled": true,
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "build",
+    ".git",
+    ".ai-code-verify.json"
+  ],
+  "includePatterns": [
+    "src/**/*.{ts,tsx,js,jsx}",
+    "src-tauri/**/*.rs"
+  ],
+  "minScore": 60
+}

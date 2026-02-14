@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Code Verify Configuration",
+  "description": "AI 代码验证工具的配置文件 schema",
+  "type": "object",
+  "properties": {
+    "level": {
+      "type": "number",
+      "description": "验证等级（0-2）",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "是否启用验证",
+      "default": true
+    },
+    "ignorePatterns": {
+      "type": "array",
+      "description": "忽略的文件/目录模式",
+      "items": {
+        "type": "string"
+      },
+      "default": ["node_modules", "dist", "build", ".git"]
+    },
+    "includePatterns": {
+      "type": "array",
+      "description": "白名单（glob 模式）",
+      "items": {
+        "type": "string"
+      }
+    },
+    "generatePrompt": {
+      "type": "boolean",
+      "description": "是否生成 AI Prompt（而非直接验证）",
+      "default": false
+    },
+    "minScore": {
+      "type": "number",
+      "description": "最低通过分数",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 60
+    }
+  }
+}

@@ -176,6 +176,7 @@ export interface ContentListItem {
   status: string;
   order: number;
   word_count: number;
+  metadata?: Record<string, unknown>;
   created_at: number;
   updated_at: number;
 }

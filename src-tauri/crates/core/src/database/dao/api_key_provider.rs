@@ -29,6 +29,7 @@ pub enum ApiProviderType {
     Vertexai,
     AwsBedrock,
     Ollama,
+    Fal,
     NewApi,
     Gateway,
 }
@@ -114,6 +115,14 @@ impl ApiProviderType {
                 extra_headers: &NO_EXTRA_HEADERS,
                 aster_provider_name: "ollama",
             },
+            ApiProviderType::Fal => ProviderRuntimeSpec {
+                protocol_family: ProviderProtocolFamily::OpenAiCompatible,
+                default_api_host: "https://fal.run",
+                auth_header: "Authorization",
+                auth_prefix: Some("Key"),
+                extra_headers: &NO_EXTRA_HEADERS,
+                aster_provider_name: "fal",
+            },
             ApiProviderType::Codex => ProviderRuntimeSpec {
                 protocol_family: ProviderProtocolFamily::Codex,
                 default_api_host: "https://api.openai.com",
@@ -158,6 +167,7 @@ impl std::fmt::Display for ApiProviderType {
             ApiProviderType::Vertexai => write!(f, "vertexai"),
             ApiProviderType::AwsBedrock => write!(f, "aws-bedrock"),
             ApiProviderType::Ollama => write!(f, "ollama"),
+            ApiProviderType::Fal => write!(f, "fal"),
             ApiProviderType::NewApi => write!(f, "new-api"),
             ApiProviderType::Gateway => write!(f, "gateway"),
         }
@@ -274,6 +284,14 @@ mod tests {
                 "ollama",
             ),
             (
+                ApiProviderType::Fal,
+                ProviderProtocolFamily::OpenAiCompatible,
+                "https://fal.run",
+                "Authorization",
+                Some("Key"),
+                "fal",
+            ),
+            (
                 ApiProviderType::NewApi,
                 ProviderProtocolFamily::OpenAiCompatible,
                 "https://api.openai.com",
@@ -355,6 +373,7 @@ impl std::str::FromStr for ApiProviderType {
             "vertexai" => Ok(ApiProviderType::Vertexai),
             "aws-bedrock" => Ok(ApiProviderType::AwsBedrock),
             "ollama" => Ok(ApiProviderType::Ollama),
+            "fal" => Ok(ApiProviderType::Fal),
             "new-api" => Ok(ApiProviderType::NewApi),
             "gateway" => Ok(ApiProviderType::Gateway),
             _ => Err(format!("Invalid provider type: {s}")),

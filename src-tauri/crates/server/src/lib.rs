@@ -4,7 +4,7 @@ pub mod client_detector;
 
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
+use tower_http::cors::CorsLayer;
 
 /// 记录请求统计到遥测系统
 pub fn record_request_telemetry(
@@ -979,6 +980,33 @@ async fn run_server(
             axum::routing::delete(handlers::delete_template),
         );
 
+    let allowed_origins = vec![
+        HeaderValue::from_static("http://localhost:1420"),
+        HeaderValue::from_static("http://127.0.0.1:1420"),
+        HeaderValue::from_static("http://localhost:5173"),
+        HeaderValue::from_static("http://127.0.0.1:5173"),
+        HeaderValue::from_static("tauri://localhost"),
+        HeaderValue::from_static("http://tauri.localhost"),
+        HeaderValue::from_static("https://tauri.localhost"),
+    ];
+
+    let cors_layer = CorsLayer::new()
+        .allow_origin(allowed_origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+            header::ORIGIN,
+        ]);
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(models))
@@ -1023,6 +1051,7 @@ async fn run_server(
         .merge(credentials_api_routes)
         // 批量任务 API 路由
         .merge(batch_api_routes)
+        .layer(cors_layer)
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 

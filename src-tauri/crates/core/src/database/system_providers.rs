@@ -667,8 +667,8 @@ pub fn get_system_providers() -> Vec<SystemProviderDef> {
         SystemProviderDef {
             id: "fal",
             name: "Fal",
-            provider_type: ApiProviderType::Openai,
-            api_host: "",
+            provider_type: ApiProviderType::Fal,
+            api_host: "https://fal.run",
             group: ProviderGroup::Aggregator,
             sort_order: 60,
             api_version: None,

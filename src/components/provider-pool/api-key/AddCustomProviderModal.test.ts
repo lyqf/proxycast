@@ -32,6 +32,7 @@ const VALID_PROVIDER_TYPES: ProviderType[] = [
   "vertexai",
   "aws-bedrock",
   "ollama",
+  "fal",
   "new-api",
   "gateway",
 ];

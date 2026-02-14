@@ -207,6 +207,7 @@ export function AgentChatPage({
   theme: initialTheme,
   initialCreationMode,
   lockTheme = false,
+  fromResources = false,
   hideHistoryToggle = false,
   showChatPanel = true,
   onBackToProjectManagement,
@@ -222,6 +223,7 @@ export function AgentChatPage({
   theme?: string;
   initialCreationMode?: CreationMode;
   lockTheme?: boolean;
+  fromResources?: boolean;
   hideHistoryToggle?: boolean;
   showChatPanel?: boolean;
   onBackToProjectManagement?: () => void;
@@ -1613,6 +1615,10 @@ export function AgentChatPage({
     });
   }, [_onNavigate]);
 
+  const handleBackToResources = useCallback(() => {
+    _onNavigate?.("resources");
+  }, [_onNavigate]);
+
   // 聊天区域内容
   const chatContent = (
     <ChatContainer>
@@ -1817,6 +1823,7 @@ export function AgentChatPage({
           showHistoryToggle={!hideHistoryToggle && showChatPanel}
           onToggleFullscreen={() => {}}
           onBackToProjectManagement={onBackToProjectManagement}
+          onBackToResources={fromResources ? handleBackToResources : undefined}
           projectId={projectId ?? null}
           onProjectChange={(newProjectId) => setInternalProjectId(newProjectId)}
           workspaceType={activeTheme}

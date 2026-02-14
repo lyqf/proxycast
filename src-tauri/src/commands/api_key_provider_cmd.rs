@@ -221,6 +221,7 @@ fn get_legacy_ids(provider_id: &str) -> Vec<String> {
         "302ai" => vec!["ai302".to_string()],
         "new-api" => vec!["newapi".to_string()],
         "vercel-gateway" => vec!["vercelaigateway".to_string()],
+        "fal" => vec!["falai".to_string()],
         "yi" => vec!["zeroone".to_string()],
         "infini" => vec!["infiniai".to_string()],
         "doubao" => vec!["volcengine".to_string()],

@@ -191,6 +191,7 @@ const providerTypeArb: fc.Arbitrary<ProviderType> = fc.constantFrom(
   "vertexai",
   "aws-bedrock",
   "ollama",
+  "fal",
   "new-api",
   "gateway",
 );

@@ -49,6 +49,7 @@ export const PROVIDER_TYPE_TO_REGISTRY_ID: Record<string, string> = {
   vertexai: "google",
   // 本地/自托管
   ollama: "ollama",
+  fal: "fal",
   // 特殊 Provider
   kiro: "kiro",
   claude: "anthropic",
@@ -77,6 +78,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "azure-openai": "Azure OpenAI",
   vertexai: "VertexAI",
   ollama: "Ollama",
+  fal: "Fal",
   gemini_api_key: "Gemini API Key",
   iflow: "iFlow",
 };

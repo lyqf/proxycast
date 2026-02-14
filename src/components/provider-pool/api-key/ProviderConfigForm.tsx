@@ -43,6 +43,7 @@ const PROVIDER_TYPES: { value: ProviderType; label: string }[] = [
   { value: "vertexai", label: "VertexAI" },
   { value: "aws-bedrock", label: "AWS Bedrock" },
   { value: "ollama", label: "Ollama" },
+  { value: "fal", label: "Fal" },
   { value: "new-api", label: "New API" },
   { value: "gateway", label: "Vercel AI Gateway" },
 ];
@@ -59,6 +60,7 @@ const PROVIDER_TYPE_FIELDS: Record<ProviderType, string[]> = {
   vertexai: ["project", "location"],
   "aws-bedrock": ["region"],
   ollama: [],
+  fal: [],
   "new-api": [],
   gateway: [],
 };

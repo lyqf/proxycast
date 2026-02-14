@@ -74,6 +74,7 @@ export type Page =
   | "image-gen"
   | "batch"
   | "mcp"
+  | "resources"
   | "tools"
   | "plugins"
   | "settings"
@@ -123,6 +124,8 @@ export interface AgentPageParams {
   theme?: string;
   /** 是否锁定主题（锁定后不在首屏显示主题切换） */
   lockTheme?: boolean;
+  /** 从资源管理页进入（用于沉浸式展示） */
+  fromResources?: boolean;
   /** 首页点击触发的新会话标记（时间戳） */
   newChatAt?: number;
   /** 主题工作台重置标记（时间戳） */

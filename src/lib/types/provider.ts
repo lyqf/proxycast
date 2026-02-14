@@ -26,6 +26,7 @@ export type ProviderType =
   | "vertexai" // Google Vertex AI API
   | "aws-bedrock" // AWS Bedrock API
   | "ollama" // Ollama 本地 API
+  | "fal" // fal.ai API
   | "new-api" // New API 兼容格式
   | "gateway"; // Vercel AI Gateway 格式
 

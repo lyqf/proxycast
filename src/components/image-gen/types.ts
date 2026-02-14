@@ -193,6 +193,61 @@ export const IMAGE_GEN_MODELS: Record<string, ImageGenModel[]> = {
       supportedSizes: ["1024x1024", "1792x1024", "1024x1792"],
     },
   ],
+  // Fal
+  fal: [
+    {
+      id: "fal-ai/nano-banana-pro",
+      name: "Nano Banana Pro",
+      supportedSizes: [
+        "1024x1024",
+        "768x1344",
+        "864x1152",
+        "1344x768",
+        "1152x864",
+        "1440x720",
+        "720x1440",
+      ],
+    },
+    {
+      id: "fal-ai/nano-banana",
+      name: "Nano Banana",
+      supportedSizes: [
+        "1024x1024",
+        "768x1344",
+        "864x1152",
+        "1344x768",
+        "1152x864",
+        "1440x720",
+        "720x1440",
+      ],
+    },
+    {
+      id: "fal-ai/flux/schnell",
+      name: "FLUX.1 Schnell",
+      supportedSizes: [
+        "1024x1024",
+        "768x1344",
+        "864x1152",
+        "1344x768",
+        "1152x864",
+        "1440x720",
+        "720x1440",
+      ],
+    },
+    {
+      id: "fal-ai/flux-kontext/dev",
+      name: "FLUX.1 Kontext Dev",
+      supportedSizes: [
+        "1024x1024",
+        "768x1344",
+        "864x1152",
+        "1344x768",
+        "1152x864",
+        "1440x720",
+        "720x1440",
+      ],
+    },
+  ],
 };
 
 /** 支持图片生成的 Provider ID 列表 */

@@ -50,6 +50,7 @@ const PROVIDER_TYPES: { value: ProviderType; label: string }[] = [
   { value: "vertexai", label: "VertexAI" },
   { value: "aws-bedrock", label: "AWS Bedrock" },
   { value: "ollama", label: "Ollama" },
+  { value: "fal", label: "Fal" },
   { value: "new-api", label: "New API" },
   { value: "gateway", label: "Vercel AI Gateway" },
 ];
@@ -66,6 +67,7 @@ const PROVIDER_TYPE_EXTRA_FIELDS: Record<ProviderType, string[]> = {
   vertexai: ["project", "location"],
   "aws-bedrock": ["region"],
   ollama: [],
+  fal: [],
   "new-api": [],
   gateway: [],
 };
@@ -177,6 +179,12 @@ const FALLBACK_KNOWN_PROVIDERS: KnownProvider[] = [
     type: "ollama",
     apiHost: "http://localhost:11434",
   },
+  {
+    id: "fal",
+    name: "Fal",
+    type: "fal",
+    apiHost: "https://fal.run",
+  },
 ];
 
 /** 将 Catalog 返回的 provider type 收敛到前端 ProviderType */
@@ -192,6 +200,7 @@ function normalizeCatalogProviderType(providerType: string): ProviderType {
     case "vertexai":
     case "aws-bedrock":
     case "ollama":
+    case "fal":
     case "new-api":
     case "gateway":
       return providerType;

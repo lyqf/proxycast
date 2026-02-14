@@ -33,24 +33,56 @@ import { cn } from "@/lib/utils";
 import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 import type { Page, PageParams } from "@/types/page";
 import {
-  cleanupMemory,
   getConfig,
-  getMemoryOverview,
-  requestMemoryAnalysis,
   saveConfig,
   type Config,
-  type MemoryAnalysisResult,
-  type MemoryCategoryStat,
   type MemoryConfig as TauriMemoryConfig,
-  type MemoryEntryPreview,
-  type MemoryOverviewResponse,
-  type MemoryStatsResponse,
 } from "@/hooks/useTauri";
-
-type CategoryType = MemoryCategoryStat["category"];
+import {
+  analyzeUnifiedMemories,
+  deleteUnifiedMemory,
+  getUnifiedMemoryStats,
+  listUnifiedMemories,
+  type MemoryCategory,
+  type UnifiedMemory,
+  type UnifiedMemoryAnalysisResult,
+  type UnifiedMemoryStatsResponse,
+} from "@/lib/api/unifiedMemory";
+type CategoryType = MemoryCategory;
 type CategoryFilter = "all" | CategoryType;
 type MemorySection = "home" | CategoryType;
 type ViewMode = "list" | "grid";
+
+interface MemoryStatsResponse {
+  total_entries: number;
+  storage_used: number;
+  memory_count: number;
+}
+
+interface MemoryCategoryStat {
+  category: CategoryType;
+  count: number;
+}
+
+interface MemoryEntryPreview {
+  id: string;
+  session_id: string;
+  memory_type: string;
+  source: string;
+  category: CategoryType;
+  title: string;
+  summary: string;
+  content: string;
+  updated_at: number;
+  created_at: number;
+  tags: string[];
+}
+
+interface MemoryOverviewResponse {
+  stats: MemoryStatsResponse;
+  categories: MemoryCategoryStat[];
+  entries: MemoryEntryPreview[];
+}
 
 const CATEGORY_META: Record<
   CategoryType,
@@ -220,19 +252,56 @@ function parseDateEndTimestamp(dateText: string): number | undefined {
   return date.getTime();
 }
 
-function fileTypeLabel(fileType: string): string {
-  switch (fileType) {
-    case "task_plan":
-      return "任务计划";
-    case "findings":
-      return "研究发现";
-    case "progress":
-      return "会话进展";
-    case "error_log":
-      return "错误记录";
+function memoryTypeLabel(memoryType: string): string {
+  switch (memoryType) {
+    case "conversation":
+      return "对话记忆";
+    case "project":
+      return "项目记忆";
     default:
-      return fileType || "未知类型";
+      return "未知类型";
   }
+}
+
+function memorySourceLabel(source: string): string {
+  switch (source) {
+    case "auto_extracted":
+      return "自动提取";
+    case "manual":
+      return "手动创建";
+    case "imported":
+      return "外部导入";
+    default:
+      return "未知来源";
+  }
+}
+
+function toMemoryEntryPreview(memory: UnifiedMemory): MemoryEntryPreview {
+  return {
+    id: memory.id,
+    session_id: memory.session_id,
+    memory_type: memory.memory_type,
+    source: memory.metadata.source,
+    category: memory.category,
+    title: memory.title,
+    summary: memory.summary,
+    content: memory.content,
+    updated_at: memory.updated_at,
+    created_at: memory.created_at,
+    tags: memory.tags,
+  };
+}
+
+function normalizeCategoryStats(
+  stats: UnifiedMemoryStatsResponse,
+): MemoryCategoryStat[] {
+  const categoryMap = new Map(
+    stats.categories.map((item) => [item.category, item.count]),
+  );
+  return CATEGORY_ORDER.map((category) => ({
+    category,
+    count: categoryMap.get(category) ?? 0,
+  }));
 }
 
 function EmptyMemoryState({
@@ -387,7 +456,15 @@ function MemoryEntryCollection({
   );
 }
 
-function MemoryDetailPanel({ entry }: { entry: MemoryEntryPreview | null }) {
+function MemoryDetailPanel({
+  entry,
+  deleting,
+  onDelete,
+}: {
+  entry: MemoryEntryPreview | null;
+  deleting: boolean;
+  onDelete: (entry: MemoryEntryPreview) => void;
+}) {
   if (!entry) {
     return (
       <div className="rounded-lg border p-4 text-sm text-muted-foreground xl:sticky xl:top-4">
@@ -408,11 +485,11 @@ function MemoryDetailPanel({ entry }: { entry: MemoryEntryPreview | null }) {
       <div className="grid grid-cols-2 gap-3 text-xs">
         <div>
           <div className="text-muted-foreground mb-1">记忆类型</div>
-          <div className="font-medium">{meta.label}</div>
+          <div className="font-medium">{memoryTypeLabel(entry.memory_type)}</div>
         </div>
         <div>
-          <div className="text-muted-foreground mb-1">存储文件</div>
-          <div className="font-medium">{fileTypeLabel(entry.file_type)}</div>
+          <div className="text-muted-foreground mb-1">记忆来源</div>
+          <div className="font-medium">{memorySourceLabel(entry.source)}</div>
         </div>
         <div>
           <div className="text-muted-foreground mb-1">会话 ID</div>
@@ -424,12 +501,29 @@ function MemoryDetailPanel({ entry }: { entry: MemoryEntryPreview | null }) {
             {formatAbsoluteTimestamp(entry.updated_at)}
           </div>
         </div>
+        <div>
+          <div className="text-muted-foreground mb-1">创建时间</div>
+          <div className="font-medium">
+            {formatAbsoluteTimestamp(entry.created_at)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground mb-1">分类</div>
+          <div className="font-medium">{meta.label}</div>
+        </div>
       </div>
 
       <div>
         <div className="text-xs text-muted-foreground mb-1">摘要内容</div>
         <div className="text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words rounded bg-muted/30 p-3">
           {entry.summary || "暂无摘要"}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs text-muted-foreground mb-1">详细内容</div>
+        <div className="text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words rounded bg-muted/30 p-3">
+          {entry.content || "暂无内容"}
         </div>
       </div>
 
@@ -450,6 +544,24 @@ function MemoryDetailPanel({ entry }: { entry: MemoryEntryPreview | null }) {
           </div>
         )}
       </div>
+
+      <button
+        onClick={() => onDelete(entry)}
+        disabled={deleting}
+        className="inline-flex w-full items-center justify-center gap-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-600 hover:bg-red-100 disabled:opacity-60"
+      >
+        {deleting ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            删除中...
+          </>
+        ) : (
+          <>
+            <Trash2 className="h-4 w-4" />
+            删除记忆（不可恢复）
+          </>
+        )}
+      </button>
     </div>
   );
 }
@@ -470,8 +582,8 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [cleaning, setCleaning] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null);
 
   const [activeSection, setActiveSection] = useState<MemorySection>("home");
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -481,7 +593,7 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
   const [analysisFromDate, setAnalysisFromDate] = useState("");
   const [analysisToDate, setAnalysisToDate] = useState("");
   const [analysisResult, setAnalysisResult] =
-    useState<MemoryAnalysisResult | null>(null);
+    useState<UnifiedMemoryAnalysisResult | null>(null);
 
   const maxEntriesOptions = [100, 500, 1000, 2000, 5000];
   const retentionDaysOptions = [7, 14, 30, 60, 90];
@@ -581,8 +693,27 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
   }, []);
 
   const loadOverview = useCallback(async () => {
-    const data = await getMemoryOverview(120);
-    setOverview(data);
+    const [statsResult, memories] = await Promise.all([
+      getUnifiedMemoryStats(),
+      listUnifiedMemories({
+        archived: false,
+        sort_by: "updated_at",
+        order: "desc",
+        limit: 1000,
+      }),
+    ]);
+
+    const normalizedStats: MemoryOverviewResponse = {
+      stats: {
+        total_entries: statsResult.total_entries,
+        storage_used: statsResult.storage_used,
+        memory_count: statsResult.memory_count,
+      },
+      categories: normalizeCategoryStats(statsResult),
+      entries: memories.map(toMemoryEntryPreview),
+    };
+
+    setOverview(normalizedStats);
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -670,7 +801,7 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
       const fromTimestamp = parseDateStartTimestamp(analysisFromDate);
       const toTimestamp = parseDateEndTimestamp(analysisToDate);
 
-      const result = await requestMemoryAnalysis(fromTimestamp, toTimestamp);
+      const result = await analyzeUnifiedMemories(fromTimestamp, toTimestamp);
       setAnalysisResult(result);
       await loadOverview();
 
@@ -696,22 +827,34 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
     showMessage,
   ]);
 
-  const handleCleanup = useCallback(async () => {
-    setCleaning(true);
-    try {
-      const result = await cleanupMemory();
-      await loadOverview();
-      showMessage(
-        "success",
-        `清理完成：清理 ${result.cleaned_entries} 条，释放 ${formatStorageSize(result.freed_space)}`,
+  const handleDeleteEntry = useCallback(
+    async (entry: MemoryEntryPreview) => {
+      const confirmed = window.confirm(
+        `确定永久删除这条记忆吗？\n\n标题：${entry.title}\n\n该操作不可恢复。`,
       );
-    } catch (error) {
-      console.error("清理记忆失败:", error);
-      showMessage("error", "清理失败");
-    } finally {
-      setCleaning(false);
-    }
-  }, [loadOverview, showMessage]);
+      if (!confirmed) {
+        return;
+      }
+
+      setDeletingEntryId(entry.id);
+      try {
+        const deleted = await deleteUnifiedMemory(entry.id);
+        if (!deleted) {
+          showMessage("error", "删除失败，记忆可能不存在");
+          return;
+        }
+
+        await loadOverview();
+        showMessage("success", "记忆已删除");
+      } catch (error) {
+        console.error("删除记忆失败:", error);
+        showMessage("error", "删除失败，请稍后重试");
+      } finally {
+        setDeletingEntryId(null);
+      }
+    },
+    [loadOverview, showMessage],
+  );
 
   const saveMemoryConfig = useCallback(
     async (key: keyof TauriMemoryConfig, value: boolean | number) => {
@@ -834,7 +977,7 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
           </div>
 
           <div className="mt-auto rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground leading-relaxed">
-            记忆页面已接入真实后端：读取本地记忆文件与历史会话分析结果，不使用
+            记忆页面已接入统一记忆数据库：浏览、分析、删除都直接操作真实数据，不使用
             Mock 数据。
           </div>
         </aside>
@@ -852,7 +995,7 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleRefresh}
-                  disabled={refreshing || analyzing || cleaning || loading}
+                  disabled={refreshing || analyzing || loading}
                   className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60"
                 >
                   <RefreshCw
@@ -1067,7 +1210,13 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
                         selectedEntryId={selectedEntryId}
                         onSelect={setSelectedEntryId}
                       />
-                      <MemoryDetailPanel entry={selectedEntry} />
+                      <MemoryDetailPanel
+                        entry={selectedEntry}
+                        deleting={
+                          !!selectedEntry && deletingEntryId === selectedEntry.id
+                        }
+                        onDelete={handleDeleteEntry}
+                      />
                     </div>
                   </>
                 )}
@@ -1159,7 +1308,7 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
                           自动清理过期记忆
                         </h4>
                         <p className="text-xs text-muted-foreground">
-                          定期归档超出保留时长的历史记忆
+                          定期移除超出保留时长的历史记忆
                         </p>
                       </div>
                       <input
@@ -1172,37 +1321,13 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
                         className="w-4 h-4 rounded border-gray-300"
                       />
                     </div>
-
-                    <div className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Trash2 className="h-4 w-4" />
-                        手动清理过期和失效记忆
-                      </div>
-                      <button
-                        onClick={handleCleanup}
-                        disabled={cleaning}
-                        className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60"
-                      >
-                        {cleaning ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            清理中...
-                          </>
-                        ) : (
-                          <>
-                            <Trash2 className="h-3.5 w-3.5" />
-                            立即清理
-                          </>
-                        )}
-                      </button>
-                    </div>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-2 rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">
                   <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                   <p>
-                    记忆关闭后将停止新增条目；历史条目仍可浏览。清理操作不可逆，请在确认后执行。
+                    记忆关闭后将停止新增条目；历史条目仍可浏览。删除操作为物理删除，不可恢复。
                   </p>
                 </div>
               </>

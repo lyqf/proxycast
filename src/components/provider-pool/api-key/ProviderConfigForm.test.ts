@@ -33,6 +33,7 @@ const ALL_PROVIDER_TYPES: ProviderType[] = [
   "vertexai",
   "aws-bedrock",
   "ollama",
+  "fal",
   "new-api",
   "gateway",
 ];
@@ -58,6 +59,7 @@ const EXPECTED_EXTRA_FIELDS: Record<ProviderType, string[]> = {
   vertexai: ["project", "location"],
   "aws-bedrock": ["region"],
   ollama: [],
+  fal: [],
   "new-api": [],
   gateway: [],
 };
@@ -136,6 +138,7 @@ describe("Property 7: Provider 类型处理正确性", () => {
         "anthropic",
         "gemini",
         "ollama",
+        "fal",
         "new-api",
         "gateway",
       ];
@@ -195,6 +198,11 @@ describe("Property 7: Provider 类型处理正确性", () => {
 
     test("ollama 类型只需要 apiHost", () => {
       const fields = getFieldsForProviderType("ollama");
+      expect(fields).toEqual(["apiHost"]);
+    });
+
+    test("fal 类型只需要 apiHost", () => {
+      const fields = getFieldsForProviderType("fal");
       expect(fields).toEqual(["apiHost"]);
     });
 

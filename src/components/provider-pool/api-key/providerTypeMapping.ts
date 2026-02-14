@@ -53,6 +53,7 @@ const PROVIDER_TYPE_TO_REGISTRY_ID: Record<string, string> = {
   vertexai: "google-vertex",
   "aws-bedrock": "amazon-bedrock",
   ollama: "ollama-cloud",
+  fal: "fal",
   "new-api": "openai",
   gateway: "vercel",
 };

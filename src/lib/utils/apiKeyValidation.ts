@@ -409,6 +409,17 @@ const API_KEY_FORMAT_RULES: Partial<
 };
 
 /**
+ * 非 SystemProviderId 的特殊规则（如后端动态扩展 Provider）。
+ */
+const SPECIAL_PROVIDER_RULES: Record<string, ApiKeyFormatRule> = {
+  fal: {
+    minLength: 10,
+    maxLength: 200,
+    description: "Fal API Key 长度应在 10-200 字符之间",
+  },
+};
+
+/**
  * 基于 Provider Type 的默认验证规则
  */
 const DEFAULT_RULES_BY_TYPE: Partial<Record<ProviderType, ApiKeyFormatRule>> = {
@@ -455,6 +466,11 @@ const DEFAULT_RULES_BY_TYPE: Partial<Record<ProviderType, ApiKeyFormatRule>> = {
     minLength: 0,
     maxLength: 200,
     description: "Ollama 通常不需要 API Key",
+  },
+  fal: {
+    minLength: 10,
+    maxLength: 200,
+    description: "Fal API Key 长度应在 10-200 字符之间",
   },
   "new-api": {
     prefix: "sk-",
@@ -560,10 +576,13 @@ export function validateApiKeyFormat(
   // 空字符串检查（除非 Provider 允许空 Key）
   if (!apiKey || apiKey.trim().length === 0) {
     // 检查是否为允许空 Key 的 Provider
+    const specialRule = providerId
+      ? SPECIAL_PROVIDER_RULES[providerId.toLowerCase()]
+      : undefined;
     const rule = providerId
       ? API_KEY_FORMAT_RULES[providerId as SystemProviderId]
       : undefined;
-    if (rule?.minLength === 0) {
+    if (specialRule?.minLength === 0 || rule?.minLength === 0) {
       return { valid: true, warning: "未设置 API Key，某些功能可能受限" };
     }
     return { valid: false, error: "API Key 不能为空" };
@@ -574,6 +593,11 @@ export function validateApiKeyFormat(
 
   // 1. 优先使用特定 Provider 的规则
   if (providerId) {
+    const specialRule = SPECIAL_PROVIDER_RULES[providerId.toLowerCase()];
+    if (specialRule) {
+      return validateWithRule(trimmedKey, specialRule);
+    }
+
     const providerRule = API_KEY_FORMAT_RULES[providerId as SystemProviderId];
     if (providerRule) {
       return validateWithRule(trimmedKey, providerRule);
@@ -622,6 +646,11 @@ export function getApiKeyFormatDescription(
 ): string {
   // 优先使用特定 Provider 的描述
   if (providerId) {
+    const specialRule = SPECIAL_PROVIDER_RULES[providerId.toLowerCase()];
+    if (specialRule) {
+      return specialRule.description;
+    }
+
     const providerRule = API_KEY_FORMAT_RULES[providerId as SystemProviderId];
     if (providerRule) {
       return providerRule.description;
@@ -646,6 +675,11 @@ export function getApiKeyFormatDescription(
  * @returns 是否需要 API Key
  */
 export function isApiKeyRequired(providerId: string): boolean {
+  const specialRule = SPECIAL_PROVIDER_RULES[providerId.toLowerCase()];
+  if (specialRule) {
+    return specialRule.minLength !== 0;
+  }
+
   const rule = API_KEY_FORMAT_RULES[providerId as SystemProviderId];
   // 如果 minLength 为 0，则 API Key 是可选的
   return rule?.minLength !== 0;
@@ -655,7 +689,10 @@ export function isApiKeyRequired(providerId: string): boolean {
  * 获取所有已定义验证规则的 Provider ID 列表
  */
 export function getProvidersWithValidationRules(): string[] {
-  return Object.keys(API_KEY_FORMAT_RULES);
+  return [
+    ...Object.keys(API_KEY_FORMAT_RULES),
+    ...Object.keys(SPECIAL_PROVIDER_RULES),
+  ];
 }
 
 /**
@@ -664,5 +701,8 @@ export function getProvidersWithValidationRules(): string[] {
 export function getValidationRule(
   providerId: string,
 ): ApiKeyFormatRule | undefined {
-  return API_KEY_FORMAT_RULES[providerId as SystemProviderId];
+  return (
+    SPECIAL_PROVIDER_RULES[providerId.toLowerCase()] ||
+    API_KEY_FORMAT_RULES[providerId as SystemProviderId]
+  );
 }

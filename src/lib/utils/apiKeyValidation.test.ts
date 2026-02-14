@@ -231,6 +231,7 @@ describe("API Key 格式验证", () => {
       "vertexai",
       "aws-bedrock",
       "ollama",
+      "fal",
       "new-api",
       "gateway",
     ];

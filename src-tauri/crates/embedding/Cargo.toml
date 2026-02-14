@@ -1,0 +1,23 @@
+[package]
+name = "proxycast-embedding"
+version = "0.1.0"
+edition = "2021"
+authors = ["you"]
+
+[dependencies]
+# HTTP 客户端
+reqwest = { version = "0.12", features = ["json"] }
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# 错误处理
+anyhow = "1"
+thiserror = "1"
+
+# 日志
+tracing = "0.1"

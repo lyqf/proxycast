@@ -34,6 +34,10 @@ interface EndpointRequestOptions {
 }
 
 const IMAGE_REQUEST_TIMEOUT_MS = 180_000;
+const FAL_DEFAULT_API_HOST = "https://fal.run";
+const FAL_QUEUE_API_HOST = "https://queue.fal.run";
+const FAL_QUEUE_POLL_INTERVAL_MS = 1500;
+const FAL_QUEUE_TIMEOUT_MS = 180_000;
 
 function buildProviderEndpoint(apiHost: string, endpointPath: string): string {
   const trimmedHost = (apiHost || "").trim().replace(/\/+$/, "");
@@ -46,6 +50,144 @@ function buildProviderEndpoint(apiHost: string, endpointPath: string): string {
   }
 
   return `${trimmedHost}${normalizedPath}`;
+}
+
+function ensureHttpProtocol(host: string): string {
+  if (/^https?:\/\//i.test(host)) {
+    return host;
+  }
+  return `https://${host}`;
+}
+
+function normalizeFalApiHost(apiHost: string): string {
+  const trimmed = (apiHost || "").trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return FAL_DEFAULT_API_HOST;
+  }
+  return ensureHttpProtocol(trimmed);
+}
+
+function normalizeFalModel(model: string): string {
+  const normalized = (model || "").trim();
+  if (!normalized) {
+    return "fal-ai/nano-banana-pro";
+  }
+  return normalized.startsWith("fal-ai/") ? normalized : `fal-ai/${normalized}`;
+}
+
+function resolveFalEndpointModelCandidates(
+  model: string,
+  hasReferenceImages: boolean,
+): string[] {
+  const endpointModel = normalizeFalModel(model);
+  const candidates: string[] = [];
+  const pushCandidate = (candidate: string) => {
+    const normalized = candidate.trim().replace(/^\/+/, "");
+    if (!normalized) {
+      return;
+    }
+    if (!candidates.includes(normalized)) {
+      candidates.push(normalized);
+    }
+  };
+
+  if (
+    endpointModel.startsWith("fal-ai/bytedance/seedream/v") ||
+    endpointModel.startsWith("fal-ai/hunyuan-image/v")
+  ) {
+    pushCandidate(
+      `${endpointModel}/${hasReferenceImages ? "edit" : "text-to-image"}`,
+    );
+    pushCandidate(endpointModel);
+    return candidates;
+  }
+
+  if (
+    hasReferenceImages &&
+    (endpointModel === "fal-ai/nano-banana" ||
+      endpointModel === "fal-ai/nano-banana-pro")
+  ) {
+    pushCandidate(`${endpointModel}/edit`);
+    pushCandidate(endpointModel);
+    return candidates;
+  }
+
+  pushCandidate(endpointModel);
+  return candidates;
+}
+
+function buildFalEndpoint(apiHost: string, endpointModel: string): string {
+  const normalizedHost = normalizeFalApiHost(apiHost).replace(/\/+$/, "");
+  return `${normalizedHost}/${endpointModel.replace(/^\/+/, "")}`;
+}
+
+function resolveFalQueueHost(apiHost: string): string {
+  const normalized = normalizeFalApiHost(apiHost);
+
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.hostname === "queue.fal.run") {
+      return `${parsed.protocol}//${parsed.hostname}`;
+    }
+    if (parsed.hostname === "fal.run") {
+      return `${parsed.protocol}//queue.fal.run`;
+    }
+  } catch {
+    // noop
+  }
+
+  return FAL_QUEUE_API_HOST;
+}
+
+function normalizeReferenceImages(referenceImages: string[]): string[] {
+  return referenceImages
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0);
+}
+
+function buildFalInput(
+  prompt: string,
+  referenceImages: string[],
+  size: string,
+  includeOptionalFields = true,
+): Record<string, unknown> {
+  const cleanedReferences = normalizeReferenceImages(referenceImages);
+  const input: Record<string, unknown> = {
+    prompt,
+    num_images: 1,
+  };
+
+  if (cleanedReferences.length > 0) {
+    input.image_urls = cleanedReferences;
+    input.image_url = cleanedReferences[0];
+  }
+
+  if (!includeOptionalFields) {
+    return input;
+  }
+
+  input.enable_safety_checker = false;
+
+  const matchedSize = size.match(/^(\d+)x(\d+)$/i);
+  if (matchedSize) {
+    const width = Number.parseInt(matchedSize[1], 10);
+    const height = Number.parseInt(matchedSize[2], 10);
+    if (
+      Number.isFinite(width) &&
+      Number.isFinite(height) &&
+      width > 0 &&
+      height > 0
+    ) {
+      input.image_size = { width, height };
+    }
+  }
+
+  const aspectRatio = sizeToAspectRatio(size);
+  if (aspectRatio) {
+    input.aspect_ratio = aspectRatio;
+  }
+
+  return input;
 }
 
 function wrapBase64AsDataUrl(value: string): string {
@@ -979,6 +1121,327 @@ async function requestImageFromNewApi(
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function requestImageFromFalEndpoint(
+  endpoint: string,
+  payload: Record<string, unknown>,
+  apiKey: string,
+  logTag: string,
+  timeoutMs = IMAGE_REQUEST_TIMEOUT_MS,
+): Promise<EndpointAttemptResult> {
+  const abortController = new AbortController();
+  const timeoutHandle =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          abortController.abort();
+        }, timeoutMs)
+      : null;
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: abortController.signal,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      imageUrl: null,
+      error: `请求异常: ${message}`,
+    };
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  const rawText = await response.text();
+  const parsedJson = tryParseJson(rawText);
+
+  console.log(
+    `[ImageGen][${logTag}] endpoint=${endpoint}, status=${response.status}`,
+  );
+
+  if (!response.ok) {
+    return {
+      imageUrl: null,
+      error: `请求失败: ${response.status} - ${previewResponseText(rawText, 300)}`,
+    };
+  }
+
+  const imageUrl = parsedJson
+    ? extractImageUrlFromPayload(parsedJson)
+    : extractImageUrlFromText(rawText);
+
+  if (!imageUrl) {
+    return {
+      imageUrl: null,
+      error: "未能从 Fal 响应中提取图片",
+    };
+  }
+
+  return {
+    imageUrl: normalizeImageUrl(endpoint, imageUrl),
+    error: null,
+  };
+}
+
+async function requestImageFromFalQueue(
+  apiHost: string,
+  endpointModel: string,
+  payload: Record<string, unknown>,
+  apiKey: string,
+): Promise<string> {
+  const queueHost = resolveFalQueueHost(apiHost).replace(/\/+$/, "");
+  const normalizedModel = endpointModel.replace(/^\/+/, "");
+  const submitEndpoint = `${queueHost}/${normalizedModel}`;
+
+  const submitResponse = await fetch(submitEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Key ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const submitRaw = await submitResponse.text();
+  const submitPayload = tryParseJson(submitRaw) as Record<string, unknown> | null;
+
+  if (!submitResponse.ok) {
+    throw new Error(
+      `Fal 队列提交失败: ${submitResponse.status} - ${previewResponseText(submitRaw, 300)}`,
+    );
+  }
+
+  const requestId =
+    typeof submitPayload?.request_id === "string"
+      ? submitPayload.request_id
+      : undefined;
+  let statusUrl =
+    typeof submitPayload?.status_url === "string"
+      ? submitPayload.status_url
+      : undefined;
+  let responseUrl =
+    typeof submitPayload?.response_url === "string"
+      ? submitPayload.response_url
+      : undefined;
+
+  if (requestId) {
+    const fallbackRequestBase = `${queueHost}/${normalizedModel}/requests/${encodeURIComponent(requestId)}`;
+    if (!statusUrl) {
+      statusUrl = `${fallbackRequestBase}/status`;
+    }
+    if (!responseUrl) {
+      responseUrl = fallbackRequestBase;
+    }
+  }
+
+  if (!statusUrl && !responseUrl) {
+    throw new Error("Fal 队列提交成功，但返回中缺少状态查询地址");
+  }
+
+  const startedAt = Date.now();
+  let queueStatus = "";
+
+  while (Date.now() - startedAt < FAL_QUEUE_TIMEOUT_MS) {
+    if (statusUrl) {
+      const statusResponse = await fetch(statusUrl, {
+        headers: {
+          Authorization: `Key ${apiKey}`,
+        },
+      });
+      const statusRaw = await statusResponse.text();
+      const statusPayload = tryParseJson(statusRaw) as Record<string, unknown> | null;
+
+      if (!statusResponse.ok) {
+        throw new Error(
+          `Fal 队列状态查询失败: ${statusResponse.status} - ${previewResponseText(statusRaw, 300)}`,
+        );
+      }
+
+      if (typeof statusPayload?.response_url === "string") {
+        responseUrl = statusPayload.response_url;
+      }
+
+      queueStatus =
+        typeof statusPayload?.status === "string"
+          ? statusPayload.status.toUpperCase()
+          : "";
+
+      if (queueStatus === "COMPLETED") {
+        break;
+      }
+
+      if (
+        queueStatus === "FAILED" ||
+        queueStatus === "ERROR" ||
+        queueStatus === "CANCELLED"
+      ) {
+        const detail =
+          typeof statusPayload?.error === "string"
+            ? statusPayload.error
+            : previewResponseText(statusRaw, 200);
+        throw new Error(`Fal 队列任务失败: ${detail || queueStatus}`);
+      }
+    } else if (responseUrl) {
+      const pollingResponse = await fetch(responseUrl, {
+        headers: {
+          Authorization: `Key ${apiKey}`,
+        },
+      });
+      const pollingRaw = await pollingResponse.text();
+      const pollingPayload = tryParseJson(pollingRaw) as
+        | Record<string, unknown>
+        | null;
+
+      if (pollingResponse.ok) {
+        const imageUrl = pollingPayload
+          ? extractImageUrlFromPayload(pollingPayload)
+          : extractImageUrlFromText(pollingRaw);
+
+        if (imageUrl) {
+          return normalizeImageUrl(responseUrl, imageUrl);
+        }
+
+        throw new Error("Fal 队列结果中未找到图片地址");
+      }
+
+      if (pollingResponse.status >= 500) {
+        throw new Error(
+          `Fal 队列结果获取失败: ${pollingResponse.status} - ${previewResponseText(pollingRaw, 300)}`,
+        );
+      }
+
+      const statusText =
+        typeof pollingPayload?.status === "string"
+          ? pollingPayload.status.toUpperCase()
+          : "";
+      if (statusText === "FAILED" || statusText === "ERROR") {
+        throw new Error(
+          `Fal 队列任务失败: ${previewResponseText(pollingRaw, 300)}`,
+        );
+      }
+    }
+
+    await sleep(FAL_QUEUE_POLL_INTERVAL_MS);
+  }
+
+  if (Date.now() - startedAt >= FAL_QUEUE_TIMEOUT_MS) {
+    throw new Error("Fal 队列任务超时，请稍后重试");
+  }
+
+  const finalEndpoint =
+    responseUrl ||
+    (statusUrl ? statusUrl.replace(/\/status(?:\?.*)?$/, "") : "");
+
+  if (!finalEndpoint) {
+    throw new Error("Fal 队列任务完成后未返回结果地址");
+  }
+
+  const resultResponse = await fetch(finalEndpoint, {
+    headers: {
+      Authorization: `Key ${apiKey}`,
+    },
+  });
+  const resultRaw = await resultResponse.text();
+  const resultPayload = tryParseJson(resultRaw);
+
+  if (!resultResponse.ok) {
+    throw new Error(
+      `Fal 队列结果获取失败: ${resultResponse.status} - ${previewResponseText(resultRaw, 300)}`,
+    );
+  }
+
+  const imageUrl = resultPayload
+    ? extractImageUrlFromPayload(resultPayload)
+    : extractImageUrlFromText(resultRaw);
+
+  if (!imageUrl) {
+    throw new Error("Fal 队列结果中未找到图片地址");
+  }
+
+  return normalizeImageUrl(finalEndpoint, imageUrl);
+}
+
+async function requestImageFromFal(
+  apiHost: string,
+  apiKey: string,
+  model: string,
+  prompt: string,
+  referenceImages: string[],
+  size: string,
+): Promise<string> {
+  const cleanedReferences = normalizeReferenceImages(referenceImages);
+  const endpointModels = resolveFalEndpointModelCandidates(
+    model,
+    cleanedReferences.length > 0,
+  );
+
+  const primaryInput = buildFalInput(prompt, cleanedReferences, size, true);
+  const compactInput = buildFalInput(prompt, cleanedReferences, size, false);
+  const errors: string[] = [];
+  const shouldTryCompact =
+    JSON.stringify(primaryInput) !== JSON.stringify(compactInput);
+
+  for (const endpointModel of endpointModels) {
+    const endpoint = buildFalEndpoint(apiHost, endpointModel);
+    const primaryAttempt = await requestImageFromFalEndpoint(
+      endpoint,
+      primaryInput,
+      apiKey,
+      `fal/sync-primary/${endpointModel}`,
+    );
+
+    if (primaryAttempt.imageUrl) {
+      return primaryAttempt.imageUrl;
+    }
+
+    if (primaryAttempt.error) {
+      errors.push(`${endpointModel}/sync-primary: ${primaryAttempt.error}`);
+    }
+
+    if (shouldTryCompact) {
+      const compactAttempt = await requestImageFromFalEndpoint(
+        endpoint,
+        compactInput,
+        apiKey,
+        `fal/sync-compact/${endpointModel}`,
+      );
+
+      if (compactAttempt.imageUrl) {
+        return compactAttempt.imageUrl;
+      }
+
+      if (compactAttempt.error) {
+        errors.push(`${endpointModel}/sync-compact: ${compactAttempt.error}`);
+      }
+    }
+
+    try {
+      return await requestImageFromFalQueue(
+        apiHost,
+        endpointModel,
+        compactInput,
+        apiKey,
+      );
+    } catch (error) {
+      const queueError = error instanceof Error ? error.message : String(error);
+      errors.push(`${endpointModel}/queue: ${queueError}`);
+    }
+  }
+
+  throw new Error(`Fal 图片生成失败（${errors.join("; ")}）`);
+}
+
 /**
  * 检查 Provider 是否支持图片生成
  * 通过 Provider ID 或 type 匹配
@@ -1189,6 +1652,8 @@ export function useImageGen() {
           selectedProvider.id === "new-api" ||
           selectedProvider.type === "new-api" ||
           selectedProvider.type === "NewApi";
+        const isFalProvider =
+          selectedProvider.id === "fal" || selectedProvider.type === "fal";
 
         if (isNewApi) {
           for (const item of generationItems) {
@@ -1203,6 +1668,51 @@ export function useImageGen() {
               }
 
               const imageUrl = await requestImageFromNewApi(
+                selectedProvider.api_host,
+                apiKey,
+                selectedModelId,
+                prompt,
+                referenceImages,
+                requestSize,
+              );
+
+              setImages((prev) => {
+                const updated = prev.map((img) =>
+                  img.id === item.id
+                    ? { ...img, url: imageUrl, status: "complete" as const }
+                    : img,
+                );
+                saveHistory(updated);
+                return updated;
+              });
+            } catch (error) {
+              const errorMessage =
+                error instanceof Error ? error.message : String(error);
+
+              setImages((prev) => {
+                const updated = prev.map((img) =>
+                  img.id === item.id
+                    ? { ...img, status: "error" as const, error: errorMessage }
+                    : img,
+                );
+                saveHistory(updated);
+                return updated;
+              });
+            }
+          }
+        } else if (isFalProvider) {
+          for (const item of generationItems) {
+            try {
+              const apiKey = await apiKeyProviderApi.getNextApiKey(
+                selectedProvider.id,
+              );
+              if (!apiKey) {
+                throw new Error(
+                  "该 Provider 没有可用的 API Key，请在凭证池中添加",
+                );
+              }
+
+              const imageUrl = await requestImageFromFal(
                 selectedProvider.api_host,
                 apiKey,
                 selectedModelId,
@@ -1438,3 +1948,10 @@ export function useImageGen() {
     newImage,
   };
 }
+
+export const __imageGenFalTestUtils = {
+  resolveFalEndpointModelCandidates,
+  buildFalEndpoint,
+  resolveFalQueueHost,
+  requestImageFromFal,
+};

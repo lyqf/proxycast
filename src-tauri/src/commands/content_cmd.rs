@@ -20,6 +20,7 @@ pub struct ContentListItem {
     pub status: String,
     pub order: i32,
     pub word_count: i64,
+    pub metadata: Option<serde_json::Value>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -34,6 +35,7 @@ impl From<Content> for ContentListItem {
             status: content.status.as_str().to_string(),
             order: content.order,
             word_count: content.word_count,
+            metadata: content.metadata,
             created_at: content.created_at.timestamp_millis(),
             updated_at: content.updated_at.timestamp_millis(),
         }
