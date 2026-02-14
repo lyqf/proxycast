@@ -152,8 +152,50 @@ jobs:
           # 默认不启用 voice feature（包含 whisper-rs，编译很慢）
           args: --target ${{ matrix.target }}
 
-      - name: Build Tauri app (macOS/Windows)
-        if: matrix.platform != 'ubuntu-22.04'
+      - name: Build Tauri app (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 禁用 LTO 加速编译（正式发布可改为 thin）
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          # 增加并行编译单元
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 32
+          CARGO_INCREMENTAL: 0
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+        with:
+          tauriScript: npx tauri
+          tagName: ${{ github.event.inputs.version || github.ref_name }}
+          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseBody: |
+            ## ProxyCast Release
+
+            ### Features
+            - AI API 代理服务
+            - Kiro OAuth 凭证管理
+            - OpenAI/Anthropic 兼容 API
+            - 自动检测凭证文件变化
+            - 多 Provider 支持
+
+            ### Downloads
+            - **macOS (Apple Silicon)**: `proxycast_*_aarch64.dmg`
+            - **macOS (Intel)**: `proxycast_*_x64.dmg`
+            - **Windows (64-bit)**: `proxycast_*_x64-setup.exe`
+            - **Linux x64**: `proxycast_*_amd64.deb` / `proxycast_*_amd64.AppImage`
+
+            ### 默认配置
+            - **端口**: 8999
+            - **API Key**: 首次启动自动生成，可在设置页查看/修改
+          releaseDraft: false
+          prerelease: false
+          # 默认不启用 voice feature（包含 whisper-rs，编译很慢）
+          args: --target ${{ matrix.target }}
+
+      - name: Build Tauri app (macOS with notarization, attempt 1)
+        id: build_macos_primary
+        if: matrix.platform == 'macos-latest'
+        continue-on-error: true
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -199,6 +241,96 @@ jobs:
           prerelease: false
           # 默认不启用 voice feature（包含 whisper-rs，编译很慢）
           args: --target ${{ matrix.target }}
+
+      - name: Build Tauri app (macOS with notarization, retry)
+        id: build_macos_retry
+        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure'
+        continue-on-error: true
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 32
+          CARGO_INCREMENTAL: 0
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tauriScript: npx tauri
+          tagName: ${{ github.event.inputs.version || github.ref_name }}
+          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseBody: |
+            ## ProxyCast Release
+
+            ### Features
+            - AI API 代理服务
+            - Kiro OAuth 凭证管理
+            - OpenAI/Anthropic 兼容 API
+            - 自动检测凭证文件变化
+            - 多 Provider 支持
+
+            ### Downloads
+            - **macOS (Apple Silicon)**: `proxycast_*_aarch64.dmg`
+            - **macOS (Intel)**: `proxycast_*_x64.dmg`
+            - **Windows (64-bit)**: `proxycast_*_x64-setup.exe`
+            - **Linux x64**: `proxycast_*_amd64.deb` / `proxycast_*_amd64.AppImage`
+
+            ### 默认配置
+            - **端口**: 8999
+            - **API Key**: 首次启动自动生成，可在设置页查看/修改
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Build Tauri app (macOS fallback without notarization)
+        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure' && steps.build_macos_retry.outcome == 'failure'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 32
+          CARGO_INCREMENTAL: 0
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        with:
+          tauriScript: npx tauri
+          tagName: ${{ github.event.inputs.version || github.ref_name }}
+          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseBody: |
+            ## ProxyCast Release
+
+            ### Features
+            - AI API 代理服务
+            - Kiro OAuth 凭证管理
+            - OpenAI/Anthropic 兼容 API
+            - 自动检测凭证文件变化
+            - 多 Provider 支持
+
+            ### Downloads
+            - **macOS (Apple Silicon)**: `proxycast_*_aarch64.dmg`
+            - **macOS (Intel)**: `proxycast_*_x64.dmg`
+            - **Windows (64-bit)**: `proxycast_*_x64-setup.exe`
+            - **Linux x64**: `proxycast_*_amd64.deb` / `proxycast_*_amd64.AppImage`
+
+            ### 默认配置
+            - **端口**: 8999
+            - **API Key**: 首次启动自动生成，可在设置页查看/修改
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Warn on macOS notarization fallback
+        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure' && steps.build_macos_retry.outcome == 'failure'
+        run: |
+          echo "::warning::macOS notarization failed twice; fallback build skipped notarization and produced a signed-only artifact."
 
       # 注意：移除了 Post-build cleanup 步骤
       # 之前的清理会删除 deps/build/incremental 目录，导致缓存无法复用
