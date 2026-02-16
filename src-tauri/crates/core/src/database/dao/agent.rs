@@ -2,7 +2,7 @@
 //!
 //! 提供 Agent 会话和消息的持久化存储功能
 
-use crate::agent::types::{AgentMessage, AgentSession, MessageContent, ToolCall};
+use crate::agent::types::{AgentMessage, AgentSession, ContentPart, MessageContent, ToolCall};
 use rusqlite::{params, Connection};
 
 /// 解析消息内容 JSON，支持多种格式
@@ -14,28 +14,34 @@ use rusqlite::{params, Connection};
 fn parse_message_content(content_json: &str) -> MessageContent {
     // 尝试解析为 Aster 格式 (Vec<AsterMessageContent>)
     if let Ok(aster_contents) = serde_json::from_str::<Vec<serde_json::Value>>(content_json) {
-        let mut text_parts: Vec<String> = Vec::new();
+        let mut parts: Vec<ContentPart> = Vec::new();
 
         for item in aster_contents {
             // Aster 格式: {"Text": "..."} 或 {"ToolRequest": ...}
             if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
-                text_parts.push(text.to_string());
+                parts.push(ContentPart::Text {
+                    text: text.to_string(),
+                });
             }
             // 也支持小写 "text" 格式
             else if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                text_parts.push(text.to_string());
+                parts.push(ContentPart::Text {
+                    text: text.to_string(),
+                });
             }
             // ProxyCast Parts 格式: {"type": "text", "text": "..."}
             else if item.get("type").and_then(|v| v.as_str()) == Some("text") {
                 if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                    text_parts.push(text.to_string());
+                    parts.push(ContentPart::Text {
+                        text: text.to_string(),
+                    });
                 }
             }
             // 忽略 ToolRequest、ToolResponse 等非文本内容
         }
 
-        if !text_parts.is_empty() {
-            return MessageContent::Text(text_parts.join("\n"));
+        if !parts.is_empty() {
+            return MessageContent::Parts(parts);
         }
     }
 

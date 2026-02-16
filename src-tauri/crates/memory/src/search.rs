@@ -146,10 +146,7 @@ fn parse_memory_from_row(
             let vec_len = blob.len() / 4;
             let mut vec = Vec::with_capacity(vec_len);
             for chunk in blob.chunks_exact(4) {
-                let bytes: [u8; 4] = match chunk.try_into() {
-                    Ok(arr) => arr,
-                    Err(_) => [0; 4],
-                };
+                let bytes: [u8; 4] = chunk.try_into().unwrap_or_default();
                 let val = f32::from_le_bytes(bytes);
                 vec.push(val);
             }

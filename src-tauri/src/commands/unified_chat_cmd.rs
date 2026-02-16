@@ -123,10 +123,16 @@ pub async fn chat_create_session(
         updated_at: now,
     };
 
-    // 保存到数据库
+    // 保存到数据库（异步化）
     {
-        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
-        ChatDao::create_session(&conn, &session).map_err(|e| format!("创建会话失败: {e}"))?;
+        let db = db.inner().clone();
+        let session_clone = session.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+            ChatDao::create_session(&conn, &session_clone).map_err(|e| format!("创建会话失败: {e}"))
+        })
+        .await
+        .map_err(|e| format!("任务执行失败: {e}"))??;
     }
 
     // 初始化 Aster Agent（如果是 Agent 或 Creator 模式）
@@ -158,20 +164,25 @@ pub async fn chat_list_sessions(
     db: State<'_, DbConnection>,
     mode: Option<ChatMode>,
 ) -> Result<Vec<SessionResponse>, String> {
-    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
-    let sessions =
-        ChatDao::list_sessions(&conn, mode).map_err(|e| format!("获取会话列表失败: {e}"))?;
+        let sessions =
+            ChatDao::list_sessions(&conn, mode).map_err(|e| format!("获取会话列表失败: {e}"))?;
 
-    let mut result: Vec<SessionResponse> = Vec::new();
-    for session in sessions {
-        let message_count = ChatDao::get_message_count(&conn, &session.id).unwrap_or(0);
-        let mut resp = SessionResponse::from(session);
-        resp.message_count = message_count;
-        result.push(resp);
-    }
+        let mut result: Vec<SessionResponse> = Vec::new();
+        for session in sessions {
+            let message_count = ChatDao::get_message_count(&conn, &session.id).unwrap_or(0);
+            let mut resp = SessionResponse::from(session);
+            resp.message_count = message_count;
+            result.push(resp);
+        }
 
-    Ok(result)
+        Ok(result)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?
 }
 
 /// 获取会话详情
@@ -180,17 +191,22 @@ pub async fn chat_get_session(
     db: State<'_, DbConnection>,
     session_id: String,
 ) -> Result<SessionResponse, String> {
-    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
-    let session = ChatDao::get_session(&conn, &session_id)
-        .map_err(|e| format!("获取会话失败: {e}"))?
-        .ok_or_else(|| "会话不存在".to_string())?;
+        let session = ChatDao::get_session(&conn, &session_id)
+            .map_err(|e| format!("获取会话失败: {e}"))?
+            .ok_or_else(|| "会话不存在".to_string())?;
 
-    let message_count = ChatDao::get_message_count(&conn, &session_id).unwrap_or(0);
-    let mut resp = SessionResponse::from(session);
-    resp.message_count = message_count;
+        let message_count = ChatDao::get_message_count(&conn, &session_id).unwrap_or(0);
+        let mut resp = SessionResponse::from(session);
+        resp.message_count = message_count;
 
-    Ok(resp)
+        Ok(resp)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?
 }
 
 /// 删除会话
@@ -199,16 +215,21 @@ pub async fn chat_delete_session(
     db: State<'_, DbConnection>,
     session_id: String,
 ) -> Result<bool, String> {
-    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
-    let deleted =
-        ChatDao::delete_session(&conn, &session_id).map_err(|e| format!("删除会话失败: {e}"))?;
+        let deleted = ChatDao::delete_session(&conn, &session_id)
+            .map_err(|e| format!("删除会话失败: {e}"))?;
 
-    if deleted {
-        tracing::info!("[UnifiedChat] 删除会话: id={}", session_id);
-    }
+        if deleted {
+            tracing::info!("[UnifiedChat] 删除会话: id={}", session_id);
+        }
 
-    Ok(deleted)
+        Ok(deleted)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?
 }
 
 /// 重命名会话
@@ -218,18 +239,23 @@ pub async fn chat_rename_session(
     session_id: String,
     title: String,
 ) -> Result<(), String> {
-    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
-    ChatDao::update_title(&conn, &session_id, &title)
-        .map_err(|e| format!("重命名会话失败: {e}"))?;
+        ChatDao::update_title(&conn, &session_id, &title)
+            .map_err(|e| format!("重命名会话失败: {e}"))?;
 
-    tracing::info!(
-        "[UnifiedChat] 重命名会话: id={}, title={}",
-        session_id,
-        title
-    );
+        tracing::info!(
+            "[UnifiedChat] 重命名会话: id={}, title={}",
+            session_id,
+            title
+        );
 
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?
 }
 
 // ============================================================================
@@ -243,12 +269,17 @@ pub async fn chat_get_messages(
     session_id: String,
     limit: Option<i32>,
 ) -> Result<Vec<ChatMessage>, String> {
-    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    let db = db.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
-    let messages = ChatDao::get_messages(&conn, &session_id, limit)
-        .map_err(|e| format!("获取消息失败: {e}"))?;
+        let messages = ChatDao::get_messages(&conn, &session_id, limit)
+            .map_err(|e| format!("获取消息失败: {e}"))?;
 
-    Ok(messages)
+        Ok(messages)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?
 }
 
 /// 发送消息并获取流式响应
@@ -261,6 +292,8 @@ pub async fn chat_send_message(
     agent_state: State<'_, AsterAgentState>,
     request: SendMessageRequest,
 ) -> Result<(), String> {
+    let start_time = std::time::Instant::now();
+
     let image_count = request.images.as_ref().map(|v| v.len()).unwrap_or(0);
     tracing::info!(
         "[UnifiedChat] 发送消息: session={}, event={}, images={}",
@@ -287,16 +320,25 @@ pub async fn chat_send_message(
         }
     }
 
-    // 获取会话信息
+    // 获取会话信息（异步化数据库操作）
+    let db_start = std::time::Instant::now();
     let session = {
-        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
-        ChatDao::get_session(&conn, &request.session_id)
-            .map_err(|e| format!("获取会话失败: {e}"))?
-            .ok_or_else(|| "会话不存在".to_string())?
+        let db = db.inner().clone();
+        let session_id = request.session_id.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+            ChatDao::get_session(&conn, &session_id)
+                .map_err(|e| format!("获取会话失败: {e}"))?
+                .ok_or_else(|| "会话不存在".to_string())
+        })
+        .await
+        .map_err(|e| format!("任务执行失败: {e}"))??
     };
+    let db_elapsed = db_start.elapsed();
+    tracing::debug!("[UnifiedChat] 数据库查询耗时: {:?}", db_elapsed);
 
     // 根据模式处理
-    match session.mode {
+    let result = match session.mode {
         ChatMode::Agent | ChatMode::Creator => {
             // 使用 Aster Agent 处理
             send_message_with_aster(
@@ -323,7 +365,16 @@ pub async fn chat_send_message(
             )
             .await
         }
-    }
+    };
+
+    let total_elapsed = start_time.elapsed();
+    tracing::info!(
+        "[UnifiedChat] 消息发送完成: session={}, 总耗时={:?}",
+        request.session_id,
+        total_elapsed
+    );
+
+    result
 }
 
 /// 使用 Aster Agent 发送消息
@@ -336,15 +387,26 @@ async fn send_message_with_aster(
     event_name: &str,
     system_prompt: Option<&str>,
 ) -> Result<(), String> {
+    let start_time = std::time::Instant::now();
+
     // 确保 Agent 已初始化
+    let init_start = std::time::Instant::now();
     if !agent_state.is_initialized().await {
         agent_state.init_agent_with_db(db).await?;
     }
+    let init_elapsed = init_start.elapsed();
+    tracing::debug!("[UnifiedChat] Agent 初始化检查耗时: {:?}", init_elapsed);
 
     // 检查 Provider 是否已配置
+    let provider_check_start = std::time::Instant::now();
     if !agent_state.is_provider_configured().await {
         return Err("Provider 未配置，请先配置凭证".to_string());
     }
+    let provider_check_elapsed = provider_check_start.elapsed();
+    tracing::debug!(
+        "[UnifiedChat] Provider 配置检查耗时: {:?}",
+        provider_check_elapsed
+    );
 
     // 创建取消令牌
     let cancel_token = agent_state.create_cancel_token(session_id).await;
@@ -365,15 +427,27 @@ async fn send_message_with_aster(
     let agent = guard.as_ref().ok_or("Agent 未初始化")?;
 
     // 调用 Agent
+    let reply_start = std::time::Instant::now();
     let stream_result = agent
         .reply(user_message, session_config, Some(cancel_token.clone()))
         .await;
+
+    let mut first_chunk_time: Option<std::time::Instant> = None;
+    let mut chunk_count = 0;
 
     match stream_result {
         Ok(mut stream) => {
             while let Some(event_result) = stream.next().await {
                 match event_result {
                     Ok(agent_event) => {
+                        // 记录首个 chunk 时间（TTFB）
+                        if first_chunk_time.is_none() {
+                            first_chunk_time = Some(std::time::Instant::now());
+                            let ttfb = first_chunk_time.unwrap() - reply_start;
+                            tracing::info!("[UnifiedChat] TTFB (首字节时间): {:?}", ttfb);
+                        }
+                        chunk_count += 1;
+
                         let tauri_events = convert_agent_event(agent_event);
                         for tauri_event in tauri_events {
                             if let Err(e) = app.emit(event_name, &tauri_event) {
@@ -393,6 +467,14 @@ async fn send_message_with_aster(
             // 发送完成事件
             let done_event = TauriAgentEvent::FinalDone { usage: None };
             let _ = app.emit(event_name, &done_event);
+
+            let stream_elapsed = start_time.elapsed();
+            tracing::info!(
+                "[UnifiedChat] 流式传输完成: session={}, chunks={}, 总耗时={:?}",
+                session_id,
+                chunk_count,
+                stream_elapsed
+            );
         }
         Err(e) => {
             let error_event = TauriAgentEvent::Error {

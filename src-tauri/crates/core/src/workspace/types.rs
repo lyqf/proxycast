@@ -55,7 +55,7 @@ impl WorkspaceType {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "temporary" => WorkspaceType::Temporary,
             "general" => WorkspaceType::General,
@@ -221,51 +221,36 @@ mod tests {
     #[test]
     fn test_workspace_type_from_str() {
         assert_eq!(
-            WorkspaceType::from_str("persistent"),
+            WorkspaceType::parse("persistent"),
             WorkspaceType::Persistent
         );
+        assert_eq!(WorkspaceType::parse("temporary"), WorkspaceType::Temporary);
+        assert_eq!(WorkspaceType::parse("general"), WorkspaceType::General);
         assert_eq!(
-            WorkspaceType::from_str("temporary"),
-            WorkspaceType::Temporary
-        );
-        assert_eq!(WorkspaceType::from_str("general"), WorkspaceType::General);
-        assert_eq!(
-            WorkspaceType::from_str("social-media"),
+            WorkspaceType::parse("social-media"),
             WorkspaceType::SocialMedia
         );
-        assert_eq!(WorkspaceType::from_str("poster"), WorkspaceType::Poster);
-        assert_eq!(WorkspaceType::from_str("music"), WorkspaceType::Music);
-        assert_eq!(
-            WorkspaceType::from_str("knowledge"),
-            WorkspaceType::Knowledge
-        );
-        assert_eq!(WorkspaceType::from_str("planning"), WorkspaceType::Planning);
-        assert_eq!(WorkspaceType::from_str("document"), WorkspaceType::Document);
-        assert_eq!(WorkspaceType::from_str("video"), WorkspaceType::Video);
-        assert_eq!(WorkspaceType::from_str("novel"), WorkspaceType::Novel);
+        assert_eq!(WorkspaceType::parse("poster"), WorkspaceType::Poster);
+        assert_eq!(WorkspaceType::parse("music"), WorkspaceType::Music);
+        assert_eq!(WorkspaceType::parse("knowledge"), WorkspaceType::Knowledge);
+        assert_eq!(WorkspaceType::parse("planning"), WorkspaceType::Planning);
+        assert_eq!(WorkspaceType::parse("document"), WorkspaceType::Document);
+        assert_eq!(WorkspaceType::parse("video"), WorkspaceType::Video);
+        assert_eq!(WorkspaceType::parse("novel"), WorkspaceType::Novel);
     }
 
     #[test]
     fn test_legacy_type_migration() {
         // 旧类型应该正确映射到新类型
-        assert_eq!(WorkspaceType::from_str("drama"), WorkspaceType::Video);
-        assert_eq!(
-            WorkspaceType::from_str("social"),
-            WorkspaceType::SocialMedia
-        );
+        assert_eq!(WorkspaceType::parse("drama"), WorkspaceType::Video);
+        assert_eq!(WorkspaceType::parse("social"), WorkspaceType::SocialMedia);
     }
 
     #[test]
     fn test_unknown_type_defaults_to_persistent() {
-        assert_eq!(
-            WorkspaceType::from_str("unknown"),
-            WorkspaceType::Persistent
-        );
-        assert_eq!(WorkspaceType::from_str(""), WorkspaceType::Persistent);
-        assert_eq!(
-            WorkspaceType::from_str("invalid"),
-            WorkspaceType::Persistent
-        );
+        assert_eq!(WorkspaceType::parse("unknown"), WorkspaceType::Persistent);
+        assert_eq!(WorkspaceType::parse(""), WorkspaceType::Persistent);
+        assert_eq!(WorkspaceType::parse("invalid"), WorkspaceType::Persistent);
     }
 
     #[test]
@@ -330,7 +315,7 @@ mod tests {
 
         for wt in types {
             let s = wt.as_str();
-            let parsed = WorkspaceType::from_str(s);
+            let parsed = WorkspaceType::parse(s);
             assert_eq!(wt, parsed, "Roundtrip failed for {wt:?}");
         }
     }

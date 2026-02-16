@@ -114,7 +114,7 @@ pub fn calculate_approval_rate(feedbacks: &[UserFeedback]) -> f32 {
         }
     }
 
-    (score / total).max(0.0).min(1.0)
+    (score / total).clamp(0.0, 1.0)
 }
 
 // ==================== Extraction Parameters ====================

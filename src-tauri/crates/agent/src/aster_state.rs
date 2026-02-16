@@ -26,6 +26,7 @@ use aster::agents::{Agent, SessionConfig};
 use aster::model::ModelConfig;
 #[cfg(test)]
 use aster::skills::{global_registry, load_skills_from_directory, SkillSource};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -61,6 +62,10 @@ pub struct AsterAgentState {
     current_provider_config: Arc<RwLock<Option<ProviderConfig>>>,
     /// 凭证桥接器
     credential_bridge: CredentialBridge,
+    /// Agent 初始化状态缓存（避免每次都获取锁）
+    initialized_cache: Arc<AtomicBool>,
+    /// Provider 配置状态缓存（避免每次都获取锁）
+    provider_configured_cache: Arc<AtomicBool>,
 }
 
 impl Default for AsterAgentState {
@@ -77,6 +82,8 @@ impl AsterAgentState {
             cancel_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
             current_provider_config: Arc::new(RwLock::new(None)),
             credential_bridge: CredentialBridge::new(),
+            initialized_cache: Arc::new(AtomicBool::new(false)),
+            provider_configured_cache: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -91,6 +98,11 @@ impl AsterAgentState {
     /// # 参数
     /// - `db`: 数据库连接，用于创建 SessionStore
     pub async fn init_agent_with_db(&self, db: &DbConnection) -> Result<(), String> {
+        // 快速路径：检查缓存
+        if self.initialized_cache.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         let mut agent_guard = self.agent.write().await;
         if agent_guard.is_none() {
             // 创建 SessionStore
@@ -116,10 +128,16 @@ impl AsterAgentState {
             crate::reload_proxycast_skills();
 
             *agent_guard = Some(agent);
+
+            // 更新缓存
+            self.initialized_cache.store(true, Ordering::Relaxed);
+
             tracing::info!(
                 "[AsterAgent] Agent 初始化成功，已注入 ProxyCastSessionStore、ProxyCast 身份和 Skills"
             );
         } else {
+            // 更新缓存
+            self.initialized_cache.store(true, Ordering::Relaxed);
             tracing::debug!("[AsterAgent] Agent 已初始化，跳过");
         }
         Ok(())
@@ -196,6 +214,10 @@ impl AsterAgentState {
         let mut config_guard = self.current_provider_config.write().await;
         *config_guard = Some(config.clone());
 
+        // 更新缓存
+        self.provider_configured_cache
+            .store(true, Ordering::Relaxed);
+
         tracing::info!(
             "[AsterAgent] Provider 配置成功: {} / {}",
             config.provider_name,
@@ -255,6 +277,10 @@ impl AsterAgentState {
         };
         let mut config_guard = self.current_provider_config.write().await;
         *config_guard = Some(config);
+
+        // 更新缓存
+        self.provider_configured_cache
+            .store(true, Ordering::Relaxed);
 
         // 记录凭证使用
         if let Err(e) = self
@@ -362,12 +388,26 @@ impl AsterAgentState {
     pub async fn clear_provider_config(&self) {
         let mut config_guard = self.current_provider_config.write().await;
         *config_guard = None;
+
+        // 更新缓存
+        self.provider_configured_cache
+            .store(false, Ordering::Relaxed);
+
         tracing::info!("[AsterAgent] Provider 配置已清除");
     }
 
     /// 检查 Provider 是否已配置
     pub async fn is_provider_configured(&self) -> bool {
-        self.current_provider_config.read().await.is_some()
+        // 快速路径：检查缓存
+        if self.provider_configured_cache.load(Ordering::Relaxed) {
+            return true;
+        }
+
+        // 慢速路径：检查实际状态
+        let result = self.current_provider_config.read().await.is_some();
+        self.provider_configured_cache
+            .store(result, Ordering::Relaxed);
+        result
     }
 
     /// 获取 Agent 的只读引用并执行同步操作
@@ -511,7 +551,15 @@ impl AsterAgentState {
 
     /// 检查 Agent 是否已初始化
     pub async fn is_initialized(&self) -> bool {
-        self.agent.read().await.is_some()
+        // 快速路径：检查缓存
+        if self.initialized_cache.load(Ordering::Relaxed) {
+            return true;
+        }
+
+        // 慢速路径：检查实际状态
+        let result = self.agent.read().await.is_some();
+        self.initialized_cache.store(result, Ordering::Relaxed);
+        result
     }
 }
 

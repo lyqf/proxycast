@@ -464,15 +464,13 @@ pub fn cleanup_legacy_api_key_credentials(conn: &Connection) -> Result<usize, St
         })
         .map_err(|e| format!("查询旧凭证失败: {e}"))?;
 
-    for row_result in rows {
-        if let Ok((uuid, name, provider_type)) = row_result {
-            tracing::info!(
-                "[清理] 将删除旧凭证: {} (name: {}, type: {})",
-                uuid,
-                name.as_deref().unwrap_or("未命名"),
-                provider_type
-            );
-        }
+    for (uuid, name, provider_type) in rows.into_iter().filter_map(|row_result| row_result.ok()) {
+        tracing::info!(
+            "[清理] 将删除旧凭证: {} (name: {}, type: {})",
+            uuid,
+            name.as_deref().unwrap_or("未命名"),
+            provider_type
+        );
     }
 
     // 删除旧的 API Key 凭证

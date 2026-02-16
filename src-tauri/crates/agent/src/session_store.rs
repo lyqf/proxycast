@@ -127,6 +127,29 @@ pub fn get_session_sync(db: &DbConnection, session_id: &str) -> Result<SessionDe
     let messages =
         AgentDao::get_messages(&conn, session_id).map_err(|e| format!("获取消息失败: {e}"))?;
 
+    let tauri_messages: Vec<TauriMessage> = messages
+        .into_iter()
+        .map(|message| convert_agent_message(&message))
+        .collect();
+
+    // 测试序列化
+    let test_content = vec![
+        TauriMessageContent::Text {
+            text: "Hello".to_string(),
+        },
+        TauriMessageContent::Thinking {
+            text: "Thinking...".to_string(),
+        },
+    ];
+    if let Ok(json) = serde_json::to_string(&test_content) {
+        tracing::info!("[SessionStore] 测试序列化: {}", json);
+    }
+
+    // 调试日志:序列化后的 JSON
+    if let Ok(json) = serde_json::to_string_pretty(&tauri_messages) {
+        tracing::debug!("[SessionStore] 序列化消息 JSON:\n{}", json);
+    }
+
     Ok(SessionDetail {
         id: session.id,
         name: session.title.unwrap_or_else(|| "未命名".to_string()),
@@ -136,10 +159,7 @@ pub fn get_session_sync(db: &DbConnection, session_id: &str) -> Result<SessionDe
         updated_at: chrono::DateTime::parse_from_rfc3339(&session.updated_at)
             .map(|dt| dt.timestamp())
             .unwrap_or(0),
-        messages: messages
-            .into_iter()
-            .map(|message| convert_agent_message(&message))
-            .collect(),
+        messages: tauri_messages,
     })
 }
 
@@ -170,7 +190,7 @@ pub fn delete_session_sync(db: &DbConnection, session_id: &str) -> Result<(), St
 
 /// 将 AgentMessage 转换为 TauriMessage
 fn convert_agent_message(message: &AgentMessage) -> TauriMessage {
-    let content = match &message.content {
+    let mut content = match &message.content {
         MessageContent::Text(text) => vec![TauriMessageContent::Text { text: text.clone() }],
         MessageContent::Parts(parts) => parts
             .iter()
@@ -184,14 +204,33 @@ fn convert_agent_message(message: &AgentMessage) -> TauriMessage {
             .collect(),
     };
 
+    // 添加 reasoning_content 作为 thinking 类型
+    if let Some(reasoning) = &message.reasoning_content {
+        content.insert(
+            0,
+            TauriMessageContent::Thinking {
+                text: reasoning.clone(),
+            },
+        );
+    }
+
     let timestamp = chrono::DateTime::parse_from_rfc3339(&message.timestamp)
         .map(|dt| dt.timestamp())
         .unwrap_or(0);
 
-    TauriMessage {
+    let result = TauriMessage {
         id: None,
         role: message.role.clone(),
         content,
         timestamp,
-    }
+    };
+
+    // 调试日志
+    tracing::debug!(
+        "[SessionStore] 转换消息: role={}, content={:?}",
+        result.role,
+        result.content
+    );
+
+    result
 }

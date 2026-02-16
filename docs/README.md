@@ -1,50 +1,37 @@
 # docs
 
-<!-- 一旦我所属的文件夹有所变化，请更新我 -->
+## 目录定位
 
-## 架构说明
+`docs/` 是 ProxyCast 文档中心，分为两类受众：
 
-项目文档目录，包含技术规格、操作指南、AI Agent 文档和文档站点配置。
-使用 Nuxt Content 构建文档站点。
+- 普通创作者：优先阅读 `content/` 下的入门与用户指南
+- 开发者与维护者：阅读 `aiprompts/`、`develop/`、`tests/` 等工程文档
 
-## 文件索引
+文档站基于 Nuxt Content 构建。
 
-- `aiprompts/` - AI Agent 模块文档（参考 aster-rust 模式）
-- `content/` - 文档内容（Markdown）
-- `develop/` - 开发文档
-- `images/` - 文档图片资源
-- `plugins/` - 插件文档
-- `prd/` - 产品需求文档
-- `tests/` - 测试文档
-- `TECH_SPEC.md` - 技术规格文档
-- `LLM_FLOW_MONITOR_SPEC.md` - LLM 流量监控规格
-- `ops.md` - 运维操作指南
-- `plugin-ui-design.md` - 插件 UI 设计文档
-- `three-stage-workflow-guide.md` - 三阶段工作流指南
-- `app.config.ts` - Nuxt 应用配置
-- `nuxt.config.ts` - Nuxt 框架配置
-- `package.json` - 文档站点依赖
+## 目录索引
 
-## aiprompts 文档索引
+- `content/`：对外文档站正文（产品介绍、用户指南、进阶能力）
+- `aiprompts/`：模块级工程文档（前后端组件、服务、命令、数据层）
+- `develop/`：开发流程与协作规范
+- `plugins/`：插件与扩展相关文档
+- `tests/`：测试策略与用例文档
+- `images/`：文档图片资源
+- `TECH_SPEC.md`：技术规格文档
+- `ops.md`：运维与发布说明
+- `app.config.ts` / `nuxt.config.ts` / `package.json`：文档站配置
 
-AI Agent 专用文档，提供模块级别的详细说明：
+## 当前叙事基线
 
-- `overview.md` - 项目架构概览
-- `providers.md` - Provider 系统
-- `credential-pool.md` - 凭证池管理
-- `converter.md` - 协议转换
-- `server.md` - HTTP 服务器
-- `flow-monitor.md` - 流量监控
-- `components.md` - 组件系统
-- `hooks.md` - React Hooks
-- `services.md` - 业务服务
-- `commands.md` - Tauri 命令
-- `mcp.md` - MCP 服务器
-- `lib.md` - 工具库
-- `plugins.md` - 插件系统
-- `database.md` - 数据库层
-- `terminal.md` - 内置终端
+对外文档（`content/`）默认采用以下口径：
 
-## 更新提醒
+1. 主叙事是“创作类 AI Agent 平台”，不再以“代理服务”作为首页主线
+2. 先讲创作流程与场景，再讲模型连接和 API 兼容
+3. 首页与入门页优先覆盖九大创作主题与资源沉淀能力
 
-任何文件变更后，请更新此文档和相关的上级文档。
+## 维护原则
+
+1. 先读后写：更新章节前先核对真实功能实现
+2. 用户优先：首屏文案避免工程术语堆叠
+3. 分层清晰：用户文档与工程文档分开表达
+4. 同步更新：功能改动后同步修正文档入口页与对应章节

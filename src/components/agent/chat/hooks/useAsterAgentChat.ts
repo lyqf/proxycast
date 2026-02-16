@@ -1011,11 +1011,12 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
         toast.info("已切换话题");
       } catch (error) {
         console.error("[AsterChat] 切换话题失败:", error);
+        console.error("[AsterChat] 错误详情:", JSON.stringify(error, null, 2));
         setMessages([]);
         setSessionId(null);
         saveTransient(getScopedSessionKey(), null);
         savePersisted(getScopedPersistedSessionKey(), null);
-        toast.error("加载对话历史失败");
+        toast.error(`加载对话历史失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
     [

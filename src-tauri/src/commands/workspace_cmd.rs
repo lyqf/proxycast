@@ -136,7 +136,7 @@ pub async fn workspace_create(
 
     let workspace_type = request
         .workspace_type
-        .map(|t| WorkspaceType::from_str(&t))
+        .map(|t| WorkspaceType::parse(&t))
         .unwrap_or_default();
 
     let workspace = manager.create_with_type(

@@ -7,7 +7,7 @@ use crate::database::DbConnection;
 use chrono::Utc;
 use rusqlite::params;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Workspace 管理器
@@ -186,7 +186,7 @@ impl WorkspaceManager {
     }
 
     /// 通过路径获取 workspace
-    pub fn get_by_path(&self, root_path: &PathBuf) -> Result<Option<Workspace>, String> {
+    pub fn get_by_path(&self, root_path: &Path) -> Result<Option<Workspace>, String> {
         let root_path_str = root_path.to_str().ok_or("无效的路径")?;
 
         let conn = self.db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
@@ -464,7 +464,7 @@ impl WorkspaceManager {
         Ok(Workspace {
             id,
             name,
-            workspace_type: WorkspaceType::from_str(&workspace_type_str),
+            workspace_type: WorkspaceType::parse(&workspace_type_str),
             root_path: PathBuf::from(root_path_str),
             is_default,
             created_at: chrono::DateTime::from_timestamp_millis(created_at_ms)

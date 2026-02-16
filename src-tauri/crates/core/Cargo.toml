@@ -6,6 +6,9 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Shared API models
+aster-models.workspace = true
+
 # 序列化
 serde.workspace = true
 serde_json.workspace = true

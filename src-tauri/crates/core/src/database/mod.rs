@@ -40,6 +40,17 @@ pub fn init_database() -> Result<DbConnection, String> {
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("设置 busy_timeout 失败: {e}"))?;
 
+    // 启用 WAL 模式提升并发性能
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA cache_size = -64000;
+         PRAGMA temp_store = MEMORY;",
+    )
+    .map_err(|e| format!("设置数据库优化参数失败: {e}"))?;
+
+    tracing::info!("[数据库] 已启用 WAL 模式和性能优化参数");
+
     // 创建表结构
     schema::create_tables(&conn).map_err(|e| e.to_string())?;
     migration::migrate_from_json(&conn)?;

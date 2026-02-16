@@ -107,7 +107,7 @@ impl ContentManager {
         );
 
         let workspace_type = match workspace_type {
-            Ok(value) => WorkspaceType::from_str(&value),
+            Ok(value) => WorkspaceType::parse(&value),
             Err(_) => return ContentType::Document,
         };
 

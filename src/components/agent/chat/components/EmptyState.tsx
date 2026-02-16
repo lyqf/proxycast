@@ -825,8 +825,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       <ContentWrapper>
         <Header>
           <MainTitle>
-            {themeHeadline.lead} <br />
-            <span>{themeHeadline.focus}</span>
+            {themeHeadline.lead}<span>{themeHeadline.focus}</span>
           </MainTitle>
         </Header>
 
@@ -1199,7 +1198,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               size="sm"
               onClick={handleSend}
               disabled={!input.trim() && !isEntryTheme}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 rounded-xl shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 rounded-xl shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95 whitespace-nowrap"
             >
               开始生成
               <ArrowRight className="h-4 w-4 ml-2" />
