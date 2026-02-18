@@ -6,13 +6,21 @@
  * - 显示 Skill 基本信息（名称、描述、来源）
  * - 安装/卸载操作按钮
  * - 执行按钮（仅已安装的 Skill 显示）
+ * - 查看内容按钮（仅本地且已安装的 Skill 显示）
  * - GitHub 链接按钮
  *
  * @module components/skills
  * @requirements 6.1, 6.3
  */
 
-import { Download, Trash2, ExternalLink, Loader2, Play } from "lucide-react";
+import {
+  Download,
+  Trash2,
+  ExternalLink,
+  Loader2,
+  Play,
+  FileText,
+} from "lucide-react";
 import type { Skill } from "@/lib/api/skills";
 
 /**
@@ -43,6 +51,19 @@ export function getSkillSource(skill: Skill): SkillSource {
     return "official";
   }
   return "community";
+}
+
+/**
+ * 是否可查看本地 Skill 内容
+ *
+ * 仅本地且已安装的 Skill 支持查看 SKILL.md。
+ *
+ * @param skill - Skill 对象
+ * @returns 是否显示查看内容入口
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function canViewLocalSkillContent(skill: Skill): boolean {
+  return skill.installed && getSkillSource(skill) === "local";
 }
 
 /**
@@ -90,6 +111,7 @@ interface SkillCardProps {
   onInstall: (directory: string) => void;
   onUninstall: (directory: string) => void;
   onExecute?: (skill: Skill) => void;
+  onViewContent?: (skill: Skill) => void;
   installing: boolean;
 }
 
@@ -99,6 +121,7 @@ interface SkillCardProps {
  * 展示单个 Skill 的信息和操作按钮，包括：
  * - 安装/卸载按钮
  * - 执行按钮（仅已安装的 Skill 显示）
+ * - 查看内容按钮（仅本地且已安装的 Skill 显示）
  * - GitHub 链接按钮
  *
  * @param props - 组件属性
@@ -111,6 +134,7 @@ export function SkillCard({
   onInstall,
   onUninstall,
   onExecute,
+  onViewContent,
   installing,
 }: SkillCardProps) {
   const handleAction = () => {
@@ -138,7 +162,14 @@ export function SkillCard({
     }
   };
 
+  const handleViewContent = () => {
+    if (onViewContent && canViewLocalSkillContent(skill)) {
+      onViewContent(skill);
+    }
+  };
+
   const source = getSkillSource(skill);
+  const showViewContent = Boolean(onViewContent && canViewLocalSkillContent(skill));
 
   return (
     <div className="rounded-lg border bg-card p-4 hover:shadow-md transition-shadow">
@@ -207,6 +238,19 @@ export function SkillCard({
           >
             <Play className="h-4 w-4" />
             执行
+          </button>
+        )}
+
+        {/* 查看内容按钮 - 仅本地且已安装的 Skill 显示 */}
+        {showViewContent && (
+          <button
+            onClick={handleViewContent}
+            disabled={installing}
+            className="flex items-center justify-center gap-2 rounded-lg border border-amber-500 px-3 py-2 text-sm font-medium text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="查看 SKILL.md"
+          >
+            <FileText className="h-4 w-4" />
+            查看内容
           </button>
         )}
 

@@ -756,6 +756,7 @@ pub fn run() {
             commands::skill_cmd::add_skill_repo,
             commands::skill_cmd::remove_skill_repo,
             commands::skill_cmd::get_installed_proxycast_skills,
+            commands::skill_cmd::get_local_skill_content,
             // Skill Execution commands
             commands::skill_exec_cmd::execute_skill,
             commands::skill_exec_cmd::list_executable_skills,

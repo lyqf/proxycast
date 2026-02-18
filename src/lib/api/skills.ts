@@ -63,4 +63,18 @@ export const skillsApi = {
   async getInstalledProxyCastSkills(): Promise<string[]> {
     return safeInvoke("get_installed_proxycast_skills");
   },
+
+  /**
+   * 获取本地已安装 Skill 的 SKILL.md 内容
+   *
+   * @param directory Skill 目录名
+   * @param app 应用类型
+   * @returns SKILL.md 的文本内容
+   */
+  async getLocalSkillContent(
+    directory: string,
+    app: AppType = "proxycast",
+  ): Promise<string> {
+    return safeInvoke("get_local_skill_content", { app, directory });
+  },
 };

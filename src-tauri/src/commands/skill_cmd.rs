@@ -5,7 +5,7 @@ use crate::models::app_type::AppType;
 use crate::models::skill_model::{Skill, SkillRepo, SkillState};
 use chrono::Utc;
 use proxycast_services::skill_service::SkillService;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tauri::State;
 
@@ -42,6 +42,75 @@ pub fn scan_installed_skills(skills_dir: &Path) -> Vec<String> {
     skills
 }
 
+fn get_skills_dir(app_type: &AppType) -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
+
+    let skills_dir = match app_type {
+        AppType::Claude => home.join(".claude").join("skills"),
+        AppType::Codex => home.join(".codex").join("skills"),
+        AppType::Gemini => home.join(".gemini").join("skills"),
+        AppType::ProxyCast => home.join(".proxycast").join("skills"),
+    };
+
+    Ok(skills_dir)
+}
+
+fn validate_skill_directory(directory: &str) -> Result<(), String> {
+    if directory.trim().is_empty() {
+        return Err("Skill directory is required".to_string());
+    }
+
+    if directory.contains("..") || directory.contains('/') || directory.contains('\\') {
+        return Err("Invalid skill directory".to_string());
+    }
+
+    let mut components = Path::new(directory).components();
+    let first = components
+        .next()
+        .ok_or_else(|| "Skill directory is required".to_string())?;
+
+    if components.next().is_some() {
+        return Err("Invalid skill directory".to_string());
+    }
+
+    match first {
+        Component::Normal(_) => Ok(()),
+        _ => Err("Invalid skill directory".to_string()),
+    }
+}
+
+fn read_local_skill_content(skills_dir: &Path, directory: &str) -> Result<String, String> {
+    validate_skill_directory(directory)?;
+
+    if !skills_dir.exists() {
+        return Err("Skills directory not found".to_string());
+    }
+
+    let canonical_skills_dir = skills_dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve skills directory: {e}"))?;
+
+    let skill_dir = skills_dir.join(directory);
+    if !skill_dir.exists() {
+        return Err(format!("Skill not found: {directory}"));
+    }
+
+    let canonical_skill_dir = skill_dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve skill directory: {e}"))?;
+
+    if !canonical_skill_dir.starts_with(&canonical_skills_dir) {
+        return Err("Invalid skill directory path".to_string());
+    }
+
+    let skill_md_path = canonical_skill_dir.join("SKILL.md");
+    if !skill_md_path.is_file() {
+        return Err(format!("SKILL.md not found for skill: {directory}"));
+    }
+
+    std::fs::read_to_string(&skill_md_path).map_err(|e| format!("Failed to read SKILL.md: {e}"))
+}
+
 /// 获取已安装的 ProxyCast Skills 目录列表
 ///
 /// 扫描 ~/.proxycast/skills/ 目录，返回包含 SKILL.md 的子目录名列表。
@@ -55,6 +124,24 @@ pub async fn get_installed_proxycast_skills() -> Result<Vec<String>, String> {
     let home = dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
     let skills_dir = home.join(".proxycast").join("skills");
     Ok(scan_installed_skills(&skills_dir))
+}
+
+/// 获取本地已安装 Skill 的 SKILL.md 内容
+///
+/// 仅支持读取本地 Skills 目录下的文件，包含目录合法性与路径穿越防护。
+///
+/// # Arguments
+/// - `app`: 应用类型（proxycast/claude/codex/gemini）
+/// - `directory`: Skill 目录名
+///
+/// # Returns
+/// - `Ok(String)`: SKILL.md 的文本内容
+/// - `Err(String)`: 错误信息
+#[tauri::command]
+pub fn get_local_skill_content(app: String, directory: String) -> Result<String, String> {
+    let app_type: AppType = app.parse().map_err(|e: String| e)?;
+    let skills_dir = get_skills_dir(&app_type)?;
+    read_local_skill_content(&skills_dir, &directory)
 }
 
 pub struct SkillServiceState(pub Arc<SkillService>);
@@ -373,5 +460,59 @@ mod tests {
         // Assert: 只有有效的 Skill 应该被发现
         assert_eq!(discovered.len(), 1);
         assert!(discovered.contains(&"valid-skill".to_string()));
+    }
+
+    #[test]
+    fn test_read_local_skill_content_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        let skill_dir = skills_dir.join("demo-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# Demo Skill\ncontent").unwrap();
+
+        let content = read_local_skill_content(&skills_dir, "demo-skill").unwrap();
+        assert!(content.contains("# Demo Skill"));
+        assert!(content.contains("content"));
+    }
+
+    #[test]
+    fn test_read_local_skill_content_rejects_traversal() {
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let err = read_local_skill_content(&skills_dir, "../outside").unwrap_err();
+        assert!(err.contains("Invalid skill directory"));
+    }
+
+    #[test]
+    fn test_read_local_skill_content_missing_skill_md() {
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        let skill_dir = skills_dir.join("no-skill-md");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let err = read_local_skill_content(&skills_dir, "no-skill-md").unwrap_err();
+        assert!(err.contains("SKILL.md not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_read_local_skill_content_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let outside_dir = temp_dir.path().join("outside-skill");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        std::fs::write(outside_dir.join("SKILL.md"), "# Outside").unwrap();
+
+        let symlink_dir = skills_dir.join("escape-skill");
+        symlink(&outside_dir, &symlink_dir).unwrap();
+
+        let err = read_local_skill_content(&skills_dir, "escape-skill").unwrap_err();
+        assert!(err.contains("Invalid skill directory path"));
     }
 }

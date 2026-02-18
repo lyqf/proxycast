@@ -1,11 +1,12 @@
-import { useState, forwardRef, useImperativeHandle } from "react";
+import { useState, forwardRef, useImperativeHandle, useRef } from "react";
 import { RefreshCw, Search, Settings } from "lucide-react";
 import { useSkills } from "@/hooks/useSkills";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillExecutionDialog } from "./SkillExecutionDialog";
+import { SkillContentDialog } from "./SkillContentDialog";
 import { HelpTip } from "@/components/HelpTip";
-import type { AppType, Skill } from "@/lib/api/skills";
+import { skillsApi, type AppType, type Skill } from "@/lib/api/skills";
 
 interface SkillsPageProps {
   initialApp?: AppType;
@@ -32,6 +33,14 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
     const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
     const [selectedSkillForExecution, setSelectedSkillForExecution] =
       useState<Skill | null>(null);
+    // 内容查看对话框状态
+    const [contentDialogOpen, setContentDialogOpen] = useState(false);
+    const [selectedSkillForContent, setSelectedSkillForContent] =
+      useState<Skill | null>(null);
+    const [skillContent, setSkillContent] = useState("");
+    const [contentLoading, setContentLoading] = useState(false);
+    const [contentError, setContentError] = useState<string | null>(null);
+    const contentRequestIdRef = useRef(0);
 
     const {
       skills,
@@ -99,6 +108,53 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
       setExecutionDialogOpen(open);
       if (!open) {
         setSelectedSkillForExecution(null);
+      }
+    };
+
+    /**
+     * 处理查看内容按钮点击
+     * 读取本地 SKILL.md 并打开预览弹窗
+     */
+    const handleViewContent = async (skill: Skill) => {
+      const requestId = ++contentRequestIdRef.current;
+
+      setSelectedSkillForContent(skill);
+      setContentDialogOpen(true);
+      setSkillContent("");
+      setContentError(null);
+      setContentLoading(true);
+
+      try {
+        const content = await skillsApi.getLocalSkillContent(skill.directory, app);
+        if (requestId !== contentRequestIdRef.current) {
+          return;
+        }
+        setSkillContent(content);
+      } catch (e) {
+        if (requestId !== contentRequestIdRef.current) {
+          return;
+        }
+        setContentError(
+          `读取失败: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        if (requestId === contentRequestIdRef.current) {
+          setContentLoading(false);
+        }
+      }
+    };
+
+    /**
+     * 处理内容查看对话框关闭
+     */
+    const handleContentDialogClose = (open: boolean) => {
+      setContentDialogOpen(open);
+      if (!open) {
+        contentRequestIdRef.current += 1;
+        setSelectedSkillForContent(null);
+        setSkillContent("");
+        setContentError(null);
+        setContentLoading(false);
       }
     };
 
@@ -252,6 +308,7 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
                 onInstall={handleInstall}
                 onUninstall={handleUninstall}
                 onExecute={handleExecute}
+                onViewContent={handleViewContent}
                 installing={installingSkills.has(skill.directory)}
               />
             ))}
@@ -275,6 +332,18 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
             skillName={selectedSkillForExecution.name}
             open={executionDialogOpen}
             onOpenChange={handleExecutionDialogClose}
+          />
+        )}
+
+        {/* Skill 内容查看对话框 */}
+        {selectedSkillForContent && (
+          <SkillContentDialog
+            skillName={selectedSkillForContent.name}
+            open={contentDialogOpen}
+            onOpenChange={handleContentDialogClose}
+            content={skillContent}
+            loading={contentLoading}
+            error={contentError}
           />
         )}
       </div>

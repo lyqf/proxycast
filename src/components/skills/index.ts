@@ -11,3 +11,4 @@ export {
   SkillExecutionDialog,
   type SkillExecutionDialogProps,
 } from "./SkillExecutionDialog";
+export { SkillContentDialog, type SkillContentDialogProps } from "./SkillContentDialog";

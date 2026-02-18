@@ -7,10 +7,14 @@
  * **Validates: Requirements 5.1, 5.2**
  */
 
-import { describe, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { test } from "@fast-check/vitest";
 import * as fc from "fast-check";
-import { getSkillSource, type SkillSource } from "./SkillCard";
+import {
+  canViewLocalSkillContent,
+  getSkillSource,
+  type SkillSource,
+} from "./SkillCard";
 import type { Skill } from "@/lib/api/skills";
 
 /**
@@ -128,5 +132,34 @@ describe("getSkillSource", () => {
         expect(["official", "community", "local"]).toContain(source);
       },
     );
+  });
+});
+
+describe("canViewLocalSkillContent", () => {
+  it("本地且已安装 skill 应可查看内容", () => {
+    const skill = createSkill({
+      installed: true,
+      repoOwner: undefined,
+      repoName: undefined,
+    });
+    expect(canViewLocalSkillContent(skill)).toBe(true);
+  });
+
+  it("本地但未安装 skill 不可查看内容", () => {
+    const skill = createSkill({
+      installed: false,
+      repoOwner: undefined,
+      repoName: undefined,
+    });
+    expect(canViewLocalSkillContent(skill)).toBe(false);
+  });
+
+  it("非本地已安装 skill 不可查看内容", () => {
+    const skill = createSkill({
+      installed: true,
+      repoOwner: "proxycast",
+      repoName: "skills",
+    });
+    expect(canViewLocalSkillContent(skill)).toBe(false);
   });
 });

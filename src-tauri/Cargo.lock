@@ -211,12 +211,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
-name = "aster"
-version = "0.11.0"
-source = "git+https://github.com/astercloud/aster-rust?tag=v0.11.0#c4a9c40b48bcb0c77375b10ccb1313366fb4e7ba"
+name = "aster-core"
+version = "0.13.0"
+source = "git+https://github.com/astercloud/aster-rust?tag=v0.13.0#4422f761c3701d2e3af1b0e6db5d4394f80d9c54"
 dependencies = [
  "ahash",
  "anyhow",
+ "aster-models",
  "async-stream",
  "async-trait",
  "aws-config",
@@ -304,8 +305,8 @@ dependencies = [
 
 [[package]]
 name = "aster-models"
-version = "0.12.0"
-source = "git+https://github.com/astercloud/aster-rust?tag=v0.12.0#f6c1ad342eb58accb61524985fa78ea7f4b8be2b"
+version = "0.13.0"
+source = "git+https://github.com/astercloud/aster-rust?tag=v0.13.0#4422f761c3701d2e3af1b0e6db5d4394f80d9c54"
 dependencies = [
  "serde",
  "serde_json",
@@ -6684,11 +6685,11 @@ dependencies = [
 
 [[package]]
 name = "proxycast"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "anyhow",
  "arboard",
- "aster",
+ "aster-core",
  "async-stream",
  "async-trait",
  "axum 0.7.9",
@@ -6782,9 +6783,9 @@ dependencies = [
 
 [[package]]
 name = "proxycast-agent"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
- "aster",
+ "aster-core",
  "async-trait",
  "chrono",
  "dirs 5.0.1",
@@ -6805,7 +6806,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-config"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "parking_lot",
@@ -6821,7 +6822,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-core"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "aster-models",
  "async-trait",
@@ -6861,7 +6862,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-credential"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
@@ -6896,7 +6897,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-infra"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "chrono",
  "dashmap 5.5.3",
@@ -6916,7 +6917,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-mcp"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "glob",
@@ -6947,7 +6948,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-processor"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "parking_lot",
@@ -6966,7 +6967,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-providers"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -7018,7 +7019,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-server"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "async-stream",
  "axum 0.7.9",
@@ -7060,7 +7061,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-server-utils"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "axum 0.7.9",
  "futures",
@@ -7075,10 +7076,10 @@ dependencies = [
 
 [[package]]
 name = "proxycast-services"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "anyhow",
- "aster",
+ "aster-core",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -7116,7 +7117,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-skills"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "dirs 5.0.1",
@@ -7132,7 +7133,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-terminal"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7159,7 +7160,7 @@ dependencies = [
 
 [[package]]
 name = "proxycast-websocket"
-version = "0.68.0"
+version = "0.69.0"
 dependencies = [
  "axum 0.7.9",
  "chrono",
