@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// 提示路由配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HintRouterConfig {
     /// 是否启用提示路由
     #[serde(default)]
@@ -20,15 +20,6 @@ pub struct HintRouterConfig {
     /// 提示路由规则
     #[serde(default)]
     pub routes: Vec<HintRouteEntry>,
-}
-
-impl Default for HintRouterConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            routes: Vec::new(),
-        }
-    }
 }
 
 /// 单条提示路由配置
@@ -63,7 +54,7 @@ pub struct HintMatch {
 }
 
 /// 提示路由器
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HintRouter {
     enabled: bool,
     /// hint 关键词 -> 路由（小写匹配）
@@ -143,15 +134,6 @@ impl HintRouter {
             route: route.clone(),
             stripped_message: rest.to_string(),
         })
-    }
-}
-
-impl Default for HintRouter {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            routes: HashMap::new(),
-        }
     }
 }
 

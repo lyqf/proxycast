@@ -22,6 +22,6 @@ mod route_registry;
 mod rules;
 
 pub use amp_router::AmpRouter;
-pub use hint_router::{HintMatch, HintRoute, HintRouter, HintRouterConfig, HintRouteEntry};
+pub use hint_router::{HintMatch, HintRoute, HintRouteEntry, HintRouter, HintRouterConfig};
 pub use mapper::ModelMapper;
 pub use rules::Router;

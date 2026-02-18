@@ -189,7 +189,10 @@ mod tests {
         let enc1 = Encryptor::new("correct-password");
         let enc2 = Encryptor::new("wrong-password");
         let encrypted = enc1.encrypt("secret").unwrap();
-        assert_eq!(enc2.decrypt(&encrypted), Err(EncryptionError::DecryptionFailed));
+        assert_eq!(
+            enc2.decrypt(&encrypted),
+            Err(EncryptionError::DecryptionFailed)
+        );
     }
 
     #[test]
@@ -219,13 +222,19 @@ mod tests {
     #[test]
     fn test_invalid_format() {
         let enc = Encryptor::new("key");
-        assert_eq!(enc.decrypt("no-prefix"), Err(EncryptionError::InvalidFormat));
+        assert_eq!(
+            enc.decrypt("no-prefix"),
+            Err(EncryptionError::InvalidFormat)
+        );
     }
 
     #[test]
     fn test_invalid_base64() {
         let enc = Encryptor::new("key");
-        assert_eq!(enc.decrypt("enc2:!!!invalid-base64!!!"), Err(EncryptionError::InvalidBase64));
+        assert_eq!(
+            enc.decrypt("enc2:!!!invalid-base64!!!"),
+            Err(EncryptionError::InvalidBase64)
+        );
     }
 
     #[test]
@@ -239,7 +248,10 @@ mod tests {
             *last ^= 0xFF;
         }
         let tampered = format!("{}{}", ENCRYPTED_PREFIX, BASE64.encode(&bytes));
-        assert_eq!(enc.decrypt(&tampered), Err(EncryptionError::DecryptionFailed));
+        assert_eq!(
+            enc.decrypt(&tampered),
+            Err(EncryptionError::DecryptionFailed)
+        );
     }
 
     #[test]
@@ -260,10 +272,9 @@ mod tests {
     #[test]
     fn test_from_raw_key() {
         let raw_key: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
         let enc = Encryptor::from_raw_key(&raw_key);
         let plaintext = "raw-key-test";

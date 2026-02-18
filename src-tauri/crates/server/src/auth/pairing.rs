@@ -16,35 +16,19 @@ const MAX_FAILED_ATTEMPTS: u32 = 5;
 const LOCKOUT_DURATION_SECS: u64 = 300; // 5 分钟
 
 /// 配对认证配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PairingConfig {
     /// 是否启用配对认证
     #[serde(default)]
     pub enabled: bool,
 }
 
-impl Default for PairingConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
-}
-
 /// 失败尝试状态
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct FailureState {
     count: u32,
     window_start: Option<Instant>,
     blocked_until: Option<Instant>,
-}
-
-impl Default for FailureState {
-    fn default() -> Self {
-        Self {
-            count: 0,
-            window_start: None,
-            blocked_until: None,
-        }
-    }
 }
 
 /// 配对结果

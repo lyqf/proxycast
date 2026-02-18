@@ -90,17 +90,17 @@ impl ConversationTrimmer {
         let original_count = messages.len();
 
         // 分离 system 消息和非 system 消息
-        let (system_msgs, non_system_msgs): (Vec<_>, Vec<_>) =
-            if self.config.preserve_system_prompt {
-                messages.into_iter().partition(|msg| {
-                    msg.get("role")
-                        .and_then(|r| r.as_str())
-                        .map(|r| r == "system")
-                        .unwrap_or(false)
-                })
-            } else {
-                (Vec::new(), messages)
-            };
+        let (system_msgs, non_system_msgs): (Vec<_>, Vec<_>) = if self.config.preserve_system_prompt
+        {
+            messages.into_iter().partition(|msg| {
+                msg.get("role")
+                    .and_then(|r| r.as_str())
+                    .map(|r| r == "system")
+                    .unwrap_or(false)
+            })
+        } else {
+            (Vec::new(), messages)
+        };
 
         // 计算非 system 消息的最大数量
         let max_non_system = self.config.max_messages.saturating_sub(system_msgs.len());

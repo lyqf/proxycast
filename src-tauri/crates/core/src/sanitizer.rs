@@ -104,12 +104,16 @@ impl CredentialSanitizer {
 
         // 应用内置模式
         for pattern in builtin_patterns() {
-            result = pattern.replace_all(&result, replacement.as_str()).to_string();
+            result = pattern
+                .replace_all(&result, replacement.as_str())
+                .to_string();
         }
 
         // 应用自定义模式
         for pattern in &self.custom_regexes {
-            result = pattern.replace_all(&result, replacement.as_str()).to_string();
+            result = pattern
+                .replace_all(&result, replacement.as_str())
+                .to_string();
         }
 
         result

@@ -83,10 +83,7 @@ impl ConversationSummarizer {
     /// 构建摘要请求
     ///
     /// 将需要摘要的旧消息格式化为 LLM 请求
-    pub fn build_summary_request(
-        &self,
-        messages: &[serde_json::Value],
-    ) -> Option<SummaryRequest> {
+    pub fn build_summary_request(&self, messages: &[serde_json::Value]) -> Option<SummaryRequest> {
         if !self.should_summarize(messages.len()) {
             return None;
         }

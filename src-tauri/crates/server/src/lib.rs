@@ -57,6 +57,10 @@ pub fn record_request_telemetry(
     use proxycast_infra::telemetry::RequestLog;
 
     let provider = ctx.provider.unwrap_or(proxycast_core::ProviderType::Kiro);
+
+    // 清理错误消息中的敏感信息
+    let sanitized_error = error_message.map(|msg| state.sanitizer.sanitize(&msg));
+
     let mut log = RequestLog::new(
         ctx.request_id.clone(),
         provider,
@@ -72,7 +76,7 @@ pub fn record_request_telemetry(
         proxycast_infra::telemetry::RequestStatus::Failed => log.mark_failed(
             ctx.elapsed_ms(),
             None,
-            error_message.clone().unwrap_or_default(),
+            sanitized_error.clone().unwrap_or_default(),
         ),
         proxycast_infra::telemetry::RequestStatus::Timeout => log.mark_timeout(ctx.elapsed_ms()),
         proxycast_infra::telemetry::RequestStatus::Cancelled => {
@@ -467,6 +471,10 @@ pub struct AppState {
     /// 批量任务执行器
     pub batch_executor:
         Arc<tokio::sync::RwLock<Option<handlers::batch_executor::BatchTaskExecutor>>>,
+    /// 速率限制器
+    pub rate_limiter: Option<Arc<middleware::rate_limit::SlidingWindowRateLimiter>>,
+    /// 凭证清理器
+    pub sanitizer: Arc<proxycast_core::sanitizer::CredentialSanitizer>,
 }
 
 /// 启动配置文件监控
@@ -880,6 +888,8 @@ async fn run_server(
         kiro_event_service,
         api_key_service,
         batch_executor: Arc::new(tokio::sync::RwLock::new(None)),
+        rate_limiter: None, // 可通过配置启用
+        sanitizer: Arc::new(proxycast_core::sanitizer::CredentialSanitizer::with_defaults()),
     };
 
     // 初始化批量任务执行器

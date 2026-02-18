@@ -52,6 +52,10 @@ pub struct RequestProcessor {
     pub pool_service: Arc<ProviderPoolService>,
     /// 热重载协调锁（避免配置更新期间请求读取不一致的配置）
     pub reload_lock: Arc<RwLock<()>>,
+    /// 提示路由器
+    pub hint_router: Arc<RwLock<proxycast_core::router::HintRouter>>,
+    /// 对话修剪器
+    pub conversation_trimmer: Arc<crate::conversation_manager::ConversationTrimmer>,
 }
 
 impl RequestProcessor {
@@ -80,6 +84,10 @@ impl RequestProcessor {
             tokens,
             pool_service,
             reload_lock: Arc::new(RwLock::new(())),
+            hint_router: Arc::new(RwLock::new(proxycast_core::router::HintRouter::default())),
+            conversation_trimmer: Arc::new(crate::conversation_manager::ConversationTrimmer::new(
+                crate::conversation_manager::TrimConfig::default(),
+            )),
         }
     }
 
@@ -97,6 +105,10 @@ impl RequestProcessor {
             tokens: Arc::new(ParkingLotRwLock::new(TokenTracker::with_defaults())),
             pool_service,
             reload_lock: Arc::new(RwLock::new(())),
+            hint_router: Arc::new(RwLock::new(proxycast_core::router::HintRouter::default())),
+            conversation_trimmer: Arc::new(crate::conversation_manager::ConversationTrimmer::new(
+                crate::conversation_manager::TrimConfig::default(),
+            )),
         }
     }
 
@@ -127,6 +139,10 @@ impl RequestProcessor {
             tokens,
             pool_service,
             reload_lock: Arc::new(RwLock::new(())),
+            hint_router: Arc::new(RwLock::new(proxycast_core::router::HintRouter::default())),
+            conversation_trimmer: Arc::new(crate::conversation_manager::ConversationTrimmer::new(
+                crate::conversation_manager::TrimConfig::default(),
+            )),
         }
     }
 
