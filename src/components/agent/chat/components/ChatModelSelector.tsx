@@ -15,12 +15,26 @@ import { isAliasProvider } from "@/lib/constants/providerMappings";
 import { providerPoolApi } from "@/lib/api/providerPool";
 import { apiKeyProviderApi } from "@/lib/api/apiKeyProvider";
 import { emitProviderDataChanged } from "@/lib/providerDataEvents";
+import { filterModelsByTheme } from "../utils/modelThemePolicy";
+
+const THEME_LABEL_MAP: Record<string, string> = {
+  general: "通用对话",
+  "social-media": "社媒内容",
+  poster: "图文海报",
+  knowledge: "知识探索",
+  planning: "计划规划",
+  document: "办公文档",
+  video: "短视频",
+  music: "歌词曲谱",
+  novel: "小说创作",
+};
 
 interface ChatModelSelectorProps {
   providerType: string;
   setProviderType: (type: string) => void;
   model: string;
   setModel: (model: string) => void;
+  activeTheme?: string;
   className?: string;
   compactTrigger?: boolean;
   onManageProviders?: () => void;
@@ -32,6 +46,7 @@ export const ChatModelSelector: React.FC<ChatModelSelectorProps> = ({
   setProviderType,
   model,
   setModel,
+  activeTheme,
   className,
   compactTrigger = false,
   onManageProviders,
@@ -50,8 +65,18 @@ export const ChatModelSelector: React.FC<ChatModelSelectorProps> = ({
     );
   }, [configuredProviders, providerType]);
 
-  const { modelIds: currentModels, loading: modelsLoading } =
-    useProviderModels(selectedProvider);
+  const { models: providerModels, loading: modelsLoading } = useProviderModels(
+    selectedProvider,
+    { returnFullMetadata: true },
+  );
+
+  const filteredResult = useMemo(() => {
+    return filterModelsByTheme(activeTheme, providerModels);
+  }, [activeTheme, providerModels]);
+
+  const currentModels = useMemo(() => {
+    return filteredResult.models.map((item) => item.id);
+  }, [filteredResult.models]);
 
   useEffect(() => {
     if (hasInitialized.current) return;
@@ -81,6 +106,29 @@ export const ChatModelSelector: React.FC<ChatModelSelectorProps> = ({
       setModel(currentModels[0]);
     }
   }, [currentModels, modelsLoading, selectedProvider, setModel]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (!selectedProvider) return;
+    if (!activeTheme) return;
+    if (!filteredResult.usedFallback && filteredResult.filteredOutCount === 0) {
+      return;
+    }
+
+    console.debug("[ChatModelSelector] 主题模型过滤结果", {
+      theme: activeTheme,
+      provider: selectedProvider.key,
+      policyName: filteredResult.policyName,
+      filteredOutCount: filteredResult.filteredOutCount,
+      usedFallback: filteredResult.usedFallback,
+    });
+  }, [
+    activeTheme,
+    filteredResult.policyName,
+    filteredResult.filteredOutCount,
+    filteredResult.usedFallback,
+    selectedProvider,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -114,6 +162,14 @@ export const ChatModelSelector: React.FC<ChatModelSelectorProps> = ({
     selectedProvider?.key || providerType || "proxycast-hub";
   const compactProviderLabel =
     selectedProvider?.label || providerType || "ProxyCast Hub";
+  const normalizedTheme = (activeTheme || "").toLowerCase();
+  const activeThemeLabel =
+    THEME_LABEL_MAP[normalizedTheme] || activeTheme || "当前主题";
+  const showThemeFilterHint =
+    normalizedTheme !== "" &&
+    normalizedTheme !== "general" &&
+    !filteredResult.usedFallback &&
+    filteredResult.filteredOutCount > 0;
 
   return (
     <div className={cn("flex items-center", className)}>
@@ -211,6 +267,16 @@ export const ChatModelSelector: React.FC<ChatModelSelectorProps> = ({
               <div className="text-xs font-semibold text-muted-foreground px-2 py-1.5 mb-1">
                 Models
               </div>
+              {showThemeFilterHint && (
+                <div className="text-[11px] text-muted-foreground px-2 pb-1">
+                  已按 {activeThemeLabel} 主题筛选模型
+                </div>
+              )}
+              {normalizedTheme !== "general" && filteredResult.usedFallback && (
+                <div className="text-[11px] text-amber-600 px-2 pb-1">
+                  {activeThemeLabel} 未匹配到主题模型，已展示全部模型
+                </div>
+              )}
 
               <ScrollArea className="flex-1">
                 <div className="space-y-1 p-1">

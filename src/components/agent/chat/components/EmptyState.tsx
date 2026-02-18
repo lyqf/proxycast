@@ -918,6 +918,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                 setProviderType={setProviderType}
                 model={model}
                 setModel={setModel}
+                activeTheme={activeTheme}
                 compactTrigger
                 popoverSide="top"
                 onManageProviders={onManageProviders}

@@ -104,6 +104,7 @@ interface InputbarProps {
   setProviderType?: (type: string) => void;
   model?: string;
   setModel?: (model: string) => void;
+  activeTheme?: string;
   onManageProviders?: () => void;
 }
 
@@ -128,6 +129,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
   setProviderType,
   model,
   setModel,
+  activeTheme,
   onManageProviders,
 }) => {
   const [activeTools, setActiveTools] = useState<Record<string, boolean>>({});
@@ -381,6 +383,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
               setProviderType={setProviderType}
               model={model}
               setModel={setModel}
+              activeTheme={activeTheme}
               compactTrigger
               popoverSide="top"
               onManageProviders={onManageProviders}

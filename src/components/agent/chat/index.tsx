@@ -1707,6 +1707,7 @@ export function AgentChatPage({
               setProviderType={setProviderType}
               model={model}
               setModel={setModel}
+              activeTheme={activeTheme}
               onManageProviders={handleManageProviders}
               disabled={!projectId}
               onClearMessages={handleClearMessages}
