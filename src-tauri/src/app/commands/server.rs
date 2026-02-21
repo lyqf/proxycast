@@ -7,7 +7,10 @@ use crate::app::TokenCacheServiceState;
 use crate::commands::provider_pool_cmd::ProviderPoolServiceState;
 use crate::commands::telemetry_cmd::TelemetryState;
 use crate::database;
+use chrono::{Duration, Utc};
+use proxycast_infra::telemetry::RequestStatus;
 use proxycast_server as server;
+use std::collections::HashSet;
 
 /// 启动服务器
 #[tauri::command]
@@ -54,15 +57,68 @@ pub async fn stop_server(
 #[tauri::command]
 pub async fn get_server_status(
     state: tauri::State<'_, AppState>,
+    db: tauri::State<'_, database::DbConnection>,
+    pool_service: tauri::State<'_, ProviderPoolServiceState>,
     telemetry_state: tauri::State<'_, TelemetryState>,
 ) -> Result<server::ServerStatus, String> {
     let s = state.read().await;
     let mut status = s.status();
 
-    // 从遥测系统获取真实的请求计数
+    // 从遥测系统获取真实请求计数
     let stats = telemetry_state.stats.read();
     let summary = stats.summary(None);
     status.requests = summary.total_requests;
+
+    // 最近 1 分钟统计
+    let one_minute_ago = Utc::now() - Duration::minutes(1);
+    let recent_logs: Vec<_> = stats
+        .get_all()
+        .into_iter()
+        .filter(|log| log.timestamp >= one_minute_ago)
+        .collect();
+
+    let total_1m = recent_logs.len() as u64;
+    let error_count_1m = recent_logs
+        .iter()
+        .filter(|log| matches!(log.status, RequestStatus::Failed | RequestStatus::Timeout))
+        .count() as u64;
+    status.error_rate_1m = if total_1m == 0 {
+        0.0
+    } else {
+        error_count_1m as f64 / total_1m as f64
+    };
+
+    let mut latencies: Vec<u64> = recent_logs.iter().map(|log| log.duration_ms).collect();
+    latencies.sort_unstable();
+    status.p95_latency_ms_1m = if latencies.is_empty() {
+        None
+    } else {
+        let last_index = latencies.len().saturating_sub(1);
+        let p95_index = (last_index * 95) / 100;
+        latencies.get(p95_index).copied()
+    };
+
+    // 使用凭证健康状态近似熔断状态：统计当前不健康的上游类型数量
+    status.open_circuit_count = match pool_service.0.get_all_credential_health(db.inner()) {
+        Ok(health_list) => {
+            let unhealthy_provider_count = health_list
+                .into_iter()
+                .filter(|item| !item.is_healthy)
+                .map(|item| item.provider_type)
+                .collect::<HashSet<_>>()
+                .len();
+            u32::try_from(unhealthy_provider_count).unwrap_or(u32::MAX)
+        }
+        Err(err) => {
+            tracing::warn!("[SERVER_STATUS] 获取凭证健康状态失败: {}", err);
+            0
+        }
+    };
+    // 使用 Retry 状态日志作为活跃请求近似值
+    status.active_requests = recent_logs
+        .iter()
+        .filter(|log| matches!(log.status, RequestStatus::Retrying))
+        .count() as u64;
 
     Ok(status)
 }

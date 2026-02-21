@@ -1327,28 +1327,51 @@ pub async fn call_provider_openai(
                     // 直接调用 call_api，因为 antigravity_request 已经是完整格式
                     match antigravity.call_api("generateContent", &antigravity_request).await {
                         Ok(resp) => {
-                            // 保存原始响应到文件用于调试
                             let resp_str = serde_json::to_string_pretty(&resp).unwrap_or_default();
-                            let debug_dir = dirs::home_dir()
-                                .map(|h| h.join(".proxycast/logs"))
-                                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-                            let _ = std::fs::create_dir_all(&debug_dir);
-                            let debug_file = debug_dir.join("antigravity_image_response.json");
-                            let _ = std::fs::write(&debug_file, &resp_str);
-                            tracing::info!("[ANTIGRAVITY_STREAM] 原始响应已保存到: {:?}, 大小: {} bytes", debug_file, resp_str.len());
-                            eprintln!("[ANTIGRAVITY_STREAM] 原始响应已保存到: {:?}, 大小: {} bytes", debug_file, resp_str.len());
+                            if is_proxycast_debug_enabled() {
+                                let debug_dir = dirs::home_dir()
+                                    .map(|h| h.join(".proxycast/logs"))
+                                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                let _ = std::fs::create_dir_all(&debug_dir);
+                                let debug_file = debug_dir.join("antigravity_image_response.json");
+                                let _ = std::fs::write(&debug_file, &resp_str);
+                                tracing::info!(
+                                    "[ANTIGRAVITY_STREAM] 原始响应已保存到: {:?}, 大小: {} bytes",
+                                    debug_file,
+                                    resp_str.len()
+                                );
+                                eprintln!(
+                                    "[ANTIGRAVITY_STREAM] 原始响应已保存到: {:?}, 大小: {} bytes",
+                                    debug_file,
+                                    resp_str.len()
+                                );
+                            }
 
                             tracing::info!("[ANTIGRAVITY_STREAM] 图片生成完成，转换为流式响应");
 
                             // 将非流式响应转换为 OpenAI 格式
                             let openai_response = convert_antigravity_to_openai_response(&resp, &request.model);
 
-                            // 保存转换后的响应到文件
                             let openai_str = serde_json::to_string_pretty(&openai_response).unwrap_or_default();
-                            let openai_debug_file = debug_dir.join("antigravity_image_openai_response.json");
-                            let _ = std::fs::write(&openai_debug_file, &openai_str);
-                            tracing::info!("[ANTIGRAVITY_STREAM] OpenAI 响应已保存到: {:?}, 大小: {} bytes", openai_debug_file, openai_str.len());
-                            eprintln!("[ANTIGRAVITY_STREAM] OpenAI 响应已保存到: {:?}, 大小: {} bytes", openai_debug_file, openai_str.len());
+                            if is_proxycast_debug_enabled() {
+                                let debug_dir = dirs::home_dir()
+                                    .map(|h| h.join(".proxycast/logs"))
+                                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                let _ = std::fs::create_dir_all(&debug_dir);
+                                let openai_debug_file =
+                                    debug_dir.join("antigravity_image_openai_response.json");
+                                let _ = std::fs::write(&openai_debug_file, &openai_str);
+                                tracing::info!(
+                                    "[ANTIGRAVITY_STREAM] OpenAI 响应已保存到: {:?}, 大小: {} bytes",
+                                    openai_debug_file,
+                                    openai_str.len()
+                                );
+                                eprintln!(
+                                    "[ANTIGRAVITY_STREAM] OpenAI 响应已保存到: {:?}, 大小: {} bytes",
+                                    openai_debug_file,
+                                    openai_str.len()
+                                );
+                            }
 
                             // 将非流式响应转换为流式 SSE 格式
                             let model = request.model.clone();
@@ -2805,6 +2828,12 @@ pub async fn handle_kiro_stream(
         })
 }
 
+fn is_proxycast_debug_enabled() -> bool {
+    std::env::var("PROXYCAST_DEBUG")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 /// 解析 Antigravity 累积的流式响应数据
 ///
 /// Antigravity 返回的流式数据是分片的 JSON，格式如下：
@@ -2829,20 +2858,25 @@ fn parse_antigravity_accumulated_response(data: &str, model: &str) -> Result<Str
         data.len()
     );
 
-    // 保存原始数据到文件用于调试
-    let debug_dir = dirs::home_dir()
-        .map(|h| h.join(".proxycast/logs"))
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    let _ = std::fs::create_dir_all(&debug_dir);
-    let debug_file = debug_dir.join("antigravity_stream_raw.txt");
-    let _ = std::fs::write(&debug_file, data);
-    eprintln!("[ANTIGRAVITY_PARSE] 原始数据已保存到: {debug_file:?}");
+    let debug_enabled = is_proxycast_debug_enabled();
+    let debug_file = dirs::home_dir()
+        .map(|h| h.join(".proxycast/logs/antigravity_stream_raw.txt"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/antigravity_stream_raw.txt"));
 
-    // 打印数据的前1000字符用于调试
-    eprintln!(
-        "[ANTIGRAVITY_PARSE] 数据前1000字符:\n{}",
-        &data[..data.len().min(1000)]
-    );
+    if debug_enabled {
+        if let Some(debug_dir) = debug_file.parent() {
+            let _ = std::fs::create_dir_all(debug_dir);
+        }
+        let _ = std::fs::write(&debug_file, data);
+        eprintln!("[ANTIGRAVITY_PARSE] 原始数据已保存到: {debug_file:?}");
+    }
+
+    if debug_enabled {
+        eprintln!(
+            "[ANTIGRAVITY_PARSE] 数据前1000字符:\n{}",
+            &data[..data.len().min(1000)]
+        );
+    }
 
     // 尝试解析 JSON
     // Antigravity 流式响应可能是多个 JSON 对象，每个对象一行
@@ -2904,7 +2938,11 @@ fn parse_antigravity_accumulated_response(data: &str, model: &str) -> Result<Str
         }
     }
 
-    Err(format!("无法解析响应数据，请查看 {debug_file:?}"))
+    if debug_enabled {
+        Err(format!("无法解析响应数据，请查看 {debug_file:?}"))
+    } else {
+        Err("无法解析响应数据，可设置 PROXYCAST_DEBUG=1 以落盘原始响应".to_string())
+    }
 }
 
 /// 从 JSON 中提取内容

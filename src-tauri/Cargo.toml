@@ -3,9 +3,9 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.69.0"
+version = "0.70.0"
 edition = "2021"
-authors = ["you"]
+authors = ["coso"]
 repository = "https://github.com/aiclientproxy/proxycast"
 homepage = "https://github.com/aiclientproxy/proxycast"
 
@@ -65,7 +65,11 @@ rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 
 # 时间和 UUID
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4"] }
+
+# Cron 调度
+cron = "0.15"
 
 # 工具库
 dirs = "5"
@@ -185,7 +189,7 @@ version = "2.4"
 
 [package]
 name = "proxycast"
-version = "0.69.0"
+version = "0.70.0"
 description = "AI API Proxy Desktop App"
 authors = ["you"]
 edition = "2021"
@@ -264,7 +268,11 @@ rusqlite.workspace = true
 
 # 时间和 UUID
 chrono.workspace = true
+chrono-tz.workspace = true
 uuid.workspace = true
+
+# Cron 调度
+cron.workspace = true
 
 # 工具库
 dirs.workspace = true

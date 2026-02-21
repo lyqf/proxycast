@@ -4,10 +4,11 @@
  * @module components/chat/components/InputBar
  */
 
-import React, { useState, useCallback, useRef, useEffect, memo } from "react";
+import React, { useState, useCallback, useMemo, memo } from "react";
 import styled from "styled-components";
 import { Send, Square, Paperclip, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BaseComposer, createChatInputAdapter } from "@/components/input-kit";
 
 const InputContainer = styled.div`
   padding: 16px;
@@ -122,91 +123,69 @@ export const InputBar: React.FC<InputBarProps> = memo(
     placeholder = "输入消息，按 Enter 发送...",
   }) => {
     const [input, setInput] = useState("");
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-    // 自动调整高度
-    useEffect(() => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-        textarea.style.height = "auto";
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-      }
-    }, [input]);
 
     const handleSend = useCallback(() => {
-      if (isGenerating) {
-        onStop?.();
-        return;
-      }
-
       const trimmed = input.trim();
       if (!trimmed || disabled) return;
 
       onSend(trimmed);
       setInput("");
+    }, [disabled, input, onSend]);
 
-      // 重置高度
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
-    }, [input, isGenerating, disabled, onSend, onStop]);
-
-    const handleKeyDown = useCallback(
-      (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        // Enter 发送（不按 Shift）
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          handleSend();
-        }
-      },
-      [handleSend],
+    const inputAdapter = useMemo(
+      () =>
+        createChatInputAdapter({
+          text: input,
+          setText: setInput,
+          isSending: Boolean(isGenerating),
+          disabled,
+          send: () => handleSend(),
+          stop: onStop,
+        }),
+      [disabled, handleSend, input, isGenerating, onStop],
     );
-
-    const handleChange = useCallback(
-      (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        setInput(e.target.value);
-      },
-      [],
-    );
-
-    const canSend = input.trim().length > 0 || isGenerating;
 
     return (
-      <InputContainer>
-        <InputWrapper>
-          <InputBox>
-            <IconButton variant="ghost" size="sm" disabled>
-              <Paperclip size={18} />
-            </IconButton>
+      <BaseComposer
+        text={inputAdapter.state.text}
+        setText={inputAdapter.actions.setText}
+        onSend={handleSend}
+        onStop={inputAdapter.actions.stop}
+        isLoading={inputAdapter.state.isSending}
+        disabled={inputAdapter.state.disabled}
+        placeholder={placeholder}
+        maxAutoHeight={200}
+      >
+        {({ textareaProps, textareaRef, onPrimaryAction, isPrimaryDisabled }) => (
+          <InputContainer>
+            <InputWrapper>
+              <InputBox>
+                <IconButton variant="ghost" size="sm" disabled>
+                  <Paperclip size={18} />
+                </IconButton>
 
-            <TextArea
-              ref={textareaRef}
-              value={input}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-            />
+                <TextArea ref={textareaRef} {...textareaProps} />
 
-            <ActionButtons>
-              <IconButton variant="ghost" size="sm" disabled>
-                <Mic size={18} />
-              </IconButton>
+                <ActionButtons>
+                  <IconButton variant="ghost" size="sm" disabled>
+                    <Mic size={18} />
+                  </IconButton>
 
-              <SendButton
-                $isGenerating={isGenerating}
-                onClick={handleSend}
-                disabled={!canSend && !isGenerating}
-              >
-                {isGenerating ? <Square size={16} /> : <Send size={16} />}
-              </SendButton>
-            </ActionButtons>
-          </InputBox>
+                  <SendButton
+                    $isGenerating={isGenerating}
+                    onClick={onPrimaryAction}
+                    disabled={isPrimaryDisabled}
+                  >
+                    {isGenerating ? <Square size={16} /> : <Send size={16} />}
+                  </SendButton>
+                </ActionButtons>
+              </InputBox>
 
-          <HintText>按 Enter 发送，Shift + Enter 换行</HintText>
-        </InputWrapper>
-      </InputContainer>
+              <HintText>按 Enter 发送，Shift + Enter 换行</HintText>
+            </InputWrapper>
+          </InputContainer>
+        )}
+      </BaseComposer>
     );
   },
 );

@@ -1,0 +1,147 @@
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
+
+interface BaseComposerRenderContext {
+  textareaRef: React.RefObject<HTMLTextAreaElement>;
+  textareaProps: React.TextareaHTMLAttributes<HTMLTextAreaElement>;
+  hasContent: boolean;
+  canSend: boolean;
+  isPrimaryDisabled: boolean;
+  onPrimaryAction: () => void;
+}
+
+export interface BaseComposerProps {
+  text: string;
+  setText: (value: string) => void;
+  onSend: () => void;
+  onStop?: () => void;
+  isLoading?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
+  onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onKeyDown?: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onEscape?: () => void;
+  textareaRef?: React.RefObject<HTMLTextAreaElement>;
+  isFullscreen?: boolean;
+  fillHeightWhenFullscreen?: boolean;
+  sendOnEnter?: boolean;
+  maxAutoHeight?: number;
+  hasAdditionalContent?: boolean;
+  rows?: number;
+  autoFocus?: boolean;
+  children: (context: BaseComposerRenderContext) => React.ReactNode;
+}
+
+export const BaseComposer: React.FC<BaseComposerProps> = ({
+  text,
+  setText,
+  onSend,
+  onStop,
+  isLoading = false,
+  disabled = false,
+  placeholder,
+  onPaste,
+  onKeyDown,
+  onEscape,
+  textareaRef: externalTextareaRef,
+  isFullscreen = false,
+  fillHeightWhenFullscreen = false,
+  sendOnEnter = true,
+  maxAutoHeight = 300,
+  hasAdditionalContent = false,
+  rows = 1,
+  autoFocus = false,
+  children,
+}) => {
+  const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = externalTextareaRef || internalTextareaRef;
+
+  const hasContent = useMemo(() => {
+    return text.trim().length > 0 || hasAdditionalContent;
+  }, [hasAdditionalContent, text]);
+
+  const canSend = hasContent && !disabled && !isLoading;
+  const isPrimaryDisabled = !isLoading && !canSend;
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    if (isFullscreen && fillHeightWhenFullscreen) {
+      textarea.style.height = "100%";
+      return;
+    }
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxAutoHeight)}px`;
+  }, [
+    fillHeightWhenFullscreen,
+    isFullscreen,
+    maxAutoHeight,
+    text,
+    textareaRef,
+  ]);
+
+  useEffect(() => {
+    if (!autoFocus || disabled) return;
+    textareaRef.current?.focus();
+  }, [autoFocus, disabled, textareaRef]);
+
+  const onPrimaryAction = useCallback(() => {
+    if (isLoading) {
+      onStop?.();
+      return;
+    }
+
+    if (!canSend) {
+      return;
+    }
+
+    onSend();
+  }, [canSend, isLoading, onSend, onStop]);
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      onKeyDown?.(event);
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      if (event.key === "Enter" && sendOnEnter && !event.shiftKey) {
+        event.preventDefault();
+        if (canSend) {
+          onSend();
+        }
+        return;
+      }
+
+      if (event.key === "Escape" && isFullscreen) {
+        onEscape?.();
+      }
+    },
+    [canSend, isFullscreen, onEscape, onKeyDown, onSend, sendOnEnter],
+  );
+
+  const textareaProps: React.TextareaHTMLAttributes<HTMLTextAreaElement> = {
+    value: text,
+    onChange: (event) => setText(event.target.value),
+    onKeyDown: handleKeyDown,
+    onPaste,
+    placeholder,
+    disabled,
+    rows,
+    autoFocus,
+  };
+
+  return (
+    <>
+      {children({
+        textareaRef,
+        textareaProps,
+        hasContent,
+        canSend,
+        isPrimaryDisabled,
+        onPrimaryAction,
+      })}
+    </>
+  );
+};

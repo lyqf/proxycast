@@ -3,7 +3,6 @@ node_modules/
 
 # Build
 dist/
-src-tauri/target/
 src-tauri/.cargo/
 *.exe
 *.pdb
@@ -59,3 +58,6 @@ nul
 .proptest-regressions
 .codex
 openspec
+
+# Build artifacts (alternate cargo target dirs)
+src-tauri/target*/

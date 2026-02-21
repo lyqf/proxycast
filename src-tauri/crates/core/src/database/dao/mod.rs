@@ -1,9 +1,11 @@
 pub mod a2ui_form_dao;
 pub mod agent;
+pub mod agent_run;
 pub mod api_key_provider;
 pub mod brand_persona_dao;
 pub mod chat;
 pub mod general_chat;
+pub mod heartbeat;
 pub mod installed_plugins;
 pub mod material_dao;
 pub mod mcp;

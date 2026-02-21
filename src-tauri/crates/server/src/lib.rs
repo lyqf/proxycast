@@ -162,6 +162,14 @@ pub struct ServerStatus {
     pub port: u16,
     pub requests: u64,
     pub uptime_secs: u64,
+    /// 最近 1 分钟错误率（0.0 - 1.0）
+    pub error_rate_1m: f64,
+    /// 最近 1 分钟 P95 延迟（毫秒）
+    pub p95_latency_ms_1m: Option<u64>,
+    /// 当前熔断的上游数量（当前版本暂未接入熔断器）
+    pub open_circuit_count: u32,
+    /// 当前活跃请求数（近似值，当前版本默认 0）
+    pub active_requests: u64,
 }
 
 pub struct ServerState {
@@ -220,6 +228,10 @@ impl ServerState {
             port: self.config.server.port,
             requests: self.requests,
             uptime_secs: self.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0),
+            error_rate_1m: 0.0,
+            p95_latency_ms_1m: None,
+            open_circuit_count: 0,
+            active_requests: 0,
         }
     }
 
@@ -473,6 +485,8 @@ pub struct AppState {
         Arc<tokio::sync::RwLock<Option<handlers::batch_executor::BatchTaskExecutor>>>,
     /// 速率限制器
     pub rate_limiter: Option<Arc<middleware::rate_limit::SlidingWindowRateLimiter>>,
+    /// 幂等性存储
+    pub idempotency_store: Arc<middleware::idempotency::IdempotencyStore>,
     /// 凭证清理器
     pub sanitizer: Arc<proxycast_core::sanitizer::CredentialSanitizer>,
 }
@@ -888,7 +902,14 @@ async fn run_server(
         kiro_event_service,
         api_key_service,
         batch_executor: Arc::new(tokio::sync::RwLock::new(None)),
-        rate_limiter: None, // 可通过配置启用
+        rate_limiter: Some(Arc::new(
+            middleware::rate_limit::SlidingWindowRateLimiter::new(
+                middleware::rate_limit::RateLimitConfig::default(),
+            ),
+        )),
+        idempotency_store: Arc::new(middleware::idempotency::IdempotencyStore::new(
+            middleware::idempotency::IdempotencyConfig::default(),
+        )),
         sanitizer: Arc::new(proxycast_core::sanitizer::CredentialSanitizer::with_defaults()),
     };
 
@@ -920,34 +941,6 @@ async fn run_server(
 
     // 设置请求体大小限制为 100MB，支持大型上下文请求（如 Claude Code 的 /compact 命令）
     let body_limit = 100 * 1024 * 1024; // 100MB
-
-    // 创建管理 API 路由（带认证中间件）
-    let management_config = config
-        .as_ref()
-        .map(|c| c.remote_management.clone())
-        .unwrap_or_default();
-
-    let management_routes = Router::new()
-        .route("/v0/management/status", get(handlers::management_status))
-        .route(
-            "/v0/management/credentials",
-            get(handlers::management_list_credentials),
-        )
-        .route(
-            "/v0/management/credentials",
-            post(handlers::management_add_credential),
-        )
-        .route(
-            "/v0/management/config",
-            get(handlers::management_get_config),
-        )
-        .route(
-            "/v0/management/config",
-            axum::routing::put(handlers::management_update_config),
-        )
-        .layer(proxycast_core::middleware::ManagementAuthLayer::new(
-            management_config,
-        ));
 
     // Kiro凭证管理API路由
     let kiro_api_routes = Router::new()
@@ -1056,8 +1049,6 @@ async fn run_server(
             "/{selector}/v1/chat/completions",
             post(chat_completions_with_selector),
         )
-        // 管理 API 路由
-        .merge(management_routes)
         // Kiro凭证管理API路由
         .merge(kiro_api_routes)
         // 凭证 API 路由（用于 aster Agent 集成）

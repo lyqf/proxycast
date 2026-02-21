@@ -1,11 +1,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { GeneralSettings } from "./GeneralSettings";
-import { DirectorySettings } from "./DirectorySettings";
 import { AboutSection } from "./AboutSection";
-import { TlsSettings } from "./TlsSettings";
-import { QuotaSettings } from "./QuotaSettings";
-import { RemoteManagementSettings } from "./RemoteManagementSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { ConnectionsSettings } from "./ConnectionsSettings";
@@ -16,8 +12,6 @@ type SettingsTab =
   | "general"
   | "connections"
   | "tools"
-  | "security"
-  | "advanced"
   | "extensions"
   | "experimental"
   | "developer"
@@ -27,8 +21,6 @@ const tabs: { id: SettingsTab; label: string; experimental?: boolean }[] = [
   { id: "general", label: "通用" },
   { id: "connections", label: "连接" },
   { id: "tools", label: "外部工具" },
-  { id: "security", label: "安全" },
-  { id: "advanced", label: "高级" },
   { id: "extensions", label: "扩展", experimental: true },
   { id: "experimental", label: "实验室", experimental: true },
   { id: "developer", label: "开发者" },
@@ -74,18 +66,6 @@ export function SettingsPage() {
         {activeTab === "general" && <GeneralSettings />}
         {activeTab === "connections" && <ConnectionsSettings />}
         {activeTab === "tools" && <ExternalToolsSettings />}
-        {activeTab === "security" && (
-          <div className="space-y-6 max-w-2xl">
-            <TlsSettings />
-            <RemoteManagementSettings />
-          </div>
-        )}
-        {activeTab === "advanced" && (
-          <div className="space-y-4 max-w-2xl">
-            <DirectorySettings />
-            <QuotaSettings />
-          </div>
-        )}
         {activeTab === "extensions" && <ExtensionsSettings />}
         {activeTab === "experimental" && <ExperimentalSettings />}
         {activeTab === "developer" && <DeveloperSettings />}

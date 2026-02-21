@@ -1,5 +1,11 @@
 import React from "react";
-import { Paperclip, Lightbulb, Globe, MessageSquareDiff } from "lucide-react";
+import {
+  Paperclip,
+  Lightbulb,
+  Globe,
+  MessageSquareDiff,
+  Code2,
+} from "lucide-react";
 import { ToolButton } from "../styles";
 import {
   Tooltip,
@@ -11,6 +17,8 @@ import {
 interface InputbarToolsProps {
   onToolClick?: (tool: string) => void;
   activeTools?: Record<string, boolean>;
+  executionStrategy?: "react" | "code_orchestrated" | "auto";
+  showExecutionStrategy?: boolean;
   /** 画布是否打开（兼容保留，不再展示画布图标） */
   isCanvasOpen?: boolean;
 }
@@ -18,7 +26,18 @@ interface InputbarToolsProps {
 export const InputbarTools: React.FC<InputbarToolsProps> = ({
   onToolClick,
   activeTools = {},
+  executionStrategy = "react",
+  showExecutionStrategy = false,
 }) => {
+  const modeLabel =
+    executionStrategy === "auto"
+      ? "Auto（自动确认）"
+      : executionStrategy === "code_orchestrated"
+        ? "编排"
+        : "ReAct";
+  const strategyEnabled =
+    executionStrategy !== "react" || activeTools["execution_strategy"];
+
   return (
     <TooltipProvider>
       <div className="flex items-center">
@@ -71,6 +90,22 @@ export const InputbarTools: React.FC<InputbarToolsProps> = ({
             联网搜索 {activeTools["web_search"] ? "(已开启)" : ""}
           </TooltipContent>
         </Tooltip>
+
+        {showExecutionStrategy && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToolButton
+                onClick={() => onToolClick?.("execution_strategy")}
+                className={strategyEnabled ? "active" : ""}
+              >
+                <Code2
+                  className={strategyEnabled ? "text-emerald-500" : ""}
+                />
+              </ToolButton>
+            </TooltipTrigger>
+            <TooltipContent side="top">执行模式: {modeLabel}</TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </TooltipProvider>
   );

@@ -1457,37 +1457,43 @@ export function useAgentChat(options: UseAgentChatOptions) {
       // 转换为前端 Message 格式
       // 注意：不设置 contentParts，让 StreamingRenderer 使用回退模式
       // 回退模式会直接解析 content 中的 A2UI 代码块
-      const loadedMessages: Message[] = agentMessages.map((msg, index) => {
-        // 提取文本内容
-        let content = "";
-        if (typeof msg.content === "string") {
-          content = msg.content;
-        } else if (Array.isArray(msg.content)) {
-          content = msg.content
-            .filter(
-              (part): part is { type: "text"; text: string } =>
-                part.type === "text",
-            )
-            .map((part) => part.text)
-            .join("\n");
-        }
+      const loadedMessages: Message[] = agentMessages
+        .filter((msg) => msg.role === "user" || msg.role === "assistant")
+        .map((msg, index) => {
+          // 提取文本内容
+          let content = "";
+          if (typeof msg.content === "string") {
+            content = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            content = msg.content
+              .filter(
+                (part): part is { type: "text"; text: string } =>
+                  part.type === "text",
+              )
+              .map((part) => part.text)
+              .join("\n");
+          }
 
-        // 检查是否包含 A2UI 内容（用于调试）
-        if (msg.role === "assistant" && content.includes("```a2ui")) {
-          console.log(
-            `[useAgentChat] 消息 ${index} 包含 A2UI 代码块，将由 StreamingRenderer 解析`,
-          );
-        }
+          // 检查是否包含 A2UI 内容（用于调试）
+          if (msg.role === "assistant" && content.includes("```a2ui")) {
+            console.log(
+              `[useAgentChat] 消息 ${index} 包含 A2UI 代码块，将由 StreamingRenderer 解析`,
+            );
+          }
 
-        return {
-          id: `${topicId}-${index}`,
-          role: msg.role as "user" | "assistant",
-          content,
-          timestamp: new Date(msg.timestamp),
-          isThinking: false,
-          // 不设置 contentParts，让 StreamingRenderer 使用回退模式解析 A2UI
-        };
-      });
+          return {
+            id: `${topicId}-${index}`,
+            role: msg.role as "user" | "assistant",
+            content,
+            timestamp: new Date(msg.timestamp),
+            isThinking: false,
+            // 不设置 contentParts，让 StreamingRenderer 使用回退模式解析 A2UI
+          };
+        })
+        // 过滤仅包含工具协议的空白 assistant 消息，避免历史里出现无意义气泡
+        .filter(
+          (msg) => !(msg.role === "assistant" && msg.content.trim().length === 0),
+        );
 
       if (restoreRequestVersion !== sessionResetVersionRef.current) {
         console.log("[useAgentChat] 忽略过期会话切换:", topicId);
@@ -2065,6 +2071,9 @@ export function useAgentChat(options: UseAgentChatOptions) {
 
       const actionType =
         response.actionType || findActionTypeByRequestId(response.requestId);
+      const normalizedResponse =
+        typeof response.response === "string" ? response.response.trim() : "";
+      let submittedUserData: unknown = response.userData;
 
       if (actionType === "elicitation" || actionType === "ask_user") {
         const activeSessionId =
@@ -2094,6 +2103,8 @@ export function useAgentChat(options: UseAgentChatOptions) {
           userData = "";
         }
 
+        submittedUserData = userData;
+
         await submitAsterElicitationResponse(
           activeSessionId,
           response.requestId,
@@ -2107,18 +2118,47 @@ export function useAgentChat(options: UseAgentChatOptions) {
         );
       }
 
-      // 移除已处理的权限请求
+      const shouldPersistSubmittedAction =
+        actionType === "elicitation" || actionType === "ask_user";
+
+      // ask/elicitation 提交后保留只读回显，tool_confirmation 继续移除
       setMessages((prev) =>
         prev.map((msg) => ({
           ...msg,
-          actionRequests: msg.actionRequests?.filter(
-            (ar) => ar.requestId !== response.requestId,
-          ),
-          contentParts: msg.contentParts?.filter(
-            (part) =>
-              part.type !== "action_required" ||
-              part.actionRequired.requestId !== response.requestId,
-          ),
+          actionRequests: shouldPersistSubmittedAction
+            ? msg.actionRequests?.map((ar) =>
+                ar.requestId === response.requestId
+                  ? {
+                      ...ar,
+                      status: "submitted" as const,
+                      submittedResponse: normalizedResponse || undefined,
+                      submittedUserData,
+                    }
+                  : ar,
+              )
+            : msg.actionRequests?.filter(
+                (ar) => ar.requestId !== response.requestId,
+              ),
+          contentParts: shouldPersistSubmittedAction
+            ? msg.contentParts?.map((part) =>
+                part.type === "action_required" &&
+                part.actionRequired.requestId === response.requestId
+                  ? {
+                      ...part,
+                      actionRequired: {
+                        ...part.actionRequired,
+                        status: "submitted" as const,
+                        submittedResponse: normalizedResponse || undefined,
+                        submittedUserData,
+                      },
+                    }
+                  : part,
+              )
+            : msg.contentParts?.filter(
+                (part) =>
+                  part.type !== "action_required" ||
+                  part.actionRequired.requestId !== response.requestId,
+              ),
         })),
       );
 

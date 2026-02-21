@@ -54,6 +54,9 @@ pub use batch::{
 pub use batch_dao::{BatchTaskDao, TemplateDao};
 pub use dao::SchedulerDao;
 pub use executor::{AgentExecutor, TaskExecutor};
-pub use scheduler::{AgentScheduler, SchedulerTrait};
+pub use scheduler::{AgentScheduler, SchedulerGovernanceConfig, SchedulerTrait};
 pub use template::TaskTemplate;
-pub use types::{ScheduledTask, TaskFilter, TaskStatus};
+pub use types::{
+    ScheduledTask, TaskFilter, TaskStatus, DEFAULT_TASK_COOLDOWN_SECS,
+    DEFAULT_TASK_FAILURE_THRESHOLD,
+};

@@ -274,7 +274,7 @@ export function WorkbenchPage({
     ) => {
       setSelectedContentId(contentId);
       setWorkspaceMode("workspace");
-      setShowChatPanel(options?.showChatPanel ?? false);
+      setShowChatPanel(options?.showChatPanel ?? true);
       setActiveRightDrawer(null);
       setLeftSidebarCollapsed(true);
     },
@@ -542,7 +542,7 @@ export function WorkbenchPage({
     setSelectedContentId(initialContentId ?? null);
     setWorkspaceMode(nextMode);
     const isWorkspaceMode = nextMode === "workspace";
-    setShowChatPanel(!isWorkspaceMode);
+    setShowChatPanel(true);
     setLeftSidebarCollapsed(isWorkspaceMode);
     setActiveRightDrawer(null);
     setContents([]);
@@ -1065,7 +1065,7 @@ export function WorkbenchPage({
                 onBack={handleBackToProjectManagement}
                 onNavigateToChat={() => {
                   setWorkspaceMode("workspace");
-                  setShowChatPanel(false);
+                  setShowChatPanel(true);
                   setActiveRightDrawer(null);
                   setLeftSidebarCollapsed(true);
                 }}

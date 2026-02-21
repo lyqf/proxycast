@@ -3,5 +3,10 @@
 //! 提供各种工具的包装器和辅助函数
 
 pub mod browser_tool;
+pub mod heartbeat_tool;
 
 pub use browser_tool::{BrowserAction, BrowserTool, BrowserToolError, BrowserToolResult};
+pub use heartbeat_tool::{
+    HeartbeatCycleResult, HeartbeatExecutionRecord, HeartbeatService, HeartbeatStatus,
+    HeartbeatTaskPreview, HeartbeatTool, HeartbeatToolError,
+};

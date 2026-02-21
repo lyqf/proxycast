@@ -6,7 +6,7 @@
  * - 用户问题（AskUserQuestion）
  * - 权限请求
  *
- * 参考 Claude-Cowork 的设计
+ * 参考通用协作代理交互设计
  */
 
 import { useState, useEffect } from "react";
@@ -24,7 +24,11 @@ import {
   FileEdit,
   Globe,
 } from "lucide-react";
-import type { ActionRequired, ConfirmResponse } from "../types";
+import type {
+  ActionRequired,
+  ConfirmResponse,
+  QuestionOption,
+} from "../types";
 
 interface DecisionPanelProps {
   request: ActionRequired;
@@ -93,9 +97,227 @@ function extractElicitationDescription(
   return typeof description === "string" ? description : undefined;
 }
 
+/** 从问题文本中提取选项（用于 ask_user 缺少 options 的兜底场景） */
+function extractAskUserOptionsFromText(text?: string): QuestionOption[] {
+  if (!text) return [];
+
+  const normalizedText = text.trim();
+  if (!normalizedText) return [];
+
+  const maxOptions = 8;
+  const maxLabelLength = 120;
+  const seen = new Set<string>();
+  const options: QuestionOption[] = [];
+
+  const splitFragments = (raw: string): string[] =>
+    raw
+      .split(/[、,，;/|]/)
+      .map((fragment) => fragment.trim())
+      .filter(Boolean);
+
+  const pushOption = (raw: string) => {
+    if (options.length >= maxOptions) return;
+    const label = raw
+      .replace(/\s+/g, " ")
+      .replace(/^[\s"'“”‘’`]+/, "")
+      .replace(/[\s"'“”‘’`]+$/, "")
+      .trim();
+    if (!label || label.length > maxLabelLength) return;
+
+    const key = label.toLowerCase();
+    if (seen.has(key)) return;
+
+    // 过滤明显不是选项的内容
+    if (/^(option|options|choices?|可选项?)[:：]?$/i.test(label)) return;
+    if (/^[,，、;；/|]+$/.test(label)) return;
+
+    seen.add(key);
+    options.push({ label });
+  };
+
+  const quotedPatterns = [
+    /"([^"\n]{1,160})"/g,
+    /“([^”\n]{1,160})”/g,
+    /'([^'\n]{1,160})'/g,
+    /‘([^’\n]{1,160})’/g,
+    /`([^`\n]{1,160})`/g,
+  ];
+
+  for (const pattern of quotedPatterns) {
+    for (const match of normalizedText.matchAll(pattern)) {
+      pushOption(match[1] ?? "");
+      if (options.length >= maxOptions) break;
+    }
+    if (options.length >= maxOptions) break;
+  }
+
+  if (options.length > 0) return options;
+
+  const parenthesizedPattern = /[（(]([^()（）\n]{2,180})[）)]/g;
+  for (const match of normalizedText.matchAll(parenthesizedPattern)) {
+    const fragments = splitFragments(match[1] ?? "");
+    if (fragments.length < 2) continue;
+    for (const fragment of fragments) {
+      pushOption(fragment);
+    }
+    if (options.length >= maxOptions) break;
+  }
+
+  if (options.length > 0) return options;
+
+  const lineCandidates = normalizedText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const indexedOrBulletedLines = lineCandidates
+    .map((line) =>
+      line.match(
+        /^(?:[-*•●]\s+|(?:\d+|[A-Za-z]|[一二三四五六七八九十]+)[.()\])]\s+)(.+)$/,
+      ),
+    )
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => match[1]?.trim() ?? "")
+    .filter(Boolean);
+
+  if (indexedOrBulletedLines.length >= 2) {
+    for (const line of indexedOrBulletedLines) {
+      const colonIndex = line.search(/[:：]/);
+      const maybeOptionLine =
+        colonIndex >= 0 ? line.slice(colonIndex + 1).trim() : line;
+      const fragments = splitFragments(maybeOptionLine);
+      if (fragments.length >= 2) {
+        for (const fragment of fragments) {
+          pushOption(fragment);
+        }
+      } else {
+        pushOption(line);
+      }
+      if (options.length >= maxOptions) break;
+    }
+  }
+
+  if (options.length > 0) return options;
+
+  const optionLinePattern = /(options?|choices?|可选项?|选项)\s*[:：]\s*([^\n]+)/i;
+  const lineMatch = normalizedText.match(optionLinePattern);
+  if (lineMatch?.[2]) {
+    const fragments = splitFragments(lineMatch[2]);
+    for (const fragment of fragments) {
+      pushOption(fragment);
+    }
+  }
+
+  return options;
+}
+
+/** 运行时归一化 options，兼容字符串数组和对象数组 */
+function normalizeQuestionOptions(rawOptions: unknown): QuestionOption[] {
+  if (!Array.isArray(rawOptions)) return [];
+
+  const normalized: QuestionOption[] = [];
+  const seen = new Set<string>();
+
+  const push = (option: QuestionOption) => {
+    const label = option.label.trim();
+    if (!label) return;
+    const key = label.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push({ label, description: option.description });
+  };
+
+  for (const option of rawOptions) {
+    if (typeof option === "string") {
+      push({ label: option });
+      continue;
+    }
+
+    if (!option || typeof option !== "object") continue;
+    const candidate = option as Record<string, unknown>;
+    const label =
+      (typeof candidate.label === "string" && candidate.label) ||
+      (typeof candidate.value === "string" && candidate.value) ||
+      (typeof candidate.text === "string" && candidate.text) ||
+      "";
+    if (!label) continue;
+
+    const description =
+      typeof candidate.description === "string"
+        ? candidate.description
+        : undefined;
+    push({ label, description });
+  }
+
+  return normalized;
+}
+
+function resolveSubmittedAnswerText(request: ActionRequired): string | undefined {
+  const userData = request.submittedUserData;
+  if (typeof userData === "string") {
+    const value = userData.trim();
+    if (value) return value;
+    return undefined;
+  }
+
+  if (userData && typeof userData === "object") {
+    const record = userData as Record<string, unknown>;
+    if (typeof record.answer === "string" && record.answer.trim()) {
+      return record.answer.trim();
+    }
+    if (request.questions && request.questions.length > 0) {
+      const firstQuestion = request.questions[0]?.question;
+      if (
+        typeof firstQuestion === "string" &&
+        typeof record[firstQuestion] === "string" &&
+        (record[firstQuestion] as string).trim()
+      ) {
+        return (record[firstQuestion] as string).trim();
+      }
+    }
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (typeof request.submittedResponse === "string") {
+    const value = request.submittedResponse.trim();
+    if (!value) return undefined;
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "string" && parsed.trim()) {
+        return parsed.trim();
+      }
+      if (parsed && typeof parsed === "object") {
+        const record = parsed as Record<string, unknown>;
+        if (typeof record.answer === "string" && record.answer.trim()) {
+          return record.answer.trim();
+        }
+      }
+    } catch {
+      // 非 JSON，继续使用原始文本
+    }
+    return value;
+  }
+
+  return undefined;
+}
+
 export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
   // 解析问题数据（用于 ask_user 类型）
   const questions = request.questions || [];
+  const questionOptions = questions.map((question) => {
+    const normalized = normalizeQuestionOptions(question.options);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+
+    const fallbackText = [question.question, question.header, request.prompt]
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .join("\n");
+    return extractAskUserOptionsFromText(fallbackText);
+  });
   const elicitationOptions = extractElicitationOptions(request.requestedSchema);
   const elicitationDescription = extractElicitationDescription(
     request.requestedSchema,
@@ -106,6 +328,10 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
   const [elicitationAnswer, setElicitationAnswer] = useState("");
   const [elicitationOther, setElicitationOther] = useState("");
+  const isSubmitted = request.status === "submitted";
+  const submittedAnswer = resolveSubmittedAnswerText(request);
+  const isFallbackAskPending =
+    request.actionType === "ask_user" && request.isFallback;
 
   // 重置状态当请求变化时
   useEffect(() => {
@@ -157,6 +383,8 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
     request.actionType === "elicitation"
       ? elicitationAnswer.trim().length > 0 ||
         elicitationOther.trim().length > 0
+      : isFallbackAskPending
+        ? false
       : questions.length === 0 ||
         questions.every((_, qIndex) => {
           const selected = selectedOptions[qIndex] ?? [];
@@ -214,6 +442,58 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
     });
   };
 
+  if (isSubmitted) {
+    const submittedTitle =
+      request.actionType === "tool_confirmation"
+        ? "已处理权限请求"
+        : "已提交你的回答";
+    const submittedClassName =
+      request.actionType === "tool_confirmation"
+        ? "border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20"
+        : request.actionType === "elicitation"
+          ? "border-indigo-200 bg-indigo-50/50 dark:border-indigo-800 dark:bg-indigo-950/20"
+          : "border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20";
+
+    return (
+      <Card className={submittedClassName}>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+            {submittedTitle}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {request.prompt && (
+            <p className="text-sm text-foreground whitespace-pre-wrap">
+              {request.prompt}
+            </p>
+          )}
+
+          {request.questions && request.questions.length > 0 && (
+            <div className="space-y-1">
+              {request.questions.map((question, index) => (
+                <p key={index} className="text-sm text-foreground">
+                  {question.question}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {submittedAnswer && (
+            <div className="rounded-md border bg-background/80 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">你的回答：</span>
+              <span className="ml-2 font-medium text-foreground">
+                {submittedAnswer}
+              </span>
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">已提交，等待助手继续执行...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   // 渲染 elicitation 面板
   if (request.actionType === "elicitation") {
     return (
@@ -242,6 +522,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                 return (
                   <button
                     key={option}
+                    type="button"
                     className={cn(
                       "rounded-lg border px-4 py-3 text-left text-sm transition-colors",
                       isSelected
@@ -311,7 +592,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300">
             <HelpCircle className="h-4 w-4" />
-            Claude 的问题
+            助手的问题
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -326,18 +607,21 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
               )}
 
               {/* 选项列表 */}
-              {q.options && q.options.length > 0 && (
+              {questionOptions[qIndex] && questionOptions[qIndex].length > 0 && (
                 <div className="grid gap-2">
-                  {q.options.map((option, optIndex) => {
+                  {questionOptions[qIndex].map((option, optIndex) => {
                     const isSelected = (selectedOptions[qIndex] ?? []).includes(
                       option.label,
                     );
                     const shouldAutoSubmit =
-                      questions.length === 1 && !q.multiSelect;
+                      questions.length === 1 &&
+                      !q.multiSelect &&
+                      !isFallbackAskPending;
 
                     return (
                       <button
                         key={optIndex}
+                        type="button"
                         className={cn(
                           "rounded-lg border px-4 py-3 text-left text-sm transition-colors",
                           isSelected
@@ -395,6 +679,12 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
             </div>
           ))}
 
+          {isFallbackAskPending && (
+            <p className="text-xs text-muted-foreground">
+              正在等待系统生成可提交的 Ask 请求，请稍候（你可以先选择答案）。
+            </p>
+          )}
+
           {/* 操作按钮 */}
           <div className="flex gap-2 pt-2">
             <Button
@@ -404,7 +694,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
               className="bg-blue-600 hover:bg-blue-700"
             >
               <CheckCircle className="mr-1 h-4 w-4" />
-              提交答案
+              {isFallbackAskPending ? "等待系统就绪..." : "提交答案"}
             </Button>
             <Button size="sm" variant="outline" onClick={handleDeny}>
               <XCircle className="mr-1 h-4 w-4" />
@@ -430,7 +720,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
         <div className="flex items-center gap-2">
           {getToolIcon(request.toolName)}
           <span className="text-sm">
-            Claude 想要使用：
+            助手想要使用：
             <span className="ml-1 font-medium">
               {request.toolName || "未知工具"}
             </span>

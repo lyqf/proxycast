@@ -9,7 +9,6 @@ pub mod batch_executor;
 pub mod credentials_api;
 pub mod image_handler;
 pub mod kiro_credential;
-pub mod management;
 pub mod provider_calls;
 pub mod websocket;
 
@@ -23,6 +22,5 @@ pub use kiro_credential::{
     AvailableCredential, AvailableCredentialsResponse, RefreshCredentialResponse,
     SelectCredentialResponse,
 };
-pub use management::*;
 pub use provider_calls::*;
 pub use websocket::*;

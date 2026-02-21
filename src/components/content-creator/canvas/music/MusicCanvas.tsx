@@ -13,7 +13,7 @@ import {
   GuitarTabRenderer,
   PianoRollRenderer,
 } from "./renderers";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Music } from "lucide-react";
 
 /** 段落类型中文映射 */
 const SECTION_DISPLAY_NAMES: Record<string, string> = {
@@ -91,7 +91,7 @@ const SectionBlock = styled.div<{ $isSelected: boolean }>`
     $isSelected ? "hsl(var(--accent) / 0.1)" : "transparent"};
   border: 1px solid
     ${({ $isSelected }) =>
-      $isSelected ? "hsl(var(--primary))" : "hsl(var(--border))"};
+    $isSelected ? "hsl(var(--primary))" : "hsl(var(--border))"};
   cursor: pointer;
   transition: all 0.2s;
 
@@ -129,33 +129,61 @@ const LyricsLine = styled.p`
   white-space: pre-wrap;
 `;
 
-const EmptyState = styled.div`
+const EmptyStateContainer = styled.div`
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
+  width: 100%;
   color: hsl(var(--muted-foreground));
   text-align: center;
-  padding: 32px;
+  padding: 40px;
+  animation: fadeIn 0.5s ease-out;
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 `;
 
-const EmptyIcon = styled.div`
-  font-size: 48px;
-  margin-bottom: 16px;
+const IconWrapper = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px hsl(var(--primary) / 0.05);
+  position: relative;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -10px;
+    border-radius: 26px;
+    background: hsl(var(--primary) / 0.05);
+    z-index: -1;
+  }
 `;
 
 const EmptyTitle = styled.h3`
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
-  margin: 0 0 8px 0;
+  margin: 0 0 12px 0;
   color: hsl(var(--foreground));
+  letter-spacing: -0.01em;
 `;
 
 const EmptyDescription = styled.p`
   font-size: 14px;
+  line-height: 1.6;
   margin: 0;
-  max-width: 300px;
+  max-width: 320px;
+  color: hsl(var(--muted-foreground));
 `;
 
 const Toast = styled.div<{ $visible: boolean }>`
@@ -286,13 +314,15 @@ export const MusicCanvas: React.FC<MusicCanvasProps> = memo(
     const renderLyricsView = () => {
       if (state.sections.length === 0) {
         return (
-          <EmptyState>
-            <EmptyIcon>🎵</EmptyIcon>
+          <EmptyStateContainer>
+            <IconWrapper>
+              <Music size={32} />
+            </IconWrapper>
             <EmptyTitle>开始创作你的歌曲</EmptyTitle>
             <EmptyDescription>
               在左侧对话中描述你想要创作的歌曲，AI 将帮助你完成歌词创作
             </EmptyDescription>
-          </EmptyState>
+          </EmptyStateContainer>
         );
       }
 
@@ -314,8 +344,8 @@ export const MusicCanvas: React.FC<MusicCanvasProps> = memo(
                 {section.name !== SECTION_DISPLAY_NAMES[section.type] &&
                   section.name !== section.type &&
                   section.name !==
-                    (SECTION_DISPLAY_NAMES[section.type] ||
-                      section.type.toUpperCase()) && (
+                  (SECTION_DISPLAY_NAMES[section.type] ||
+                    section.type.toUpperCase()) && (
                     <SectionName>{section.name}</SectionName>
                   )}
               </SectionHeader>

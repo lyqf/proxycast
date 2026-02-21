@@ -46,6 +46,9 @@ pub enum RpcMethod {
     /// 运行定时任务
     #[serde(rename = "cron.run")]
     CronRun,
+    /// 获取定时任务健康摘要
+    #[serde(rename = "cron.health")]
+    CronHealth,
 }
 
 /// Gateway RPC 响应
@@ -181,6 +184,21 @@ pub struct CronRunParams {
     pub params: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// Cron 健康查询参数
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CronHealthParams {
+    /// 运行中任务判定为悬挂的阈值（分钟）
+    pub running_timeout_minutes: Option<u64>,
+    /// 高风险任务返回数量上限
+    pub top_limit: Option<usize>,
+    /// 冷却任务告警阈值
+    pub cooldown_alert_threshold: Option<usize>,
+    /// 悬挂运行告警阈值
+    pub stale_running_alert_threshold: Option<usize>,
+    /// 24h 失败告警阈值
+    pub failed_24h_alert_threshold: Option<usize>,
+}
+
 /// Agent 运行结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -308,6 +326,89 @@ pub struct CronRunResult {
     pub started: bool,
 }
 
+/// Cron 健康结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CronHealthResult {
+    /// 总任务数
+    pub total_tasks: usize,
+    /// 待执行任务数
+    pub pending_tasks: usize,
+    /// 运行中任务数
+    pub running_tasks: usize,
+    /// 成功任务数
+    pub completed_tasks: usize,
+    /// 失败任务数
+    pub failed_tasks: usize,
+    /// 取消任务数
+    pub cancelled_tasks: usize,
+    /// 冷却中的任务数
+    pub cooldown_tasks: usize,
+    /// 悬挂运行任务数
+    pub stale_running_tasks: usize,
+    /// 最近 24h 失败任务数
+    pub failed_last_24h: usize,
+    /// 最近 24h 失败趋势（按小时）
+    pub failure_trend_24h: Vec<CronFailureTrendPoint>,
+    /// 告警列表
+    pub alerts: Vec<CronHealthAlert>,
+    /// 高风险任务
+    pub top_risky_tasks: Vec<CronRiskTaskInfo>,
+    /// 生成时间
+    pub generated_at: String,
+}
+
+/// Cron 高风险任务信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CronRiskTaskInfo {
+    /// 任务 ID
+    pub task_id: String,
+    /// 任务名称
+    pub name: String,
+    /// 当前状态
+    pub status: String,
+    /// 连续失败次数
+    pub consecutive_failures: u32,
+    /// 重试次数
+    pub retry_count: u32,
+    /// 冷却截止时间
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_disabled_until: Option<String>,
+    /// 更新时间
+    pub updated_at: String,
+}
+
+/// Cron 失败趋势点
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CronFailureTrendPoint {
+    /// 小时开始时间（RFC3339）
+    pub bucket_start: String,
+    /// 标签（HH:mm）
+    pub label: String,
+    /// 错误数（error）
+    pub error_count: usize,
+    /// 超时数（timeout）
+    pub timeout_count: usize,
+}
+
+/// Cron 健康告警
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CronHealthAlert {
+    /// 告警编码
+    pub code: String,
+    /// 严重级别（info / warning / critical）
+    pub severity: String,
+    /// 告警消息
+    pub message: String,
+    /// 当前值
+    pub current_value: usize,
+    /// 阈值
+    pub threshold: usize,
+}
+
 /// Token 使用量
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -369,6 +470,25 @@ mod tests {
         let request: GatewayRpcRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.method, RpcMethod::AgentRun);
         assert!(request.params.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_cron_health_request() {
+        let json = r#"{
+            "jsonrpc": "2.0",
+            "id": "test-health",
+            "method": "cron.health",
+            "params": {
+                "running_timeout_minutes": 15,
+                "top_limit": 5
+            }
+        }"#;
+
+        let request: GatewayRpcRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.method, RpcMethod::CronHealth);
+        let params: CronHealthParams = serde_json::from_value(request.params.unwrap()).unwrap();
+        assert_eq!(params.running_timeout_minutes, Some(15));
+        assert_eq!(params.top_limit, Some(5));
     }
 
     #[test]

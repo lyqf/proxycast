@@ -12,6 +12,7 @@ import {
   Search,
   Globe,
   Music,
+  Code2,
 } from "lucide-react";
 import { getConfig } from "@/hooks/useTauri";
 import type { CreationMode, EntryTaskSlotValues, EntryTaskType } from "./types";
@@ -352,7 +353,10 @@ const SlotGrid = styled.div`
 interface EmptyStateProps {
   input: string;
   setInput: (value: string) => void;
-  onSend: (value: string) => void;
+  onSend: (
+    value: string,
+    executionStrategy?: "react" | "code_orchestrated" | "auto",
+  ) => void;
   /** 创作模式 */
   creationMode?: CreationMode;
   /** 创作模式变更回调 */
@@ -369,6 +373,10 @@ interface EmptyStateProps {
   setProviderType: (type: string) => void;
   model: string;
   setModel: (model: string) => void;
+  executionStrategy?: "react" | "code_orchestrated" | "auto";
+  setExecutionStrategy?: (
+    strategy: "react" | "code_orchestrated" | "auto",
+  ) => void;
   onManageProviders?: () => void;
 }
 
@@ -614,6 +622,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   setProviderType,
   model,
   setModel,
+  executionStrategy = "react",
+  setExecutionStrategy,
   onManageProviders,
 }) => {
   // 从配置中读取启用的主题
@@ -745,7 +755,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         },
       });
 
-      onSend(composedPrompt);
+      onSend(composedPrompt, executionStrategy);
       return;
     }
 
@@ -760,7 +770,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       prefix = `[知识探索: ${depth === "deep" ? "深度" : "快速"}] `;
     if (activeTheme === "planning") prefix = `[计划规划] `;
 
-    onSend(prefix + input);
+    onSend(prefix + input, executionStrategy);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -769,6 +779,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       handleSend();
     }
   };
+
+  const executionStrategyLabel =
+    executionStrategy === "auto"
+      ? "Auto"
+      : executionStrategy === "code_orchestrated"
+        ? "编排"
+        : "ReAct";
 
   // Dynamic Placeholder
   const getPlaceholder = () => {
@@ -1193,6 +1210,46 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               >
                 <Globe className="w-4 h-4 opacity-70" />
               </Button>
+
+              {setExecutionStrategy && (
+                <Select
+                  value={executionStrategy}
+                  onValueChange={(value) =>
+                    setExecutionStrategy(
+                      value as "react" | "code_orchestrated" | "auto",
+                    )
+                  }
+                >
+                  <SelectTrigger className="h-8 text-xs bg-background border shadow-sm min-w-[124px]">
+                    <div className="flex items-center gap-1.5">
+                      <Code2 className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="whitespace-nowrap">
+                        {executionStrategyLabel}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="p-1 w-[176px]">
+                    <SelectItem value="react">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <Code2 className="w-3.5 h-3.5" />
+                        ReAct · 需确认
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="code_orchestrated">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <Code2 className="w-3.5 h-3.5" />
+                        编排 · 需确认
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="auto">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <Code2 className="w-3.5 h-3.5" />
+                        Auto · 自动确认
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </ToolLoginLeft>
 
             <Button

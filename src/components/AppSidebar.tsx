@@ -10,7 +10,6 @@ import {
   Home,
   Image,
   Compass,
-  Bot,
   Settings,
   Moon,
   Sun,
@@ -494,16 +493,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
   }, []);
 
   const assistantItems = useMemo<SidebarNavItem[]>(() => {
-    const builtin: SidebarNavItem[] = [
-      {
-        id: "assistant-proxycast",
-        label: "ProxyCast AI",
-        icon: Bot,
-        page: "agent",
-      },
-    ];
-
-    const pluginItems: SidebarNavItem[] = sidebarPlugins.map((plugin) => {
+    return sidebarPlugins.map((plugin) => {
       const pluginPageId = `plugin:${plugin.pluginId}` as Page;
       return {
         id: plugin.pluginId,
@@ -512,8 +502,6 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
         page: pluginPageId,
       };
     });
-
-    return [...builtin, ...pluginItems];
   }, [sidebarPlugins]);
 
   const isActive = (item: SidebarNavItem) => {
@@ -593,19 +581,21 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
           ))}
         </Section>
 
-        <Section>
-          <SectionTitle>助手</SectionTitle>
-          {assistantItems.map((item) => (
-            <NavButton
-              key={item.id}
-              $active={isActive(item)}
-              onClick={() => handleNavigate(item)}
-            >
-              <item.icon />
-              <NavLabel>{item.label}</NavLabel>
-            </NavButton>
-          ))}
-        </Section>
+        {assistantItems.length > 0 && (
+          <Section>
+            <SectionTitle>助手</SectionTitle>
+            {assistantItems.map((item) => (
+              <NavButton
+                key={item.id}
+                $active={isActive(item)}
+                onClick={() => handleNavigate(item)}
+              >
+                <item.icon />
+                <NavLabel>{item.label}</NavLabel>
+              </NavButton>
+            ))}
+          </Section>
+        )}
       </MenuScroll>
 
       <FooterArea>

@@ -112,3 +112,25 @@ export function ComponentName({ prop1, prop2 }: Props) {
 
 - [hooks.md](hooks.md) - React Hooks
 - [lib.md](lib.md) - 工具库
+
+## 输入组件统一规范（input-kit）
+
+输入组件统一基座位于 `src/components/input-kit/`，目标是避免多处输入实现导致行为漂移。
+
+### 分层原则
+
+1. `Hook` 层管理状态与持久化（会话、Provider、Model、输入内容）。
+2. `input-kit` 层只负责渲染和交互编排（`BaseComposer`、`ModelSelector`）。
+3. 业务页面通过 `adapters` 做状态归一化，不允许 UI 组件直接写本地存储。
+
+### 必须遵守
+
+1. UI 组件使用受控 props，不在组件内“偷偷”回写默认 Provider/Model。
+2. Provider/Model 的默认值与恢复逻辑统一放在 Hook 层。
+3. 新增输入入口优先复用 `BaseComposer`，而不是复制粘贴 textarea 逻辑。
+
+### 迁移约定
+
+1. 先接 `adapters`，再替换页面中的旧输入实现。
+2. 保留兼容包装组件（如 `ChatModelSelector`）用于渐进迁移。
+3. 每次迁移至少补一个回归测试，覆盖 Enter 发送/停止和会话切换场景。

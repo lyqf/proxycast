@@ -74,6 +74,7 @@ pub fn run() {
         tool_hooks_service,
         recording_service,
         mcp_manager: mcp_manager_state,
+        heartbeat_service: heartbeat_service_state,
         shared_stats,
         shared_tokens,
         shared_logger,
@@ -113,6 +114,8 @@ pub fn run() {
 
             // 将窗口带到前台
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.maximize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -146,6 +149,8 @@ pub fn run() {
         .manage(tool_hooks_service)
         .manage(recording_service)
         .manage(mcp_manager_state)
+        .manage(heartbeat_service_state)
+        .manage(commands::telegram_remote_cmd::TelegramRemoteState::default())
         .on_window_event(move |window, event| {
             // 处理窗口关闭事件
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -172,6 +177,16 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // 启动时先最大化再显示，避免用户看到“先小窗后展开”的过程
+            if let Some(main_window) = app.get_webview_window("main") {
+                if let Err(e) = main_window.maximize() {
+                    tracing::warn!("[启动] 主窗口最大化失败: {}", e);
+                }
+                if let Err(e) = main_window.show() {
+                    tracing::warn!("[启动] 主窗口显示失败: {}", e);
+                }
+            }
+
             // TODO: 重新实现 TerminalTool 和 TermScrollbackTool 的 AppHandle 设置
             // 当前暂时注释掉，等待适配 aster-rust 工具系统
             // crate::agent::tools::set_terminal_tool_app_handle(app.handle().clone());
@@ -630,6 +645,63 @@ pub fn run() {
                 }
             });
 
+            // 初始化心跳引擎（设置 AppHandle 并根据配置自动启动）
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // 组件监督器：心跳引擎启动失败时自动重试
+                    let max_retries = 3;
+                    let mut retry_count = 0;
+                    let mut retry_delay = tokio::time::Duration::from_secs(5);
+
+                    loop {
+                        if retry_count >= max_retries {
+                            tracing::error!("[启动] 心跳引擎启动重试次数已达上限，放弃启动");
+                            break;
+                        }
+
+                        tokio::time::sleep(retry_delay).await;
+
+                        if let Some(hb_state) = app_handle
+                            .try_state::<crate::services::heartbeat_service::HeartbeatServiceState>()
+                        {
+                            let mut service = hb_state.0.write().await;
+                            service.set_app_handle(app_handle.clone());
+
+                            if service.get_config().enabled {
+                                let app_data_dir = match app_handle.path().app_data_dir() {
+                                    Ok(dir) => dir,
+                                    Err(e) => {
+                                        tracing::error!("[启动] 无法获取应用数据目录: {}", e);
+                                        retry_count += 1;
+                                        retry_delay = retry_delay.saturating_mul(2); // 指数退避
+                                        continue;
+                                    }
+                                };
+                                let self_ref = hb_state.0.clone();
+                                match service.start(app_data_dir, self_ref).await {
+                                    Ok(()) => {
+                                        tracing::info!("[启动] 心跳引擎已自动启动（尝试 {}/{}）", retry_count + 1, max_retries);
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("[启动] 心跳引擎启动失败（尝试 {}/{}）: {}", retry_count + 1, max_retries, e);
+                                        retry_count += 1;
+                                        retry_delay = retry_delay.saturating_mul(2);
+                                    }
+                                }
+                            } else {
+                                tracing::info!("[启动] 心跳引擎已禁用，跳过启动");
+                                break;
+                            }
+                        } else {
+                            tracing::error!("[启动] 无法获取 HeartbeatServiceState");
+                            break;
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -761,6 +833,9 @@ pub fn run() {
             commands::skill_exec_cmd::execute_skill,
             commands::skill_exec_cmd::list_executable_skills,
             commands::skill_exec_cmd::get_skill_detail,
+            // Execution run commands
+            commands::execution_run_cmd::execution_run_list,
+            commands::execution_run_cmd::execution_run_get,
             // Ecommerce Review Reply commands
             commands::ecommerce_review_reply_cmd::execute_ecommerce_review_reply,
             // Provider Pool commands
@@ -871,6 +946,15 @@ pub fn run() {
             commands::injection_cmd::add_injection_rule,
             commands::injection_cmd::remove_injection_rule,
             commands::injection_cmd::update_injection_rule,
+            // Security & Performance commands
+            commands::security_perf_cmd::get_rate_limit_config,
+            commands::security_perf_cmd::update_rate_limit_config,
+            commands::security_perf_cmd::get_conversation_config,
+            commands::security_perf_cmd::update_conversation_config,
+            commands::security_perf_cmd::get_hint_routes,
+            commands::security_perf_cmd::update_hint_routes,
+            commands::security_perf_cmd::get_pairing_config,
+            commands::security_perf_cmd::update_pairing_config,
             // Usage commands
             commands::usage_cmd::get_kiro_usage,
             // Tray commands
@@ -960,6 +1044,7 @@ pub fn run() {
             commands::aster_agent_cmd::aster_agent_chat_stream,
             commands::aster_agent_cmd::aster_agent_stop,
             commands::aster_agent_cmd::aster_session_create,
+            commands::aster_agent_cmd::aster_session_set_execution_strategy,
             commands::aster_agent_cmd::aster_session_list,
             commands::aster_agent_cmd::aster_session_get,
             commands::aster_agent_cmd::aster_session_rename,
@@ -1294,6 +1379,28 @@ pub fn run() {
             crate::voice::commands::cancel_recording,
             crate::voice::commands::get_recording_status,
             crate::voice::commands::list_audio_devices,
+            // Heartbeat Engine commands
+            commands::heartbeat_cmd::get_heartbeat_config,
+            commands::heartbeat_cmd::update_heartbeat_config,
+            commands::heartbeat_cmd::get_heartbeat_status,
+            commands::heartbeat_cmd::get_heartbeat_tasks,
+            commands::heartbeat_cmd::add_heartbeat_task,
+            commands::heartbeat_cmd::delete_heartbeat_task,
+            commands::heartbeat_cmd::update_heartbeat_task,
+            commands::heartbeat_cmd::get_heartbeat_history,
+            commands::heartbeat_cmd::get_heartbeat_execution_detail,
+            commands::heartbeat_cmd::get_heartbeat_task_health,
+            commands::heartbeat_cmd::deliver_heartbeat_task_health_alerts,
+            commands::heartbeat_cmd::get_task_templates,
+            commands::heartbeat_cmd::apply_task_template,
+            commands::heartbeat_cmd::generate_content_creator_tasks,
+            commands::heartbeat_cmd::trigger_heartbeat_now,
+            commands::heartbeat_cmd::preview_heartbeat_schedule,
+            commands::heartbeat_cmd::validate_heartbeat_schedule,
+            // Telegram 远程触发命令
+            commands::telegram_remote_cmd::start_telegram_remote,
+            commands::telegram_remote_cmd::stop_telegram_remote,
+            commands::telegram_remote_cmd::get_telegram_remote_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

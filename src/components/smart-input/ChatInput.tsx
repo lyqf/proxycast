@@ -4,7 +4,8 @@
  * @module components/smart-input/ChatInput
  */
 
-import React, { useCallback, useRef, useEffect } from "react";
+import React from "react";
+import { BaseComposer } from "@/components/input-kit";
 import type { ChatInputProps } from "./types";
 
 /**
@@ -24,83 +25,51 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   isLoading = false,
   placeholder = "输入问题...",
 }) => {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // 自动聚焦输入框
-  useEffect(() => {
-    if (!disabled && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [disabled]);
-
-  // 处理键盘事件
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" && !e.shiftKey && !disabled && !isLoading) {
-        e.preventDefault();
-        if (value.trim()) {
-          onSend();
-        }
-      }
-    },
-    [value, onSend, disabled, isLoading],
-  );
-
-  // 处理输入变化
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      onChange(e.target.value);
-    },
-    [onChange],
-  );
-
-  // 处理发送按钮点击
-  const handleSendClick = useCallback(() => {
-    if (value.trim() && !disabled && !isLoading) {
-      onSend();
-    }
-  }, [value, onSend, disabled, isLoading]);
-
-  const canSend = value.trim() && !disabled && !isLoading;
-
   return (
-    <div className="smart-input-input-area">
-      <input
-        ref={inputRef}
-        type="text"
-        className="smart-input-input"
-        value={value}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        disabled={disabled || isLoading}
-        autoFocus
-      />
-      <button
-        className="smart-input-send-btn"
-        onClick={handleSendClick}
-        disabled={!canSend}
-        title="发送 (Enter)"
-      >
-        {isLoading ? (
-          <span
-            className="smart-input-loading-spinner"
-            style={{ width: 16, height: 16 }}
+    <BaseComposer
+      text={value}
+      setText={onChange}
+      onSend={onSend}
+      disabled={disabled || isLoading}
+      placeholder={placeholder}
+      autoFocus
+      maxAutoHeight={80}
+      rows={1}
+    >
+      {({ textareaRef, textareaProps, onPrimaryAction, isPrimaryDisabled }) => (
+        <div className="smart-input-input-area">
+          <textarea
+            ref={textareaRef}
+            {...textareaProps}
+            className="smart-input-input resize-none"
           />
-        ) : (
-          <svg
-            className="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
+          <button
+            className="smart-input-send-btn"
+            onClick={onPrimaryAction}
+            disabled={isPrimaryDisabled}
+            title="发送 (Enter)"
           >
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        )}
-      </button>
-    </div>
+            {isLoading ? (
+              <span
+                className="smart-input-loading-spinner"
+                style={{ width: 16, height: 16 }}
+              />
+            ) : (
+              <svg
+                className="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            )}
+          </button>
+        </div>
+      )}
+    </BaseComposer>
   );
 };
 

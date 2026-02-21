@@ -6,6 +6,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// 默认连续失败阈值
+pub const DEFAULT_TASK_FAILURE_THRESHOLD: u32 = 3;
+/// 默认冷却时长（秒）
+pub const DEFAULT_TASK_COOLDOWN_SECS: i64 = 300;
+
 /// 任务状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -73,6 +78,10 @@ pub struct ScheduledTask {
     pub retry_count: u32,
     /// 最大重试次数
     pub max_retries: u32,
+    /// 连续失败次数
+    pub consecutive_failures: u32,
+    /// 自动停用冷却截止时间（RFC3339）
+    pub auto_disabled_until: Option<String>,
     /// 创建时间
     pub created_at: String,
     /// 更新时间
@@ -106,6 +115,8 @@ impl ScheduledTask {
             error_message: None,
             retry_count: 0,
             max_retries: 3,
+            consecutive_failures: 0,
+            auto_disabled_until: None,
             created_at: now.to_rfc3339(),
             updated_at: now.to_rfc3339(),
         }
@@ -149,6 +160,10 @@ impl ScheduledTask {
         self.status = TaskStatus::Completed;
         self.completed_at = Some(Utc::now().to_rfc3339());
         self.result = result;
+        self.error_message = None;
+        self.retry_count = 0;
+        self.consecutive_failures = 0;
+        self.auto_disabled_until = None;
         self.updated_at = Utc::now().to_rfc3339();
     }
 
@@ -157,6 +172,8 @@ impl ScheduledTask {
         self.status = TaskStatus::Failed;
         self.completed_at = Some(Utc::now().to_rfc3339());
         self.error_message = Some(error);
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.retry_count = self.retry_count.saturating_add(1);
         self.updated_at = Utc::now().to_rfc3339();
     }
 
@@ -166,6 +183,45 @@ impl ScheduledTask {
         self.completed_at = Some(Utc::now().to_rfc3339());
         self.updated_at = Utc::now().to_rfc3339();
     }
+
+    /// 是否处于自动停用冷却期
+    pub fn is_in_cooldown(&self) -> bool {
+        self.cooldown_until_utc()
+            .map(|until| until > Utc::now())
+            .unwrap_or(false)
+    }
+
+    /// 获取冷却截止时间
+    pub fn cooldown_until_utc(&self) -> Option<DateTime<Utc>> {
+        self.auto_disabled_until
+            .as_deref()
+            .and_then(parse_rfc3339_utc)
+    }
+
+    /// 设置冷却截止时间
+    pub fn activate_cooldown(&mut self, cooldown_secs: i64) {
+        let cooldown_secs = cooldown_secs.max(30);
+        let until = Utc::now() + chrono::Duration::seconds(cooldown_secs);
+        self.auto_disabled_until = Some(until.to_rfc3339());
+        self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    /// 根据连续失败策略尝试触发自动停用
+    pub fn apply_failure_governance(&mut self, failure_threshold: u32, cooldown_secs: i64) -> bool {
+        let threshold = failure_threshold.max(1);
+        if self.consecutive_failures >= threshold {
+            self.activate_cooldown(cooldown_secs);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 /// 任务查询过滤器
@@ -211,6 +267,8 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Pending);
         assert_eq!(task.retry_count, 0);
         assert_eq!(task.max_retries, 3);
+        assert_eq!(task.consecutive_failures, 0);
+        assert!(task.auto_disabled_until.is_none());
     }
 
     #[test]
@@ -296,5 +354,30 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Failed);
         assert!(task.completed_at.is_some());
         assert_eq!(task.error_message, Some("error message".to_string()));
+        assert_eq!(task.consecutive_failures, 1);
+    }
+
+    #[test]
+    fn test_task_failure_governance_should_trigger_cooldown() {
+        let mut task = ScheduledTask::new(
+            "Test".to_string(),
+            "test".to_string(),
+            serde_json::json!(null),
+            "openai".to_string(),
+            "gpt-4".to_string(),
+            Utc::now(),
+        );
+
+        task.mark_failed("error-1".to_string());
+        task.mark_failed("error-2".to_string());
+        task.mark_failed("error-3".to_string());
+        let triggered = task.apply_failure_governance(3, 120);
+        assert!(triggered);
+        assert!(task.auto_disabled_until.is_some());
+        assert!(task.is_in_cooldown());
+
+        task.mark_completed(Some(serde_json::json!("ok")));
+        assert_eq!(task.consecutive_failures, 0);
+        assert!(task.auto_disabled_until.is_none());
     }
 }

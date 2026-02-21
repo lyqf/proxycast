@@ -453,7 +453,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             title TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            working_dir TEXT
+            working_dir TEXT,
+            execution_strategy TEXT NOT NULL DEFAULT 'react'
         )",
         [],
     )?;
@@ -463,6 +464,12 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // Migration: 添加 working_dir 列（如果不存在）
     let _ = conn.execute("ALTER TABLE agent_sessions ADD COLUMN working_dir TEXT", []);
+
+    // Migration: 添加 execution_strategy 列（如果不存在）
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN execution_strategy TEXT NOT NULL DEFAULT 'react'",
+        [],
+    );
 
     // Agent 消息表
     // 存储每个会话的消息历史
@@ -976,6 +983,64 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_poster_material_metadata_mood ON poster_material_metadata(mood)",
+        [],
+    )?;
+
+    // 心跳任务执行记录表
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS heartbeat_executions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_description TEXT NOT NULL,
+            priority INTEGER,
+            execution_mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            duration_ms INTEGER,
+            output TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            metadata TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_heartbeat_executions_started_at ON heartbeat_executions(started_at)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_heartbeat_executions_status ON heartbeat_executions(status)",
+        [],
+    )?;
+
+    // 统一执行追踪摘要表
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_runs (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            source_ref TEXT,
+            session_id TEXT,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            duration_ms INTEGER,
+            error_code TEXT,
+            error_message TEXT,
+            metadata TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_source_started_at ON agent_runs(source, started_at DESC)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_session_started_at ON agent_runs(session_id, started_at DESC)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_status_started_at ON agent_runs(status, started_at DESC)",
         [],
     )?;
 

@@ -262,6 +262,18 @@ export async function listProjects(): Promise<Project[]> {
   return projects.map((project) => normalizeProject(project));
 }
 
+/** 获取默认项目 */
+export async function getDefaultProject(): Promise<Project | null> {
+  const project = await invoke<RawProject | null>("workspace_get_default");
+  return project ? normalizeProject(project) : null;
+}
+
+/** 获取或创建默认项目 */
+export async function getOrCreateDefaultProject(): Promise<Project> {
+  const project = await invoke<RawProject>("get_or_create_default_project");
+  return normalizeProject(project);
+}
+
 /** 通过根路径获取项目 */
 export async function getProjectByRootPath(
   rootPath: string,

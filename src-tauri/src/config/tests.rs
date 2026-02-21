@@ -198,6 +198,11 @@ fn arb_config() -> impl Strategy<Value = Config> {
             image_gen: proxycast_core::config::ImageGenConfig::default(),
             assistant: proxycast_core::config::AssistantConfig::default(),
             user_profile: proxycast_core::config::UserProfile::default(),
+            rate_limit: proxycast_core::config::RateLimitSettings::default(),
+            conversation: proxycast_core::config::ConversationSettings::default(),
+            hint_router: proxycast_core::config::HintRouterSettings::default(),
+            pairing: proxycast_core::config::PairingSettings::default(),
+            heartbeat: proxycast_core::config::HeartbeatSettings::default(),
         })
 }
 
@@ -444,6 +449,11 @@ fn arb_valid_config() -> impl Strategy<Value = Config> {
             image_gen: proxycast_core::config::ImageGenConfig::default(),
             assistant: proxycast_core::config::AssistantConfig::default(),
             user_profile: proxycast_core::config::UserProfile::default(),
+            rate_limit: proxycast_core::config::RateLimitSettings::default(),
+            conversation: proxycast_core::config::ConversationSettings::default(),
+            hint_router: proxycast_core::config::HintRouterSettings::default(),
+            pairing: proxycast_core::config::PairingSettings::default(),
+            heartbeat: proxycast_core::config::HeartbeatSettings::default(),
         })
 }
 
@@ -501,6 +511,11 @@ fn arb_invalid_config() -> impl Strategy<Value = Config> {
                     image_gen: proxycast_core::config::ImageGenConfig::default(),
                     assistant: proxycast_core::config::AssistantConfig::default(),
                     user_profile: proxycast_core::config::UserProfile::default(),
+                    rate_limit: proxycast_core::config::RateLimitSettings::default(),
+                    conversation: proxycast_core::config::ConversationSettings::default(),
+                    hint_router: proxycast_core::config::HintRouterSettings::default(),
+                    pairing: proxycast_core::config::PairingSettings::default(),
+                    heartbeat: proxycast_core::config::HeartbeatSettings::default(),
                 };
                 // 根据类型使配置无效
                 match invalid_type {

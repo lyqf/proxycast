@@ -33,6 +33,7 @@ const {
     success: vi.fn(),
     error: vi.fn(),
     info: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
@@ -238,7 +239,531 @@ describe("useAsterAgentChat.confirmAction", () => {
   });
 });
 
+describe("useAsterAgentChat action_required 渲染链路", () => {
+  it("仅收到 Ask 工具调用时应兜底渲染提问面板", async () => {
+    const workspaceId = "ws-ask-fallback";
+    seedSession(workspaceId, "session-ask-fallback");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "tool_start",
+            tool_id: "tool-ask-1",
+            tool_name: "Ask",
+            arguments: JSON.stringify({
+              question: "你希望海报主色调是什么？",
+              options: ["蓝紫", "赛博绿"],
+            }),
+          },
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage).toBeDefined();
+      expect(assistantMessage?.actionRequests?.[0]?.actionType).toBe("ask_user");
+      expect(assistantMessage?.actionRequests?.[0]?.questions?.[0]?.question).toBe(
+        "你希望海报主色调是什么？",
+      );
+      expect(
+        assistantMessage?.actionRequests?.[0]?.questions?.[0]?.options?.map(
+          (item) => item.label,
+        ),
+      ).toEqual(["蓝紫", "赛博绿"]);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("Ask fallback 应优先使用参数中的 id 作为 requestId", async () => {
+    const workspaceId = "ws-ask-fallback-id";
+    seedSession(workspaceId, "session-ask-fallback-id");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "tool_start",
+            tool_id: "tool-ask-fallback-id",
+            tool_name: "Ask",
+            arguments: JSON.stringify({
+              id: "req-from-ask-arg",
+              question: "你希望主色调是什么？",
+            }),
+          },
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage?.actionRequests?.[0]?.requestId).toBe(
+        "req-from-ask-arg",
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("收到 action_required 后应写入消息 actionRequests 与 contentParts", async () => {
+    const workspaceId = "ws-action-required";
+    seedSession(workspaceId, "session-action-required");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "action_required",
+            request_id: "req-ar-1",
+            action_type: "elicitation",
+            prompt: "请选择一个方案",
+            requested_schema: {
+              type: "object",
+              properties: {
+                answer: {
+                  type: "string",
+                  enum: ["A", "B"],
+                },
+              },
+            },
+          },
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage).toBeDefined();
+      expect(assistantMessage?.actionRequests?.[0]?.requestId).toBe("req-ar-1");
+      expect(
+        assistantMessage?.contentParts?.some(
+          (part) =>
+            part.type === "action_required" &&
+            part.actionRequired.requestId === "req-ar-1",
+        ),
+      ).toBe(true);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("action_required 的字符串 options 应归一化为可展示选项", async () => {
+    const workspaceId = "ws-action-required-options";
+    seedSession(workspaceId, "session-action-required-options");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "action_required",
+            request_id: "req-ar-options-1",
+            action_type: "ask_user",
+            prompt: "请选择执行模式",
+            questions: [
+              {
+                question: "请选择执行模式",
+                options: ["自动执行（Auto）", "确认后执行（Ask）"],
+              },
+            ],
+          },
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(
+        assistantMessage?.actionRequests?.[0]?.questions?.[0]?.options?.map(
+          (option) => option.label,
+        ),
+      ).toEqual(["自动执行（Auto）", "确认后执行（Ask）"]);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("ask_user 提交后应保留只读回显，避免面板消失", async () => {
+    const workspaceId = "ws-ask-submit-keep";
+    seedSession(workspaceId, "session-ask-submit-keep");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "action_required",
+            request_id: "req-ask-submit-1",
+            action_type: "ask_user",
+            prompt: "请选择执行模式",
+            questions: [{ question: "你希望如何执行？" }],
+          },
+        });
+      });
+
+      await act(async () => {
+        await harness.getValue().confirmAction({
+          requestId: "req-ask-submit-1",
+          confirmed: true,
+          actionType: "ask_user",
+          response: '{"answer":"自动执行（Auto）"}',
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(mockSubmitAsterElicitationResponse).toHaveBeenCalledWith(
+        "session-ask-submit-keep",
+        "req-ask-submit-1",
+        { answer: "自动执行（Auto）" },
+      );
+      expect(assistantMessage?.actionRequests?.[0]).toMatchObject({
+        requestId: "req-ask-submit-1",
+        actionType: "ask_user",
+        status: "submitted",
+        submittedResponse: '{"answer":"自动执行（Auto）"}',
+        submittedUserData: { answer: "自动执行（Auto）" },
+      });
+      expect(
+        assistantMessage?.contentParts?.some(
+          (part) =>
+            part.type === "action_required" &&
+            part.actionRequired.requestId === "req-ask-submit-1" &&
+            part.actionRequired.status === "submitted",
+        ),
+      ).toBe(true);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("fallback ask 在真实 request_id 未就绪前不应提交，避免卡住", async () => {
+    const workspaceId = "ws-ask-fallback-pending";
+    seedSession(workspaceId, "session-ask-fallback-pending");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "tool_start",
+            tool_id: "tool-fallback-only",
+            tool_name: "Ask",
+            arguments: JSON.stringify({
+              question: "请选择您喜欢的科技风格类型",
+              options: ["网络矩阵", "极简未来"],
+            }),
+          },
+        });
+      });
+
+      await act(async () => {
+        await harness.getValue().confirmAction({
+          requestId: "fallback:tool-fallback-only",
+          confirmed: true,
+          actionType: "ask_user",
+          response: '{"answer":"网络矩阵"}',
+        });
+      });
+
+      expect(mockSubmitAsterElicitationResponse).not.toHaveBeenCalled();
+      expect(mockToast.error).toHaveBeenCalledWith(
+        "Ask 请求 ID 尚未就绪，请稍后再试",
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("Auto 模式下 tool_confirmation 应自动确认而不阻塞 UI", async () => {
+    const workspaceId = "ws-auto-confirm";
+    seedSession(workspaceId, "session-auto-confirm");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("执行命令", [], false, false, false, "auto");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "action_required",
+            request_id: "req-auto-1",
+            action_type: "tool_confirmation",
+            tool_name: "bash",
+            arguments: { command: "ls" },
+            prompt: "是否执行命令",
+          },
+        });
+      });
+
+      await flushEffects();
+
+      expect(mockConfirmAsterAction).toHaveBeenCalledWith(
+        "req-auto-1",
+        true,
+        "Auto 模式自动确认",
+      );
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+      expect(assistantMessage?.actionRequests?.length ?? 0).toBe(0);
+    } finally {
+      harness.unmount();
+    }
+  });
+});
+
 describe("useAsterAgentChat 偏好持久化", () => {
+  it("初始化时应清理 sessionStorage 中空白 user 消息", async () => {
+    const workspaceId = "ws-clean-blank-user";
+    sessionStorage.setItem(
+      `aster_messages_${workspaceId}`,
+      JSON.stringify([
+        {
+          id: "blank-user",
+          role: "user",
+          content: "",
+          timestamp: new Date().toISOString(),
+        },
+        {
+          id: "assistant-text",
+          role: "assistant",
+          content: "hello",
+          timestamp: new Date().toISOString(),
+        },
+      ]),
+    );
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(1);
+      expect(value.messages[0]?.role).toBe("assistant");
+      expect(value.messages[0]?.content).toBe("hello");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("初始化时应将仅含工具轨迹的空白 user 消息归一为 assistant", async () => {
+    const workspaceId = "ws-normalize-tool-user";
+    sessionStorage.setItem(
+      `aster_messages_${workspaceId}`,
+      JSON.stringify([
+        {
+          id: "legacy-user-tool",
+          role: "user",
+          content: "",
+          toolCalls: [
+            {
+              id: "tool_1",
+              name: "bash",
+              status: "completed",
+              result: {
+                success: true,
+                output: "ok",
+              },
+              startTime: new Date().toISOString(),
+              endTime: new Date().toISOString(),
+            },
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ]),
+    );
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(1);
+      expect(value.messages[0]?.role).toBe("assistant");
+      expect(value.messages[0]?.toolCalls?.[0]).toMatchObject({
+        id: "tool_1",
+        status: "completed",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("初始化时应丢弃带 fallback 工具名的旧缓存消息并触发回源", async () => {
+    const workspaceId = "ws-drop-fallback-tool-name-cache";
+    sessionStorage.setItem(
+      `aster_messages_${workspaceId}`,
+      JSON.stringify([
+        {
+          id: "legacy-fallback-tool-name",
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call_324abc",
+              name: "工具调用 call_324abc",
+              status: "completed",
+              result: {
+                success: true,
+                output: "Launching skill: canvas-design",
+              },
+              startTime: new Date().toISOString(),
+              endTime: new Date().toISOString(),
+            },
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ]),
+    );
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(0);
+    } finally {
+      harness.unmount();
+    }
+  });
+
   it("应将旧全局偏好迁移到当前工作区", async () => {
     localStorage.setItem("agent_pref_provider", JSON.stringify("gemini"));
     localStorage.setItem("agent_pref_model", JSON.stringify("gemini-2.5-pro"));
@@ -326,6 +851,619 @@ describe("useAsterAgentChat 偏好持久化", () => {
       );
     } finally {
       secondMount.unmount();
+    }
+  });
+
+  it("会话已绑定其他工作区时不应覆盖 agent_session_workspace 映射", async () => {
+    const workspaceId = "ws-current";
+    const sessionId = "session-conflict";
+    seedSession(workspaceId, sessionId);
+    localStorage.setItem(
+      `agent_session_workspace_${sessionId}`,
+      JSON.stringify("ws-legacy"),
+    );
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      expect(
+        JSON.parse(
+          localStorage.getItem(`agent_session_workspace_${sessionId}`) ||
+            "null",
+        ),
+      ).toBe("ws-legacy");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("会话映射为空占位时应写入当前工作区", async () => {
+    const workspaceId = "ws-current";
+    const sessionId = "session-invalid-placeholder";
+    seedSession(workspaceId, sessionId);
+    localStorage.setItem(
+      `agent_session_workspace_${sessionId}`,
+      JSON.stringify("__invalid__"),
+    );
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      expect(
+        JSON.parse(
+          localStorage.getItem(`agent_session_workspace_${sessionId}`) ||
+            "null",
+        ),
+      ).toBe(workspaceId);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("话题列表应按工作区映射过滤，排除其他项目会话", async () => {
+    const workspaceId = "ws-filter-current";
+    const createdAt = Math.floor(Date.now() / 1000);
+
+    mockListAsterSessions.mockResolvedValue([
+      {
+        id: "topic-current",
+        name: "当前项目话题",
+        created_at: createdAt,
+        messages_count: 2,
+      },
+      {
+        id: "topic-other",
+        name: "其他项目话题",
+        created_at: createdAt,
+        messages_count: 3,
+      },
+      {
+        id: "topic-legacy",
+        name: "历史未映射话题",
+        created_at: createdAt,
+        messages_count: 1,
+      },
+    ]);
+
+    localStorage.setItem(
+      "agent_session_workspace_topic-current",
+      JSON.stringify(workspaceId),
+    );
+    localStorage.setItem(
+      "agent_session_workspace_topic-other",
+      JSON.stringify("ws-filter-other"),
+    );
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await flushEffects();
+
+      expect(harness.getValue().topics.map((topic) => topic.id)).toEqual([
+        "topic-current",
+        "topic-legacy",
+      ]);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题后应恢复各自模型选择", async () => {
+    const workspaceId = "ws-topic-memory";
+    const createdAt = Math.floor(Date.now() / 1000);
+
+    mockListAsterSessions.mockResolvedValue([
+      {
+        id: "topic-a",
+        name: "话题 A",
+        created_at: createdAt,
+        messages_count: 0,
+      },
+      {
+        id: "topic-b",
+        name: "话题 B",
+        created_at: createdAt,
+        messages_count: 0,
+      },
+    ]);
+    mockGetAsterSession.mockImplementation(async (topicId: string) => ({
+      id: topicId,
+      messages: [],
+      execution_strategy: "react",
+    }));
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-a");
+      });
+      act(() => {
+        harness.getValue().setProviderType("gemini");
+        harness.getValue().setModel("gemini-2.5-pro");
+      });
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-b");
+      });
+      act(() => {
+        harness.getValue().setProviderType("deepseek");
+        harness.getValue().setModel("deepseek-chat");
+      });
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-a");
+      });
+      await flushEffects();
+
+      const value = harness.getValue();
+      expect(value.providerType).toBe("gemini");
+      expect(value.model).toBe("gemini-2.5-pro");
+      expect(
+        JSON.parse(
+          localStorage.getItem(
+            `agent_topic_model_pref_${workspaceId}_topic-a`,
+          ) || "null",
+        ),
+      ).toEqual({
+        providerType: "gemini",
+        model: "gemini-2.5-pro",
+      });
+      expect(
+        JSON.parse(
+          localStorage.getItem(
+            `agent_topic_model_pref_${workspaceId}_topic-b`,
+          ) || "null",
+        ),
+      ).toEqual({
+        providerType: "deepseek",
+        model: "deepseek-chat",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("选择模型后立即切换话题也应保存当前话题选择", async () => {
+    const workspaceId = "ws-topic-memory-immediate";
+    const createdAt = Math.floor(Date.now() / 1000);
+
+    mockListAsterSessions.mockResolvedValue([
+      {
+        id: "topic-a",
+        name: "话题 A",
+        created_at: createdAt,
+        messages_count: 0,
+      },
+      {
+        id: "topic-b",
+        name: "话题 B",
+        created_at: createdAt,
+        messages_count: 0,
+      },
+    ]);
+    mockGetAsterSession.mockImplementation(async (topicId: string) => ({
+      id: topicId,
+      messages: [],
+      execution_strategy: "react",
+    }));
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-a");
+      });
+
+      await act(async () => {
+        harness.getValue().setProviderType("zhipu");
+        harness.getValue().setModel("glm-4.7");
+        await harness.getValue().switchTopic("topic-b");
+      });
+
+      await act(async () => {
+        harness.getValue().setProviderType("antigravity");
+        harness.getValue().setModel("gemini-3-pro-image-preview");
+      });
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-a");
+      });
+      await flushEffects();
+
+      const value = harness.getValue();
+      expect(value.providerType).toBe("zhipu");
+      expect(value.model).toBe("glm-4.7");
+      expect(
+        JSON.parse(
+          localStorage.getItem(
+            `agent_topic_model_pref_${workspaceId}_topic-a`,
+          ) || "null",
+        ),
+      ).toEqual({
+        providerType: "zhipu",
+        model: "glm-4.7",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应保留工具调用历史并恢复 elicitation 回答文本", async () => {
+    const workspaceId = "ws-history-hydrate";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-history",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "assistant",
+          timestamp: now,
+          content: [
+            {
+              type: "tool_request",
+              id: "tool-1",
+              tool_name: "Ask",
+              arguments: { question: "请选择" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          timestamp: now + 1,
+          content: [
+            {
+              type: "action_required",
+              action_type: "elicitation_response",
+              data: { user_data: { answer: "自动执行（Auto）" } },
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 2,
+          content: [{ type: "text", text: "已收到你的选择，继续执行。" }],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-history");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(3);
+      expect(value.messages[0]).toMatchObject({
+        role: "assistant",
+      });
+      expect(
+        value.messages[0]?.contentParts?.some(
+          (part) =>
+            part.type === "tool_use" && part.toolCall.id === "tool-1",
+        ),
+      ).toBe(true);
+      expect(value.messages[1]).toMatchObject({
+        role: "user",
+        content: "自动执行（Auto）",
+      });
+      expect(value.messages[2]).toMatchObject({
+        role: "assistant",
+        content: "已收到你的选择，继续执行。",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应恢复 input_image 历史消息", async () => {
+    const workspaceId = "ws-history-image";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-image",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "user",
+          timestamp: now,
+          content: [
+            {
+              type: "input_text",
+              text: "请参考这张图",
+            },
+            {
+              type: "input_image",
+              image_url: "data:image/png;base64,aGVsbG8=",
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 1,
+          content: [{ type: "output_text", text: "已收到图片" }],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-image");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(2);
+      expect(value.messages[0]).toMatchObject({
+        role: "user",
+        content: "请参考这张图",
+      });
+      expect(value.messages[0]?.images).toEqual([
+        {
+          mediaType: "image/png",
+          data: "aGVsbG8=",
+        },
+      ]);
+      expect(value.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "已收到图片",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应将仅含 tool_response 协议的空白 user 消息归一为 assistant 轨迹", async () => {
+    const workspaceId = "ws-history-empty-user-tool-response";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-empty-user",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "user",
+          timestamp: now,
+          content: [{ type: "text", text: "/canvas-design 帮我设计一张科技感的海报" }],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 1,
+          content: [{ type: "text", text: "我来帮你设计一张科技感的海报！" }],
+        },
+        {
+          role: "user",
+          timestamp: now + 2,
+          content: [
+            {
+              type: "tool_response",
+              id: "call_xxx",
+              success: true,
+              output: "",
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 3,
+          content: [{ type: "text", text: "好的！让我为你创建一张科技海报。" }],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-empty-user");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(2);
+      expect(value.messages.map((msg) => msg.role)).toEqual([
+        "user",
+        "assistant",
+      ]);
+      expect(value.messages[1]?.content).toContain("我来帮你设计一张科技感的海报！");
+      expect(value.messages[1]?.content).toContain("好的！让我为你创建一张科技海报。");
+      expect(value.messages.some((msg) => msg.content.trim().length === 0)).toBe(
+        false,
+      );
+      expect(
+        value.messages[1]?.contentParts?.some(
+          (part) =>
+            part.type === "tool_use" &&
+            part.toolCall.id === "call_xxx" &&
+            part.toolCall.status === "completed",
+        ),
+      ).toBe(true);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应从 tool_response 输出中提取图片并写入工具结果", async () => {
+    const workspaceId = "ws-history-tool-image";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-tool-image",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "assistant",
+          timestamp: now,
+          content: [{ type: "text", text: "正在处理海报" }],
+        },
+        {
+          role: "tool",
+          timestamp: now + 1,
+          content: [
+            {
+              type: "tool_response",
+              id: "tool-image-1",
+              success: true,
+              output:
+                "图片生成完成\ndata:image/png;base64,aGVsbG8=\n你可以继续编辑",
+            },
+          ],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-tool-image");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(1);
+      const toolPart = value.messages[0]?.contentParts?.find(
+        (part) =>
+          part.type === "tool_use" && part.toolCall.id === "tool-image-1",
+      );
+      expect(toolPart?.type).toBe("tool_use");
+      if (toolPart?.type === "tool_use") {
+        expect(toolPart.toolCall.result?.images?.[0]?.src).toBe(
+          "data:image/png;base64,aGVsbG8=",
+        );
+      }
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应合并同一工具调用的 running/completed 轨迹为一条", async () => {
+    const workspaceId = "ws-history-tool-dedupe";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-tool-dedupe",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "assistant",
+          timestamp: now,
+          content: [
+            {
+              type: "tool_request",
+              id: "call_dup_1",
+              tool_name: "Task",
+              arguments: { command: "echo hi" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          timestamp: now + 1,
+          content: [
+            {
+              type: "tool_response",
+              id: "call_dup_1",
+              success: true,
+              output: "done",
+            },
+          ],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-tool-dedupe");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(1);
+
+      const toolParts = (value.messages[0]?.contentParts || []).filter(
+        (part) => part.type === "tool_use" && part.toolCall.id === "call_dup_1",
+      );
+      expect(toolParts).toHaveLength(1);
+      if (toolParts[0]?.type === "tool_use") {
+        expect(toolParts[0].toolCall.status).toBe("completed");
+      }
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应合并连续 assistant 历史片段", async () => {
+    const workspaceId = "ws-history-merge";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-merge",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "assistant",
+          timestamp: now,
+          content: [{ type: "text", text: "先执行工具" }],
+        },
+        {
+          role: "tool",
+          timestamp: now + 1,
+          content: [
+            {
+              type: "tool_response",
+              id: "tool-merge-1",
+              success: true,
+              output: "ok",
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 2,
+          content: [{ type: "text", text: "工具执行完成" }],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-merge");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(1);
+      expect(value.messages[0]).toMatchObject({
+        role: "assistant",
+        content: "先执行工具\n\n工具执行完成",
+      });
+      expect(
+        value.messages[0]?.contentParts?.some(
+          (part) =>
+            part.type === "tool_use" &&
+            part.toolCall.id === "tool-merge-1" &&
+            part.toolCall.status === "completed",
+        ),
+      ).toBe(true);
+    } finally {
+      harness.unmount();
     }
   });
 });

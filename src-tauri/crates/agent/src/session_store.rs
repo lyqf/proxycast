@@ -20,6 +20,7 @@ pub struct SessionInfo {
     pub created_at: i64,
     pub updated_at: i64,
     pub messages_count: usize,
+    pub execution_strategy: Option<String>,
 }
 
 /// 会话详情（包含消息）
@@ -30,6 +31,7 @@ pub struct SessionDetail {
     pub created_at: i64,
     pub updated_at: i64,
     pub messages: Vec<TauriMessage>,
+    pub execution_strategy: Option<String>,
 }
 
 /// 解析会话 working_dir（优先入参，其次 workspace_id）
@@ -58,12 +60,21 @@ fn resolve_session_working_dir(
     Err(format!("Workspace 不存在: {}", workspace_id))
 }
 
+fn normalize_execution_strategy(execution_strategy: Option<String>) -> String {
+    match execution_strategy.as_deref() {
+        Some("code_orchestrated") => "code_orchestrated".to_string(),
+        Some("auto") => "auto".to_string(),
+        _ => "react".to_string(),
+    }
+}
+
 /// 创建新会话
 pub fn create_session_sync(
     db: &DbConnection,
     name: Option<String>,
     working_dir: Option<String>,
     workspace_id: String,
+    execution_strategy: Option<String>,
 ) -> Result<String, String> {
     let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
     let session_name = name.unwrap_or_else(|| "新对话".to_string());
@@ -72,6 +83,7 @@ pub fn create_session_sync(
     drop(conn);
 
     let resolved_working_dir = resolve_session_working_dir(db, working_dir, workspace_id)?;
+    let normalized_execution_strategy = normalize_execution_strategy(execution_strategy);
 
     let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
@@ -82,6 +94,7 @@ pub fn create_session_sync(
         system_prompt: None,
         title: Some(session_name),
         working_dir: resolved_working_dir,
+        execution_strategy: Some(normalized_execution_strategy),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -111,6 +124,7 @@ pub fn list_sessions_sync(db: &DbConnection) -> Result<Vec<SessionInfo>, String>
                     .map(|dt| dt.timestamp())
                     .unwrap_or(0),
                 messages_count,
+                execution_strategy: session.execution_strategy,
             }
         })
         .collect())
@@ -160,6 +174,7 @@ pub fn get_session_sync(db: &DbConnection, session_id: &str) -> Result<SessionDe
             .map(|dt| dt.timestamp())
             .unwrap_or(0),
         messages: tauri_messages,
+        execution_strategy: session.execution_strategy,
     })
 }
 
@@ -188,18 +203,83 @@ pub fn delete_session_sync(db: &DbConnection, session_id: &str) -> Result<(), St
     Ok(())
 }
 
+fn parse_tool_call_arguments(arguments: &str) -> serde_json::Value {
+    let trimmed = arguments.trim();
+    if trimmed.is_empty() {
+        return serde_json::json!({});
+    }
+
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .unwrap_or_else(|_| serde_json::json!({ "raw": arguments }))
+}
+
+fn parse_data_url(url: &str) -> Option<(String, String)> {
+    let trimmed = url.trim();
+    let payload = trimmed.strip_prefix("data:")?;
+    let (meta, data) = payload.split_once(',')?;
+    if data.trim().is_empty() {
+        return None;
+    }
+
+    let mut segments = meta.split(';');
+    let mime_type = segments.next().unwrap_or_default().trim();
+    let has_base64 = segments.any(|segment| segment.eq_ignore_ascii_case("base64"));
+
+    if !has_base64 {
+        return None;
+    }
+
+    let normalized_mime = if mime_type.is_empty() {
+        "application/octet-stream".to_string()
+    } else {
+        mime_type.to_string()
+    };
+
+    Some((normalized_mime, data.trim().to_string()))
+}
+
+fn convert_image_part(image_url: &str) -> Option<TauriMessageContent> {
+    let normalized = image_url.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if let Some((mime_type, data)) = parse_data_url(normalized) {
+        return Some(TauriMessageContent::Image { mime_type, data });
+    }
+
+    if normalized.starts_with("data:") {
+        return Some(TauriMessageContent::Text {
+            text: "[图片消息]".to_string(),
+        });
+    }
+
+    Some(TauriMessageContent::Text {
+        text: format!("![image]({normalized})"),
+    })
+}
+
 /// 将 AgentMessage 转换为 TauriMessage
 fn convert_agent_message(message: &AgentMessage) -> TauriMessage {
     let mut content = match &message.content {
-        MessageContent::Text(text) => vec![TauriMessageContent::Text { text: text.clone() }],
+        MessageContent::Text(text) => {
+            if text.trim().is_empty() {
+                Vec::new()
+            } else {
+                vec![TauriMessageContent::Text { text: text.clone() }]
+            }
+        }
         MessageContent::Parts(parts) => parts
             .iter()
-            .filter_map(|part| {
-                if let ContentPart::Text { text } = part {
-                    Some(TauriMessageContent::Text { text: text.clone() })
-                } else {
-                    None
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => {
+                    if text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(TauriMessageContent::Text { text: text.clone() })
+                    }
                 }
+                ContentPart::ImageUrl { image_url } => convert_image_part(&image_url.url),
             })
             .collect(),
     };
@@ -212,6 +292,33 @@ fn convert_agent_message(message: &AgentMessage) -> TauriMessage {
                 text: reasoning.clone(),
             },
         );
+    }
+
+    if let Some(tool_calls) = &message.tool_calls {
+        for call in tool_calls {
+            content.push(TauriMessageContent::ToolRequest {
+                id: call.id.clone(),
+                tool_name: call.function.name.clone(),
+                arguments: parse_tool_call_arguments(&call.function.arguments),
+            });
+        }
+    }
+
+    if let Some(tool_call_id) = &message.tool_call_id {
+        let tool_output = message.content.as_text();
+
+        // tool/user 的工具结果协议消息都不应作为普通文本重复渲染。
+        if message.role.eq_ignore_ascii_case("tool") || message.role.eq_ignore_ascii_case("user") {
+            content.retain(|part| !matches!(part, TauriMessageContent::Text { .. }));
+        }
+
+        content.push(TauriMessageContent::ToolResponse {
+            id: tool_call_id.clone(),
+            success: true,
+            output: tool_output,
+            error: None,
+            images: None,
+        });
     }
 
     let timestamp = chrono::DateTime::parse_from_rfc3339(&message.timestamp)
@@ -233,4 +340,129 @@ fn convert_agent_message(message: &AgentMessage) -> TauriMessage {
     );
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proxycast_core::agent::types::{FunctionCall, ImageUrl, ToolCall};
+
+    #[test]
+    fn parse_tool_call_arguments_should_parse_json_or_keep_raw() {
+        let parsed = parse_tool_call_arguments(r#"{"path":"./a.txt"}"#);
+        assert_eq!(parsed["path"], serde_json::json!("./a.txt"));
+
+        let fallback = parse_tool_call_arguments("not-json");
+        assert_eq!(fallback["raw"], serde_json::json!("not-json"));
+    }
+
+    #[test]
+    fn convert_agent_message_should_preserve_tool_request_and_response() {
+        let assistant = AgentMessage {
+            role: "assistant".to_string(),
+            content: MessageContent::Text("".to_string()),
+            timestamp: "2026-02-19T13:00:00Z".to_string(),
+            tool_calls: Some(vec![ToolCall {
+                id: "call-1".to_string(),
+                call_type: "function".to_string(),
+                function: FunctionCall {
+                    name: "Write".to_string(),
+                    arguments: r#"{"path":"./a.txt"}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+            reasoning_content: None,
+        };
+
+        let assistant_converted = convert_agent_message(&assistant);
+        assert!(assistant_converted.content.iter().any(|part| {
+            matches!(
+                part,
+                TauriMessageContent::ToolRequest { id, tool_name, .. }
+                    if id == "call-1" && tool_name == "Write"
+            )
+        }));
+
+        let tool = AgentMessage {
+            role: "tool".to_string(),
+            content: MessageContent::Text("写入成功".to_string()),
+            timestamp: "2026-02-19T13:00:01Z".to_string(),
+            tool_calls: None,
+            tool_call_id: Some("call-1".to_string()),
+            reasoning_content: None,
+        };
+
+        let tool_converted = convert_agent_message(&tool);
+        assert!(!tool_converted
+            .content
+            .iter()
+            .any(|part| matches!(part, TauriMessageContent::Text { .. })));
+        assert!(tool_converted.content.iter().any(|part| {
+            matches!(
+                part,
+                TauriMessageContent::ToolResponse { id, output, .. }
+                    if id == "call-1" && output == "写入成功"
+            )
+        }));
+    }
+
+    #[test]
+    fn convert_agent_message_should_keep_image_parts_for_history() {
+        let user_with_image = AgentMessage {
+            role: "user".to_string(),
+            content: MessageContent::Parts(vec![
+                ContentPart::Text {
+                    text: "参考图".to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,aGVsbG8=".to_string(),
+                        detail: None,
+                    },
+                },
+            ]),
+            timestamp: "2026-02-19T13:00:02Z".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        };
+
+        let converted = convert_agent_message(&user_with_image);
+        assert!(converted.content.iter().any(|part| {
+            matches!(
+                part,
+                TauriMessageContent::Image { mime_type, data }
+                    if mime_type == "image/png" && data == "aGVsbG8="
+            )
+        }));
+        assert!(converted
+            .content
+            .iter()
+            .any(|part| matches!(part, TauriMessageContent::Text { text } if text == "参考图")));
+    }
+
+    #[test]
+    fn convert_agent_message_should_not_render_user_tool_response_as_plain_text() {
+        let user_tool_response = AgentMessage {
+            role: "user".to_string(),
+            content: MessageContent::Text("任务已完成".to_string()),
+            timestamp: "2026-02-19T13:00:03Z".to_string(),
+            tool_calls: None,
+            tool_call_id: Some("call-2".to_string()),
+            reasoning_content: None,
+        };
+
+        let converted = convert_agent_message(&user_tool_response);
+        assert!(!converted
+            .content
+            .iter()
+            .any(|part| matches!(part, TauriMessageContent::Text { .. })));
+        assert!(converted.content.iter().any(|part| {
+            matches!(
+                part,
+                TauriMessageContent::ToolResponse { id, output, .. }
+                    if id == "call-2" && output == "任务已完成"
+            )
+        }));
+    }
 }

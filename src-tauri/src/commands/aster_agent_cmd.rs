@@ -6,13 +6,18 @@
 
 use crate::agent::aster_state::{ProviderConfig, SessionConfigBuilder};
 use crate::agent::{
-    AsterAgentState, AsterAgentWrapper, SessionDetail, SessionInfo, TauriAgentEvent,
+    AsterAgentState, AsterAgentWrapper, HeartbeatServiceAdapter, SessionDetail, SessionInfo,
+    TauriAgentEvent,
 };
+use crate::config::GlobalConfigManagerState;
 use crate::database::dao::agent::AgentDao;
 use crate::database::DbConnection;
 use crate::mcp::{McpManagerState, McpServerConfig};
+use crate::services::execution_tracker_service::{ExecutionTracker, RunFinalizeOptions, RunSource};
+use crate::services::heartbeat_service::HeartbeatServiceState;
 use crate::workspace::WorkspaceManager;
 use aster::agents::extension::{Envs, ExtensionConfig};
+use aster::agents::{Agent, AgentEvent};
 use aster::conversation::message::{Message, MessageContent};
 use aster::permission::{
     ParameterRestriction, PermissionScope, RestrictionType, ToolPermission, ToolPermissionManager,
@@ -22,8 +27,9 @@ use aster::sandbox::{
     detect_best_sandbox, execute_in_sandbox, ResourceLimits, SandboxConfig as ProcessSandboxConfig,
 };
 use aster::tools::{
-    BashTool, PermissionBehavior, PermissionCheckResult, Tool, ToolContext, ToolError, ToolOptions,
-    ToolResult, MAX_OUTPUT_LENGTH,
+    BashTool, KillShellTool, PermissionBehavior, PermissionCheckResult, TaskManager,
+    TaskOutputTool, TaskTool, Tool, ToolContext, ToolError, ToolOptions, ToolResult,
+    MAX_OUTPUT_LENGTH,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -32,12 +38,100 @@ use proxycast_services::mcp_service::McpService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+use tokio_util::sync::CancellationToken;
 
 const DEFAULT_BASH_TIMEOUT_SECS: u64 = 300;
 const MAX_BASH_TIMEOUT_SECS: u64 = 1800;
+const CODE_EXECUTION_EXTENSION_NAME: &str = "code_execution";
+const WORKSPACE_SANDBOX_ENABLED_ENV: &str = "PROXYCAST_WORKSPACE_SANDBOX_ENABLED";
+const WORKSPACE_SANDBOX_STRICT_ENV: &str = "PROXYCAST_WORKSPACE_SANDBOX_STRICT";
+const WORKSPACE_SANDBOX_NOTIFY_ENV: &str = "PROXYCAST_WORKSPACE_SANDBOX_NOTIFY_ON_FALLBACK";
+const WORKSPACE_SANDBOX_FALLBACK_WARNING_CODE: &str = "workspace_sandbox_fallback";
+
+static SHARED_TASK_MANAGER: OnceLock<Arc<TaskManager>> = OnceLock::new();
+
+fn shared_task_manager() -> Arc<TaskManager> {
+    SHARED_TASK_MANAGER
+        .get_or_init(|| Arc::new(TaskManager::new()))
+        .clone()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkspaceSandboxPolicy {
+    enabled: bool,
+    strict: bool,
+    notify_on_fallback: bool,
+}
+
+#[derive(Debug)]
+enum WorkspaceSandboxApplyOutcome {
+    Applied {
+        sandbox_type: String,
+    },
+    DisabledByConfig,
+    UnavailableFallback {
+        warning_message: String,
+        notify_user: bool,
+    },
+}
+
+fn parse_bool_env(name: &str) -> Option<bool> {
+    let raw = std::env::var(name).ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn resolve_workspace_sandbox_policy(
+    config_manager: &GlobalConfigManagerState,
+) -> WorkspaceSandboxPolicy {
+    let config = config_manager.config();
+    let mut policy = WorkspaceSandboxPolicy {
+        enabled: config.agent.workspace_sandbox.enabled,
+        strict: config.agent.workspace_sandbox.strict,
+        notify_on_fallback: config.agent.workspace_sandbox.notify_on_fallback,
+    };
+
+    if let Some(enabled) = parse_bool_env(WORKSPACE_SANDBOX_ENABLED_ENV) {
+        policy.enabled = enabled;
+    }
+    if let Some(strict) = parse_bool_env(WORKSPACE_SANDBOX_STRICT_ENV) {
+        policy.strict = strict;
+    }
+    if let Some(notify) = parse_bool_env(WORKSPACE_SANDBOX_NOTIFY_ENV) {
+        policy.notify_on_fallback = notify;
+    }
+
+    policy
+}
+
+fn workspace_sandbox_platform_hint() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "Windows 当前未检测到可用本地 sandbox 执行器，建议关闭该选项或使用非严格模式。"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macOS 需提供 sandbox-exec。"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "Linux 需安装 bwrap 或 firejail。"
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "当前平台暂未集成本地 sandbox 执行器，建议关闭该选项。"
+    }
+}
+
+fn build_workspace_sandbox_warning_message(reason: &str) -> String {
+    format!("已启用 workspace 本地 sandbox，但当前环境不可用，已自动降级为普通执行。原因: {reason}")
+}
 
 /// Aster Agent 状态信息
 #[derive(Debug, Serialize)]
@@ -215,8 +309,134 @@ pub struct AsterChatRequest {
     /// 项目 ID（可选，用于注入项目上下文到 System Prompt）
     #[serde(default)]
     pub project_id: Option<String>,
-    /// Workspace ID（必填，用于校验会话与工作区一致性并启用本地 sandbox）
+    /// Workspace ID（必填，用于校验会话与工作区一致性）
     pub workspace_id: String,
+    /// 执行策略（react / code_orchestrated / auto）
+    #[serde(default)]
+    pub execution_strategy: Option<AsterExecutionStrategy>,
+}
+
+/// Agent 执行策略
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AsterExecutionStrategy {
+    React,
+    CodeOrchestrated,
+    Auto,
+}
+
+impl Default for AsterExecutionStrategy {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl AsterExecutionStrategy {
+    fn as_db_value(self) -> &'static str {
+        match self {
+            Self::React => "react",
+            Self::CodeOrchestrated => "code_orchestrated",
+            Self::Auto => "auto",
+        }
+    }
+
+    fn from_db_value(value: Option<&str>) -> Self {
+        match value {
+            Some("code_orchestrated") => Self::CodeOrchestrated,
+            Some("auto") => Self::Auto,
+            _ => Self::Auto,
+        }
+    }
+
+    fn effective_for_message(self, message: &str) -> Self {
+        match self {
+            Self::Auto if should_use_code_orchestrated_for_message(message) => {
+                Self::CodeOrchestrated
+            }
+            Self::Auto => Self::React,
+            _ => self,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ReplyAttemptError {
+    message: String,
+    emitted_any: bool,
+}
+
+fn should_use_code_orchestrated_for_message(message: &str) -> bool {
+    let lowered = message.to_lowercase();
+    let keywords = [
+        "搜索", "联网", "网页", "网站", "抓取", "爬取", "检索", "search", "browse", "crawl",
+        "scrape", "url", "链接",
+    ];
+    keywords.iter().any(|kw| lowered.contains(kw))
+}
+
+async fn ensure_code_execution_extension_enabled(agent: &Agent) -> Result<bool, String> {
+    let extension_configs = agent.get_extension_configs().await;
+    if extension_configs
+        .iter()
+        .any(|cfg| cfg.name() == CODE_EXECUTION_EXTENSION_NAME)
+    {
+        return Ok(false);
+    }
+
+    let extension = ExtensionConfig::Platform {
+        name: CODE_EXECUTION_EXTENSION_NAME.to_string(),
+        description: "Execute JavaScript code in a sandboxed environment".to_string(),
+        bundled: Some(true),
+        available_tools: vec![],
+    };
+
+    agent
+        .add_extension(extension)
+        .await
+        .map_err(|e| format!("启用 code_execution 扩展失败: {e}"))?;
+
+    Ok(true)
+}
+
+async fn stream_reply_once(
+    agent: &Agent,
+    app: &AppHandle,
+    event_name: &str,
+    message_text: &str,
+    session_config: aster::agents::SessionConfig,
+    cancel_token: CancellationToken,
+) -> Result<(), ReplyAttemptError> {
+    let user_message = Message::user().with_text(message_text);
+    let mut stream = agent
+        .reply(user_message, session_config, Some(cancel_token))
+        .await
+        .map_err(|e| ReplyAttemptError {
+            message: format!("Agent error: {e}"),
+            emitted_any: false,
+        })?;
+
+    let mut emitted_any = false;
+    while let Some(event_result) = stream.next().await {
+        match event_result {
+            Ok(agent_event) => {
+                emitted_any = true;
+                let tauri_events = convert_agent_event(agent_event);
+                for tauri_event in tauri_events {
+                    if let Err(e) = app.emit(event_name, &tauri_event) {
+                        tracing::error!("[AsterAgent] 发送事件失败: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(ReplyAttemptError {
+                    message: format!("Stream error: {e}"),
+                    emitted_any,
+                });
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// 基于 aster::sandbox 的本地 bash 强隔离工具
@@ -225,10 +445,11 @@ struct WorkspaceSandboxedBashTool {
     delegate: BashTool,
     sandbox_type_name: String,
     base_sandbox_config: ProcessSandboxConfig,
+    auto_approve_warnings: bool,
 }
 
 impl WorkspaceSandboxedBashTool {
-    fn new(workspace_root: &str) -> Result<Self, String> {
+    fn new(workspace_root: &str, auto_approve_warnings: bool) -> Result<Self, String> {
         let workspace_root = workspace_root.trim();
         if workspace_root.is_empty() {
             return Err("workspace 根目录为空".to_string());
@@ -237,10 +458,10 @@ impl WorkspaceSandboxedBashTool {
         let sandbox_type = detect_best_sandbox();
         let sandbox_type_name = format!("{sandbox_type:?}");
         if sandbox_type_name == "None" {
-            return Err(
-                "未检测到可用本地 sandbox 执行器（macOS 需 sandbox-exec，Linux 需 bwrap/firejail）"
-                    .to_string(),
-            );
+            return Err(format!(
+                "未检测到可用本地 sandbox 执行器。{}",
+                workspace_sandbox_platform_hint()
+            ));
         }
 
         let workspace_path = PathBuf::from(workspace_root);
@@ -290,6 +511,7 @@ impl WorkspaceSandboxedBashTool {
             delegate: BashTool::new(),
             sandbox_type_name,
             base_sandbox_config,
+            auto_approve_warnings,
         })
     }
 
@@ -388,6 +610,60 @@ impl WorkspaceSandboxedBashTool {
     }
 }
 
+fn normalize_shell_command_params(params: &serde_json::Value) -> serde_json::Value {
+    let mut normalized = params.clone();
+    if let Some(object) = normalized.as_object_mut() {
+        let has_command = object
+            .get("command")
+            .and_then(|value| value.as_str())
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+
+        if !has_command {
+            if let Some(cmd_value) = object.get("cmd").cloned() {
+                if cmd_value
+                    .as_str()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    object.insert("command".to_string(), cmd_value);
+                }
+            }
+        }
+    }
+    normalized
+}
+
+fn normalize_workspace_tool_permission_behavior(
+    permission: PermissionCheckResult,
+    auto_approve_warnings: bool,
+) -> PermissionCheckResult {
+    if permission.behavior != PermissionBehavior::Ask {
+        return permission;
+    }
+
+    let warning = permission
+        .message
+        .unwrap_or_else(|| "命令包含潜在风险操作".to_string());
+
+    if auto_approve_warnings {
+        tracing::warn!("[AsterAgent] Auto 模式自动通过 bash 风险提示: {}", warning);
+        return PermissionCheckResult {
+            behavior: PermissionBehavior::Allow,
+            message: None,
+            updated_params: permission.updated_params,
+        };
+    }
+
+    PermissionCheckResult {
+        behavior: PermissionBehavior::Deny,
+        message: Some(format!(
+            "{warning}。当前模式不支持交互确认，请切换到 Auto 模式或调整命令。"
+        )),
+        updated_params: permission.updated_params,
+    }
+}
+
 #[async_trait]
 impl Tool for WorkspaceSandboxedBashTool {
     fn name(&self) -> &str {
@@ -411,7 +687,12 @@ impl Tool for WorkspaceSandboxedBashTool {
         params: &serde_json::Value,
         context: &ToolContext,
     ) -> PermissionCheckResult {
-        self.delegate.check_permissions(params, context).await
+        let normalized_params = normalize_shell_command_params(params);
+        let permission = self
+            .delegate
+            .check_permissions(&normalized_params, context)
+            .await;
+        normalize_workspace_tool_permission_behavior(permission, self.auto_approve_warnings)
     }
 
     async fn execute(
@@ -419,11 +700,13 @@ impl Tool for WorkspaceSandboxedBashTool {
         params: serde_json::Value,
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
+        let normalized_params = normalize_shell_command_params(&params);
+
         if context.is_cancelled() {
             return Err(ToolError::Cancelled);
         }
 
-        let permission = self.check_permissions(&params, context).await;
+        let permission = self.check_permissions(&normalized_params, context).await;
         match permission.behavior {
             PermissionBehavior::Allow => {}
             PermissionBehavior::Deny => {
@@ -440,12 +723,12 @@ impl Tool for WorkspaceSandboxedBashTool {
             }
         }
 
-        let command = params
+        let command = normalized_params
             .get("command")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::invalid_params("Missing required parameter: command"))?;
 
-        let background = params
+        let background = normalized_params
             .get("background")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
@@ -455,7 +738,7 @@ impl Tool for WorkspaceSandboxedBashTool {
             ));
         }
 
-        let timeout_secs = params
+        let timeout_secs = normalized_params
             .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_BASH_TIMEOUT_SECS)
@@ -497,15 +780,116 @@ impl Tool for WorkspaceSandboxedBashTool {
     }
 }
 
+/// 统一处理 Task 工具的 Ask 权限，避免缺少回调导致流程中断
+struct WorkspaceTaskTool {
+    delegate: TaskTool,
+    auto_approve_warnings: bool,
+}
+
+impl WorkspaceTaskTool {
+    fn new(auto_approve_warnings: bool, task_manager: Arc<TaskManager>) -> Self {
+        Self {
+            delegate: TaskTool::with_manager(task_manager),
+            auto_approve_warnings,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceTaskTool {
+    fn name(&self) -> &str {
+        self.delegate.name()
+    }
+
+    fn description(&self) -> &str {
+        self.delegate.description()
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        self.delegate.input_schema()
+    }
+
+    fn options(&self) -> ToolOptions {
+        self.delegate.options()
+    }
+
+    async fn check_permissions(
+        &self,
+        params: &serde_json::Value,
+        context: &ToolContext,
+    ) -> PermissionCheckResult {
+        let normalized_params = normalize_shell_command_params(params);
+        let permission = self
+            .delegate
+            .check_permissions(&normalized_params, context)
+            .await;
+        normalize_workspace_tool_permission_behavior(permission, self.auto_approve_warnings)
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        let normalized_params = normalize_shell_command_params(&params);
+        self.delegate.execute(normalized_params, context).await
+    }
+}
+
+fn build_workspace_shell_allow_pattern(
+    escaped_root: &str,
+    allow_extended_shell_commands: bool,
+) -> String {
+    if allow_extended_shell_commands {
+        // Auto 模式放宽命令白名单，交由本地 sandbox 与 BashTool 安全检查兜底。
+        // 这里使用 DOTALL 支持 heredoc 等多行命令（例如 python <<'EOF' ...）。
+        return String::from(r"(?s)^\s*\S.*$");
+    }
+
+    format!(
+        r"^\s*(?:cd\s+({escaped_root}|\.|\./|\.\./)|pwd|ls(?:\s+[^;&|]+)?|find\s+({escaped_root}|\.|\./|\.\./)[^;&|]*|rg\b[^;&|]*|grep\b[^;&|]*|cat\s+({escaped_root}|\.|\./|\.\./)[^;&|]*)\s*$"
+    )
+}
+
 /// 为指定工作区生成本地 sandbox 权限模板
 async fn apply_workspace_sandbox_permissions(
     state: &AsterAgentState,
+    config_manager: &GlobalConfigManagerState,
+    heartbeat_state: &HeartbeatServiceState,
+    app_handle: &AppHandle,
     workspace_root: &str,
-) -> Result<(), String> {
+    execution_strategy: AsterExecutionStrategy,
+) -> Result<WorkspaceSandboxApplyOutcome, String> {
     let workspace_root = workspace_root.trim();
     if workspace_root.is_empty() {
         return Err("workspace 根目录为空".to_string());
     }
+
+    let sandbox_policy = resolve_workspace_sandbox_policy(config_manager);
+    let auto_mode = execution_strategy == AsterExecutionStrategy::Auto;
+    let mut sandboxed_bash_tool: Option<WorkspaceSandboxedBashTool> = None;
+    let apply_outcome = if !sandbox_policy.enabled {
+        WorkspaceSandboxApplyOutcome::DisabledByConfig
+    } else {
+        match WorkspaceSandboxedBashTool::new(workspace_root, auto_mode) {
+            Ok(tool) => {
+                let sandbox_type = tool.sandbox_type().to_string();
+                sandboxed_bash_tool = Some(tool);
+                WorkspaceSandboxApplyOutcome::Applied { sandbox_type }
+            }
+            Err(reason) => {
+                if sandbox_policy.strict {
+                    return Err(format!(
+                        "workspace 本地 sandbox 严格模式已启用，初始化失败: {reason}"
+                    ));
+                }
+                WorkspaceSandboxApplyOutcome::UnavailableFallback {
+                    warning_message: build_workspace_sandbox_warning_message(&reason),
+                    notify_user: sandbox_policy.notify_on_fallback,
+                }
+            }
+        }
+    };
 
     let escaped_root = regex::escape(workspace_root);
     let workspace_path_pattern = format!(r"^({escaped_root}|\.|\./|\.\./).*$");
@@ -520,19 +904,27 @@ async fn apply_workspace_sandbox_permissions(
             allowed: true,
             priority: 100,
             conditions: Vec::new(),
-            parameter_restrictions: vec![ParameterRestriction {
-                parameter: "path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some("read.path 必须在 workspace 内或相对路径".to_string()),
-            }],
+            parameter_restrictions: if auto_mode {
+                Vec::new()
+            } else {
+                vec![ParameterRestriction {
+                    parameter: "path".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(workspace_path_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: true,
+                    description: Some("read.path 必须在 workspace 内或相对路径".to_string()),
+                }]
+            },
             scope: PermissionScope::Session,
-            reason: Some("仅允许读取当前 workspace 内容".to_string()),
+            reason: Some(if auto_mode {
+                "Auto 模式：允许读取任意路径".to_string()
+            } else {
+                "仅允许读取当前 workspace 内容".to_string()
+            }),
             expires_at: None,
             metadata: HashMap::new(),
         },
@@ -541,19 +933,27 @@ async fn apply_workspace_sandbox_permissions(
             allowed: true,
             priority: 100,
             conditions: Vec::new(),
-            parameter_restrictions: vec![ParameterRestriction {
-                parameter: "path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some("write.path 必须在 workspace 内或相对路径".to_string()),
-            }],
+            parameter_restrictions: if auto_mode {
+                Vec::new()
+            } else {
+                vec![ParameterRestriction {
+                    parameter: "path".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(workspace_path_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: true,
+                    description: Some("write.path 必须在 workspace 内或相对路径".to_string()),
+                }]
+            },
             scope: PermissionScope::Session,
-            reason: Some("仅允许写入当前 workspace 内容".to_string()),
+            reason: Some(if auto_mode {
+                "Auto 模式：允许写入任意路径".to_string()
+            } else {
+                "仅允许写入当前 workspace 内容".to_string()
+            }),
             expires_at: None,
             metadata: HashMap::new(),
         },
@@ -562,19 +962,27 @@ async fn apply_workspace_sandbox_permissions(
             allowed: true,
             priority: 100,
             conditions: Vec::new(),
-            parameter_restrictions: vec![ParameterRestriction {
-                parameter: "path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some("edit.path 必须在 workspace 内或相对路径".to_string()),
-            }],
+            parameter_restrictions: if auto_mode {
+                Vec::new()
+            } else {
+                vec![ParameterRestriction {
+                    parameter: "path".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(workspace_path_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: true,
+                    description: Some("edit.path 必须在 workspace 内或相对路径".to_string()),
+                }]
+            },
             scope: PermissionScope::Session,
-            reason: Some("仅允许编辑当前 workspace 内容".to_string()),
+            reason: Some(if auto_mode {
+                "Auto 模式：允许编辑任意路径".to_string()
+            } else {
+                "仅允许编辑当前 workspace 内容".to_string()
+            }),
             expires_at: None,
             metadata: HashMap::new(),
         },
@@ -583,19 +991,27 @@ async fn apply_workspace_sandbox_permissions(
             allowed: true,
             priority: 100,
             conditions: Vec::new(),
-            parameter_restrictions: vec![ParameterRestriction {
-                parameter: "path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: false,
-                description: Some("glob.path 必须在 workspace 内或相对路径".to_string()),
-            }],
+            parameter_restrictions: if auto_mode {
+                Vec::new()
+            } else {
+                vec![ParameterRestriction {
+                    parameter: "path".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(workspace_path_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: false,
+                    description: Some("glob.path 必须在 workspace 内或相对路径".to_string()),
+                }]
+            },
             scope: PermissionScope::Session,
-            reason: Some("仅允许在当前 workspace 搜索文件".to_string()),
+            reason: Some(if auto_mode {
+                "Auto 模式：允许任意路径搜索文件".to_string()
+            } else {
+                "仅允许在当前 workspace 搜索文件".to_string()
+            }),
             expires_at: None,
             metadata: HashMap::new(),
         },
@@ -604,68 +1020,129 @@ async fn apply_workspace_sandbox_permissions(
             allowed: true,
             priority: 100,
             conditions: Vec::new(),
-            parameter_restrictions: vec![ParameterRestriction {
-                parameter: "path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: false,
-                description: Some("grep.path 必须在 workspace 内或相对路径".to_string()),
-            }],
+            parameter_restrictions: if auto_mode {
+                Vec::new()
+            } else {
+                vec![ParameterRestriction {
+                    parameter: "path".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(workspace_path_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: false,
+                    description: Some("grep.path 必须在 workspace 内或相对路径".to_string()),
+                }]
+            },
             scope: PermissionScope::Session,
-            reason: Some("仅允许在当前 workspace 搜索内容".to_string()),
+            reason: Some(if auto_mode {
+                "Auto 模式：允许任意路径搜索内容".to_string()
+            } else {
+                "仅允许在当前 workspace 搜索内容".to_string()
+            }),
             expires_at: None,
             metadata: HashMap::new(),
         },
     ];
 
-    let allow_shell_pattern = format!(
-        r"^\s*(?:cd\s+({escaped_root}|\.|\./|\.\./)|pwd|ls(?:\s+[^;&|]+)?|find\s+({escaped_root}|\.|\./|\.\./)[^;&|]*|rg\b[^;&|]*|grep\b[^;&|]*|cat\s+({escaped_root}|\.|\./|\.\./)[^;&|]*)\s*$"
-    );
+    let allow_shell_pattern = build_workspace_shell_allow_pattern(&escaped_root, auto_mode);
+    let shell_permission_description = if auto_mode {
+        "Auto 模式：允许任意 bash.command"
+    } else {
+        "bash.command 仅允许 workspace 内安全读操作"
+    };
+    let shell_permission_reason = if auto_mode {
+        "workspace 安全策略：Auto 模式允许任意命令（由本地 sandbox 兜底）"
+    } else {
+        "workspace 安全策略：bash 仅允许 workspace 内安全命令"
+    };
 
     permissions.push(ToolPermission {
         tool: "bash".to_string(),
         allowed: true,
         priority: 90,
         conditions: Vec::new(),
-        parameter_restrictions: vec![ParameterRestriction {
-            parameter: "command".to_string(),
-            restriction_type: RestrictionType::Pattern,
-            values: None,
-            pattern: Some(allow_shell_pattern.clone()),
-            validator: None,
-            min: None,
-            max: None,
-            required: true,
-            description: Some("bash.command 仅允许 workspace 内安全读操作".to_string()),
-        }],
+        parameter_restrictions: if auto_mode {
+            Vec::new()
+        } else {
+            vec![
+                ParameterRestriction {
+                    parameter: "command".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(allow_shell_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: false,
+                    description: Some(shell_permission_description.to_string()),
+                },
+                ParameterRestriction {
+                    parameter: "cmd".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(allow_shell_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: false,
+                    description: Some("bash.cmd 兼容参数名，规则与 command 一致".to_string()),
+                },
+            ]
+        },
         scope: PermissionScope::Session,
-        reason: Some("本地 sandbox：bash 仅允许 workspace 内安全命令".to_string()),
+        reason: Some(shell_permission_reason.to_string()),
         expires_at: None,
         metadata: HashMap::new(),
     });
+
+    let task_permission_description = if auto_mode {
+        "Auto 模式：允许任意 Task.command"
+    } else {
+        "Task.command 仅允许 workspace 内安全命令"
+    };
+    let task_permission_reason = if auto_mode {
+        "workspace 安全策略：Auto 模式允许 Task 执行任意命令"
+    } else {
+        "workspace 安全策略：Task 仅允许 workspace 内安全命令"
+    };
 
     permissions.push(ToolPermission {
         tool: "Task".to_string(),
         allowed: true,
         priority: 88,
         conditions: Vec::new(),
-        parameter_restrictions: vec![ParameterRestriction {
-            parameter: "command".to_string(),
-            restriction_type: RestrictionType::Pattern,
-            values: None,
-            pattern: Some(allow_shell_pattern.clone()),
-            validator: None,
-            min: None,
-            max: None,
-            required: true,
-            description: Some("Task.command 仅允许 workspace 内安全命令".to_string()),
-        }],
+        parameter_restrictions: if auto_mode {
+            Vec::new()
+        } else {
+            vec![
+                ParameterRestriction {
+                    parameter: "command".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(allow_shell_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: false,
+                    description: Some(task_permission_description.to_string()),
+                },
+                ParameterRestriction {
+                    parameter: "cmd".to_string(),
+                    restriction_type: RestrictionType::Pattern,
+                    values: None,
+                    pattern: Some(allow_shell_pattern.clone()),
+                    validator: None,
+                    min: None,
+                    max: None,
+                    required: false,
+                    description: Some("Task.cmd 兼容参数名，规则与 command 一致".to_string()),
+                },
+            ]
+        },
         scope: PermissionScope::Session,
-        reason: Some("本地 sandbox：Task 仅允许 workspace 内安全命令".to_string()),
+        reason: Some(task_permission_reason.to_string()),
         expires_at: None,
         metadata: HashMap::new(),
     });
@@ -675,19 +1152,27 @@ async fn apply_workspace_sandbox_permissions(
         allowed: true,
         priority: 88,
         conditions: Vec::new(),
-        parameter_restrictions: vec![ParameterRestriction {
-            parameter: "path".to_string(),
-            restriction_type: RestrictionType::Pattern,
-            values: None,
-            pattern: Some(workspace_path_pattern.clone()),
-            validator: None,
-            min: None,
-            max: None,
-            required: true,
-            description: Some("lsp.path 必须在 workspace 内或相对路径".to_string()),
-        }],
+        parameter_restrictions: if auto_mode {
+            Vec::new()
+        } else {
+            vec![ParameterRestriction {
+                parameter: "path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(workspace_path_pattern.clone()),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("lsp.path 必须在 workspace 内或相对路径".to_string()),
+            }]
+        },
         scope: PermissionScope::Session,
-        reason: Some("允许在 workspace 内使用 LSP".to_string()),
+        reason: Some(if auto_mode {
+            "Auto 模式：允许任意 LSP 路径".to_string()
+        } else {
+            "允许在 workspace 内使用 LSP".to_string()
+        }),
         expires_at: None,
         metadata: HashMap::new(),
     });
@@ -697,19 +1182,29 @@ async fn apply_workspace_sandbox_permissions(
         allowed: true,
         priority: 88,
         conditions: Vec::new(),
-        parameter_restrictions: vec![ParameterRestriction {
-            parameter: "notebook_path".to_string(),
-            restriction_type: RestrictionType::Pattern,
-            values: None,
-            pattern: Some(workspace_abs_path_pattern.clone()),
-            validator: None,
-            min: None,
-            max: None,
-            required: true,
-            description: Some("NotebookEdit.notebook_path 必须是 workspace 内绝对路径".to_string()),
-        }],
+        parameter_restrictions: if auto_mode {
+            Vec::new()
+        } else {
+            vec![ParameterRestriction {
+                parameter: "notebook_path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(workspace_abs_path_pattern.clone()),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some(
+                    "NotebookEdit.notebook_path 必须是 workspace 内绝对路径".to_string(),
+                ),
+            }]
+        },
         scope: PermissionScope::Session,
-        reason: Some("允许编辑 workspace 内 Notebook".to_string()),
+        reason: Some(if auto_mode {
+            "Auto 模式：允许编辑任意 Notebook 路径".to_string()
+        } else {
+            "允许编辑 workspace 内 Notebook".to_string()
+        }),
         expires_at: None,
         metadata: HashMap::new(),
     });
@@ -719,21 +1214,30 @@ async fn apply_workspace_sandbox_permissions(
         allowed: true,
         priority: 88,
         conditions: Vec::new(),
-        parameter_restrictions: vec![ParameterRestriction {
-            parameter: "file_path".to_string(),
-            restriction_type: RestrictionType::Pattern,
-            values: None,
-            pattern: Some(analyze_image_path_pattern),
-            validator: None,
-            min: None,
-            max: None,
-            required: true,
-            description: Some(
-                "analyze_image.file_path 仅允许 base64、workspace 内绝对路径或相对路径".to_string(),
-            ),
-        }],
+        parameter_restrictions: if auto_mode {
+            Vec::new()
+        } else {
+            vec![ParameterRestriction {
+                parameter: "file_path".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(analyze_image_path_pattern),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some(
+                    "analyze_image.file_path 仅允许 base64、workspace 内绝对路径或相对路径"
+                        .to_string(),
+                ),
+            }]
+        },
         scope: PermissionScope::Session,
-        reason: Some("允许分析 workspace 内图片或 base64 数据".to_string()),
+        reason: Some(if auto_mode {
+            "Auto 模式：允许分析任意图片路径或 base64".to_string()
+        } else {
+            "允许分析 workspace 内图片或 base64 数据".to_string()
+        }),
         expires_at: None,
         metadata: HashMap::new(),
     });
@@ -743,22 +1247,44 @@ async fn apply_workspace_sandbox_permissions(
         allowed: true,
         priority: 88,
         conditions: Vec::new(),
-        parameter_restrictions: vec![ParameterRestriction {
-            parameter: "url".to_string(),
-            restriction_type: RestrictionType::Pattern,
-            values: None,
-            pattern: Some(safe_https_url_pattern),
-            validator: None,
-            min: None,
-            max: None,
-            required: true,
-            description: Some("WebFetch.url 仅允许 https 且禁止内网/本机地址".to_string()),
-        }],
+        parameter_restrictions: if auto_mode {
+            Vec::new()
+        } else {
+            vec![ParameterRestriction {
+                parameter: "url".to_string(),
+                restriction_type: RestrictionType::Pattern,
+                values: None,
+                pattern: Some(safe_https_url_pattern),
+                validator: None,
+                min: None,
+                max: None,
+                required: true,
+                description: Some("WebFetch.url 仅允许 https 且禁止内网/本机地址".to_string()),
+            }]
+        },
         scope: PermissionScope::Session,
-        reason: Some("允许安全的 WebFetch 请求".to_string()),
+        reason: Some(if auto_mode {
+            "Auto 模式：允许任意 WebFetch URL".to_string()
+        } else {
+            "允许安全的 WebFetch 请求".to_string()
+        }),
         expires_at: None,
         metadata: HashMap::new(),
     });
+
+    if auto_mode {
+        permissions.push(ToolPermission {
+            tool: "*".to_string(),
+            allowed: true,
+            priority: 1000,
+            conditions: Vec::new(),
+            parameter_restrictions: Vec::new(),
+            scope: PermissionScope::Session,
+            reason: Some("Auto 模式：允许所有工具与参数".to_string()),
+            expires_at: None,
+            metadata: HashMap::new(),
+        });
+    }
 
     for tool_name in [
         "Skill",
@@ -770,6 +1296,7 @@ async fn apply_workspace_sandbox_permissions(
         "WebSearch",
         "ask",
         "three_stage_workflow",
+        "heartbeat",
     ] {
         permissions.push(ToolPermission {
             tool: tool_name.to_string(),
@@ -791,7 +1318,7 @@ async fn apply_workspace_sandbox_permissions(
         conditions: Vec::new(),
         parameter_restrictions: Vec::new(),
         scope: PermissionScope::Session,
-        reason: Some("本地 sandbox：未显式授权的工具默认拒绝".to_string()),
+        reason: Some("workspace 安全策略：未显式授权的工具默认拒绝".to_string()),
         expires_at: None,
         metadata: HashMap::new(),
     });
@@ -818,17 +1345,25 @@ async fn apply_workspace_sandbox_permissions(
     }
     registry.set_permission_manager(Arc::new(permission_manager));
 
-    let workspace_bash_tool = WorkspaceSandboxedBashTool::new(workspace_root)?;
-    let sandbox_type = workspace_bash_tool.sandbox_type().to_string();
-    registry.register(Box::new(workspace_bash_tool));
+    let task_manager = shared_task_manager();
+    registry.register(Box::new(WorkspaceTaskTool::new(
+        auto_mode,
+        task_manager.clone(),
+    )));
+    registry.register(Box::new(TaskOutputTool::with_manager(task_manager.clone())));
+    registry.register(Box::new(KillShellTool::with_task_manager(task_manager)));
 
-    tracing::info!(
-        "[AsterAgent] 已应用 workspace 本地 sandbox: root={}, type={}",
-        workspace_root,
-        sandbox_type
-    );
+    if let Some(workspace_bash_tool) = sandboxed_bash_tool {
+        registry.register(Box::new(workspace_bash_tool));
+    }
 
-    Ok(())
+    // 注册心跳工具
+    let heartbeat_adapter =
+        HeartbeatServiceAdapter::new(heartbeat_state.clone(), app_handle.clone());
+    let heartbeat_tool = proxycast_agent::tools::HeartbeatTool::new(Arc::new(heartbeat_adapter));
+    registry.register(Box::new(heartbeat_tool));
+
+    Ok(apply_outcome)
 }
 
 /// 图片输入
@@ -845,7 +1380,9 @@ pub async fn aster_agent_chat_stream(
     app: AppHandle,
     state: State<'_, AsterAgentState>,
     db: State<'_, DbConnection>,
+    config_manager: State<'_, GlobalConfigManagerState>,
     mcp_manager: State<'_, McpManagerState>,
+    heartbeat_state: State<'_, HeartbeatServiceState>,
     request: AsterChatRequest,
 ) -> Result<(), String> {
     tracing::info!(
@@ -928,8 +1465,15 @@ pub async fn aster_agent_chat_stream(
     }
 
     // 构建 system_prompt：优先使用项目上下文，其次使用 session 的 system_prompt
-    let system_prompt = {
+    // 同时读取会话已持久化的 execution_strategy
+    let (system_prompt, persisted_strategy) = {
         let db_conn = db.lock().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        let session = AgentDao::get_session(&db_conn, session_id)
+            .map_err(|e| format!("读取 session 失败: {e}"))?;
+        let persisted = session
+            .as_ref()
+            .map(|s| AsterExecutionStrategy::from_db_value(s.execution_strategy.as_deref()))
+            .unwrap_or_default();
 
         // 1. 如果提供了 project_id，构建项目上下文
         let project_prompt = if let Some(ref project_id) = request.project_id {
@@ -955,34 +1499,56 @@ pub async fn aster_agent_chat_stream(
         };
 
         // 2. 如果没有项目上下文，尝试从 session 读取
-        if project_prompt.is_some() {
+        let resolved_prompt = if project_prompt.is_some() {
             project_prompt
         } else {
-            match AgentDao::get_session(&db_conn, session_id) {
-                Ok(Some(session)) => {
+            match session {
+                Some(session) => {
                     tracing::debug!(
                         "[AsterAgent] 找到 session，system_prompt: {:?}",
                         session.system_prompt.as_ref().map(|s| s.len())
                     );
                     session.system_prompt
                 }
-                Ok(None) => {
+                None => {
                     tracing::debug!(
                         "[AsterAgent] ProxyCast 数据库中未找到 session: {}",
                         session_id
                     );
                     None
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "[AsterAgent] 读取 session 失败: {}, 继续使用空 system_prompt",
-                        e
-                    );
-                    None
-                }
+            }
+        };
+
+        (resolved_prompt, persisted)
+    };
+
+    let requested_strategy = request.execution_strategy.unwrap_or(persisted_strategy);
+    let effective_strategy = requested_strategy.effective_for_message(&request.message);
+
+    if let Some(explicit_strategy) = request.execution_strategy {
+        let db_conn = db.lock().map_err(|e| format!("获取数据库连接失败: {e}"))?;
+        if AgentDao::session_exists(&db_conn, session_id).unwrap_or(false) {
+            if let Err(e) = AgentDao::update_execution_strategy(
+                &db_conn,
+                session_id,
+                explicit_strategy.as_db_value(),
+            ) {
+                tracing::warn!(
+                    "[AsterAgent] 更新会话执行策略失败: session={}, strategy={}, error={}",
+                    session_id,
+                    explicit_strategy.as_db_value(),
+                    e
+                );
             }
         }
-    };
+    }
+
+    tracing::info!(
+        "[AsterAgent] 执行策略: requested={:?}, effective={:?}",
+        requested_strategy,
+        effective_strategy
+    );
 
     // 如果提供了 Provider 配置，则配置 Provider
     if let Some(provider_config) = &request.provider_config {
@@ -1021,80 +1587,161 @@ pub async fn aster_agent_chat_stream(
         return Err("Provider 未配置，请先调用 aster_agent_configure_provider".to_string());
     }
 
-    apply_workspace_sandbox_permissions(&state, &workspace_root)
-        .await
-        .map_err(|e| format!("注入本地 sandbox 失败: {e}"))?;
+    let sandbox_outcome = apply_workspace_sandbox_permissions(
+        &state,
+        config_manager.inner(),
+        heartbeat_state.inner(),
+        &app,
+        &workspace_root,
+        requested_strategy,
+    )
+    .await
+    .map_err(|e| format!("注入 workspace 安全策略失败: {e}"))?;
 
-    // 创建取消令牌
-    let cancel_token = state.create_cancel_token(session_id).await;
-
-    // 创建用户消息
-    let user_message = Message::user().with_text(&request.message);
-
-    // 创建会话配置
-    let mut session_config_builder = SessionConfigBuilder::new(session_id);
-    if let Some(prompt) = system_prompt {
-        session_config_builder = session_config_builder.system_prompt(prompt);
+    match sandbox_outcome {
+        WorkspaceSandboxApplyOutcome::Applied { sandbox_type } => {
+            tracing::info!(
+                "[AsterAgent] 已启用 workspace 本地 sandbox: root={}, type={}",
+                workspace_root,
+                sandbox_type
+            );
+        }
+        WorkspaceSandboxApplyOutcome::DisabledByConfig => {
+            tracing::info!(
+                "[AsterAgent] workspace 本地 sandbox 已关闭，继续使用普通执行模式: root={}",
+                workspace_root
+            );
+        }
+        WorkspaceSandboxApplyOutcome::UnavailableFallback {
+            warning_message,
+            notify_user,
+        } => {
+            tracing::warn!(
+                "[AsterAgent] workspace 本地 sandbox 不可用，已降级为普通执行: root={}, warning={}",
+                workspace_root,
+                warning_message
+            );
+            if notify_user {
+                let warning_event = TauriAgentEvent::Warning {
+                    code: Some(WORKSPACE_SANDBOX_FALLBACK_WARNING_CODE.to_string()),
+                    message: warning_message,
+                };
+                if let Err(e) = app.emit(&request.event_name, &warning_event) {
+                    tracing::error!("[AsterAgent] 发送 sandbox 降级提醒失败: {}", e);
+                }
+            }
+        }
     }
-    let session_config = session_config_builder.build();
+
+    let tracker = ExecutionTracker::new(db.inner().clone());
+    let cancel_token = state.create_cancel_token(session_id).await;
 
     // 获取 Agent Arc 并保持 guard 在整个流处理期间存活
     let agent_arc = state.get_agent_arc();
     let guard = agent_arc.read().await;
     let agent = guard.as_ref().ok_or("Agent not initialized")?;
 
-    // 获取事件流
-    let stream_result = agent
-        .reply(user_message, session_config, Some(cancel_token.clone()))
-        .await;
+    let build_session_config = || {
+        let mut session_config_builder = SessionConfigBuilder::new(session_id);
+        if let Some(prompt) = system_prompt.clone() {
+            session_config_builder = session_config_builder.system_prompt(prompt);
+        }
+        session_config_builder.build()
+    };
 
-    match stream_result {
-        Ok(mut stream) => {
-            // 处理事件流
-            while let Some(event_result) = stream.next().await {
-                match event_result {
-                    Ok(agent_event) => {
-                        // 转换 Aster 事件为 Tauri 事件
-                        let tauri_events = convert_agent_event(agent_event);
+    let final_result = tracker
+        .with_run(
+            RunSource::Chat,
+            Some("aster_agent_chat_stream".to_string()),
+            Some(session_id.to_string()),
+            Some(serde_json::json!({
+                "workspace_id": workspace_id.clone(),
+                "project_id": request.project_id.clone(),
+                "event_name": request.event_name.clone(),
+                "execution_strategy": format!("{:?}", effective_strategy).to_lowercase(),
+                "message_length": request.message.chars().count(),
+            })),
+            RunFinalizeOptions {
+                success_metadata: Some(serde_json::json!({
+                    "execution_strategy": format!("{:?}", effective_strategy).to_lowercase(),
+                    "workspace_id": workspace_id.clone(),
+                })),
+                error_code: Some("chat_stream_failed".to_string()),
+                error_metadata: Some(serde_json::json!({
+                    "execution_strategy": format!("{:?}", effective_strategy).to_lowercase(),
+                    "workspace_id": workspace_id.clone(),
+                })),
+            },
+            async {
+                let mut added_code_execution = false;
+                if effective_strategy == AsterExecutionStrategy::CodeOrchestrated {
+                    added_code_execution = ensure_code_execution_extension_enabled(agent).await?;
+                }
 
-                        // 发送每个事件到前端
-                        for tauri_event in tauri_events {
-                            if let Err(e) = app.emit(&request.event_name, &tauri_event) {
-                                tracing::error!("[AsterAgent] 发送事件失败: {}", e);
-                            }
-                        }
+                let primary_result = stream_reply_once(
+                    agent,
+                    &app,
+                    &request.event_name,
+                    &request.message,
+                    build_session_config(),
+                    cancel_token.clone(),
+                )
+                .await;
+
+                let run_result: Result<(), String> = match primary_result {
+                    Ok(()) => Ok(()),
+                    Err(primary_error)
+                        if effective_strategy == AsterExecutionStrategy::CodeOrchestrated
+                            && !primary_error.emitted_any =>
+                    {
+                        tracing::warn!(
+                            "[AsterAgent] 编排模式执行失败，自动降级到 ReAct: {}",
+                            primary_error.message
+                        );
+                        stream_reply_once(
+                            agent,
+                            &app,
+                            &request.event_name,
+                            &request.message,
+                            build_session_config(),
+                            cancel_token.clone(),
+                        )
+                        .await
+                        .map_err(|fallback_err| fallback_err.message)
                     }
-                    Err(e) => {
-                        // 发送错误事件
-                        let error_event = TauriAgentEvent::Error {
-                            message: format!("Stream error: {e}"),
-                        };
-                        if let Err(emit_err) = app.emit(&request.event_name, &error_event) {
-                            tracing::error!("[AsterAgent] 发送错误事件失败: {}", emit_err);
-                        }
+                    Err(primary_error) => Err(primary_error.message),
+                };
+
+                if added_code_execution {
+                    if let Err(e) = agent.remove_extension(CODE_EXECUTION_EXTENSION_NAME).await {
+                        tracing::warn!(
+                            "[AsterAgent] 移除 code_execution 扩展失败，后续会话可能继续保留编排模式: {}",
+                            e
+                        );
                     }
                 }
-            }
 
-            // 发送完成事件
+                run_result
+            },
+        )
+        .await;
+
+    match final_result {
+        Ok(()) => {
             let done_event = TauriAgentEvent::FinalDone { usage: None };
             if let Err(e) = app.emit(&request.event_name, &done_event) {
                 tracing::error!("[AsterAgent] 发送完成事件失败: {}", e);
             }
         }
         Err(e) => {
-            // 发送错误事件
-            let error_event = TauriAgentEvent::Error {
-                message: format!("Agent error: {e}"),
-            };
+            let error_event = TauriAgentEvent::Error { message: e.clone() };
             if let Err(emit_err) = app.emit(&request.event_name, &error_event) {
                 tracing::error!("[AsterAgent] 发送错误事件失败: {}", emit_err);
             }
-            return Err(format!("Agent error: {e}"));
+            state.remove_cancel_token(session_id).await;
+            return Err(e);
         }
     }
-
-    // guard 会在函数结束时自动释放（stream_result 先释放）
 
     // 清理取消令牌
     state.remove_cancel_token(session_id).await;
@@ -1119,6 +1766,7 @@ pub async fn aster_session_create(
     working_dir: Option<String>,
     workspace_id: String,
     name: Option<String>,
+    execution_strategy: Option<AsterExecutionStrategy>,
 ) -> Result<String, String> {
     tracing::info!("[AsterAgent] 创建会话: name={:?}", name);
 
@@ -1127,7 +1775,31 @@ pub async fn aster_session_create(
         return Err("workspace_id 必填，请先选择项目工作区".to_string());
     }
 
-    AsterAgentWrapper::create_session_sync(&db, name, working_dir, workspace_id)
+    AsterAgentWrapper::create_session_sync(
+        &db,
+        name,
+        working_dir,
+        workspace_id,
+        Some(
+            execution_strategy
+                .unwrap_or(AsterExecutionStrategy::React)
+                .as_db_value()
+                .to_string(),
+        ),
+    )
+}
+
+/// 设置会话执行策略
+#[tauri::command]
+pub async fn aster_session_set_execution_strategy(
+    db: State<'_, DbConnection>,
+    session_id: String,
+    execution_strategy: AsterExecutionStrategy,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    AgentDao::update_execution_strategy(&conn, &session_id, execution_strategy.as_db_value())
+        .map_err(|e| format!("更新会话执行策略失败: {e}"))?;
+    Ok(())
 }
 
 /// 列出所有会话
@@ -1255,10 +1927,27 @@ pub async fn aster_agent_submit_elicitation_response(
     let guard = agent_arc.read().await;
     let agent = guard.as_ref().ok_or("Agent not initialized")?;
 
-    let _ = agent
+    let mut stream = agent
         .reply(message, session_config, None)
         .await
         .map_err(|e| format!("提交 elicitation 响应失败: {e}"))?;
+
+    while let Some(event_result) = stream.next().await {
+        match event_result {
+            Ok(AgentEvent::Message(message)) => {
+                let text = message.as_concat_text();
+                if text.contains("Failed to submit elicitation response")
+                    || text.contains("Request not found")
+                {
+                    return Err(format!("提交 elicitation 响应失败: {text}"));
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!("提交 elicitation 响应失败: {e}"));
+            }
+        }
+    }
 
     Ok(())
 }
@@ -1266,6 +1955,7 @@ pub async fn aster_agent_submit_elicitation_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use regex::Regex;
 
     #[test]
     fn test_aster_chat_request_deserialize() {
@@ -1281,6 +1971,48 @@ mod tests {
         assert_eq!(request.session_id, "test-session");
         assert_eq!(request.event_name, "agent_stream");
         assert_eq!(request.workspace_id, "workspace-test");
+        assert_eq!(request.execution_strategy, None);
+    }
+
+    #[test]
+    fn test_aster_chat_request_deserialize_with_execution_strategy() {
+        let json = r#"{
+            "message": "Hello",
+            "session_id": "test-session",
+            "event_name": "agent_stream",
+            "workspace_id": "workspace-test",
+            "execution_strategy": "code_orchestrated"
+        }"#;
+
+        let request: AsterChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            request.execution_strategy,
+            Some(AsterExecutionStrategy::CodeOrchestrated)
+        );
+    }
+
+    #[test]
+    fn test_aster_execution_strategy_default_is_auto() {
+        assert_eq!(
+            AsterExecutionStrategy::default(),
+            AsterExecutionStrategy::Auto
+        );
+    }
+
+    #[test]
+    fn test_aster_execution_strategy_from_db_value_none_is_auto() {
+        assert_eq!(
+            AsterExecutionStrategy::from_db_value(None),
+            AsterExecutionStrategy::Auto
+        );
+    }
+
+    #[test]
+    fn test_aster_execution_strategy_from_db_value_unknown_is_auto() {
+        assert_eq!(
+            AsterExecutionStrategy::from_db_value(Some("unknown")),
+            AsterExecutionStrategy::Auto
+        );
     }
 
     #[test]
@@ -1299,6 +2031,82 @@ mod tests {
     fn test_validate_elicitation_submission_trims_session_id() {
         let result = validate_elicitation_submission("  session-1  ", "req-1");
         assert_eq!(result, Ok("session-1".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_workspace_tool_permission_behavior_auto_mode_allows_warning() {
+        let permission = PermissionCheckResult::ask("需要确认");
+        let normalized = normalize_workspace_tool_permission_behavior(permission, true);
+        assert_eq!(normalized.behavior, PermissionBehavior::Allow);
+        assert!(normalized.message.is_none());
+    }
+
+    #[test]
+    fn test_normalize_workspace_tool_permission_behavior_non_auto_denies_warning() {
+        let permission = PermissionCheckResult::ask("需要确认");
+        let normalized = normalize_workspace_tool_permission_behavior(permission, false);
+        assert_eq!(normalized.behavior, PermissionBehavior::Deny);
+        assert!(normalized
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("当前模式不支持交互确认"));
+    }
+
+    #[test]
+    fn test_build_workspace_shell_allow_pattern_strict_mode_rejects_python_command() {
+        let escaped_root = regex::escape("/tmp/workspace");
+        let pattern = build_workspace_shell_allow_pattern(&escaped_root, false);
+        let regex = Regex::new(&pattern).unwrap();
+
+        assert!(regex.is_match("rg -n \"foo\" ."));
+        assert!(!regex.is_match("python -m pip install playwright"));
+    }
+
+    #[test]
+    fn test_build_workspace_shell_allow_pattern_auto_mode_allows_common_commands() {
+        let escaped_root = regex::escape("/tmp/workspace");
+        let pattern = build_workspace_shell_allow_pattern(&escaped_root, true);
+        let regex = Regex::new(&pattern).unwrap();
+
+        assert!(regex.is_match("python -m pip install playwright"));
+        assert!(regex.is_match("npm install && npm run build"));
+        assert!(regex.is_match("python3 <<'EOF'\nprint('hello')\nEOF"));
+    }
+
+    #[test]
+    fn test_normalize_shell_command_params_accepts_cmd_alias() {
+        let input = serde_json::json!({
+            "cmd": "echo hello",
+            "timeout": 10
+        });
+
+        let normalized = normalize_shell_command_params(&input);
+        assert_eq!(
+            normalized.get("command").and_then(|value| value.as_str()),
+            Some("echo hello")
+        );
+    }
+
+    #[test]
+    fn test_normalize_shell_command_params_keeps_existing_command() {
+        let input = serde_json::json!({
+            "command": "pwd",
+            "cmd": "echo should_not_override"
+        });
+
+        let normalized = normalize_shell_command_params(&input);
+        assert_eq!(
+            normalized.get("command").and_then(|value| value.as_str()),
+            Some("pwd")
+        );
+    }
+
+    #[test]
+    fn test_shared_task_manager_returns_same_instance() {
+        let first = shared_task_manager();
+        let second = shared_task_manager();
+        assert!(Arc::ptr_eq(&first, &second));
     }
 }
 

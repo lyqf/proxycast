@@ -46,6 +46,14 @@ fn resolve_workspace_id_by_working_dir(
     .ok()
 }
 
+fn normalize_execution_strategy(value: Option<String>) -> String {
+    match value.as_deref() {
+        Some("code_orchestrated") => "code_orchestrated".to_string(),
+        Some("auto") => "auto".to_string(),
+        _ => "react".to_string(),
+    }
+}
+
 /// Agent 进程状态响应
 #[derive(Debug, Serialize)]
 pub struct AgentProcessStatus {
@@ -62,6 +70,7 @@ pub struct CreateSessionResponse {
     pub credential_uuid: String,
     pub provider_type: String,
     pub model: Option<String>,
+    pub execution_strategy: String,
 }
 
 /// 启动 Agent（使用 Aster 实现）
@@ -161,6 +170,7 @@ pub async fn agent_create_session(
     system_prompt: Option<String>,
     skills: Option<Vec<SkillInfo>>,
     workspace_id: String,
+    execution_strategy: Option<String>,
 ) -> Result<CreateSessionResponse, String> {
     tracing::info!(
         "[Agent] 创建会话: provider_type={}, model={:?}, skills_count={:?}",
@@ -186,6 +196,7 @@ pub async fn agent_create_session(
 
     // 生成会话 ID
     let session_id = uuid::Uuid::new_v4().to_string();
+    let normalized_execution_strategy = normalize_execution_strategy(execution_strategy);
 
     // 从凭证池配置 Provider
     let model_name = model
@@ -207,6 +218,7 @@ pub async fn agent_create_session(
         system_prompt: final_system_prompt,
         title: None, // 初始会话没有标题，后续会自动生成
         working_dir: Some(workspace_root),
+        execution_strategy: Some(normalized_execution_strategy.clone()),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -224,6 +236,7 @@ pub async fn agent_create_session(
         credential_uuid: aster_config.credential_uuid,
         provider_type,
         model: Some(model_name),
+        execution_strategy: normalized_execution_strategy,
     })
 }
 
@@ -298,6 +311,7 @@ pub struct SessionInfo {
     pub messages_count: usize,
     pub workspace_id: Option<String>,
     pub working_dir: Option<String>,
+    pub execution_strategy: Option<String>,
 }
 
 /// 获取会话列表
@@ -324,6 +338,7 @@ pub async fn agent_list_sessions(db: State<'_, DbConnection>) -> Result<Vec<Sess
                 messages_count,
                 workspace_id,
                 working_dir,
+                execution_strategy: s.execution_strategy,
             }
         })
         .collect();
@@ -357,6 +372,7 @@ pub async fn agent_get_session(
         messages_count,
         workspace_id,
         working_dir,
+        execution_strategy: session.execution_strategy,
     })
 }
 

@@ -115,6 +115,11 @@ fn show_and_focus_window<R: Runtime>(window: &tauri::WebviewWindow<R>) {
         tracing::error!("取消最小化窗口失败: {}", e);
     }
 
+    // 保持与主窗口默认行为一致：显示时尽量最大化
+    if let Err(e) = window.maximize() {
+        tracing::error!("最大化主窗口失败: {}", e);
+    }
+
     // 显示窗口
     if let Err(e) = window.show() {
         tracing::error!("显示主窗口失败: {}", e);

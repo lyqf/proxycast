@@ -2,7 +2,9 @@
 //!
 //! 提供 Agent 会话和消息的持久化存储功能
 
-use crate::agent::types::{AgentMessage, AgentSession, ContentPart, MessageContent, ToolCall};
+use crate::agent::types::{
+    AgentMessage, AgentSession, ContentPart, FunctionCall, MessageContent, ToolCall,
+};
 use rusqlite::{params, Connection};
 
 /// 解析消息内容 JSON，支持多种格式
@@ -12,42 +14,27 @@ use rusqlite::{params, Connection};
 /// 2. ProxyCast 纯文本: `"string"`
 /// 3. ProxyCast Parts: `[{"type":"text","text":"..."}]`
 fn parse_message_content(content_json: &str) -> MessageContent {
-    // 尝试解析为 Aster 格式 (Vec<AsterMessageContent>)
-    if let Ok(aster_contents) = serde_json::from_str::<Vec<serde_json::Value>>(content_json) {
-        let mut parts: Vec<ContentPart> = Vec::new();
-
-        for item in aster_contents {
-            // Aster 格式: {"Text": "..."} 或 {"ToolRequest": ...}
-            if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
-                parts.push(ContentPart::Text {
-                    text: text.to_string(),
-                });
-            }
-            // 也支持小写 "text" 格式
-            else if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                parts.push(ContentPart::Text {
-                    text: text.to_string(),
-                });
-            }
-            // ProxyCast Parts 格式: {"type": "text", "text": "..."}
-            else if item.get("type").and_then(|v| v.as_str()) == Some("text") {
-                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                    parts.push(ContentPart::Text {
-                        text: text.to_string(),
-                    });
-                }
-            }
-            // 忽略 ToolRequest、ToolResponse 等非文本内容
-        }
-
-        if !parts.is_empty() {
-            return MessageContent::Parts(parts);
-        }
-    }
-
     // 尝试解析为纯文本字符串
     if let Ok(text) = serde_json::from_str::<String>(content_json) {
         return MessageContent::Text(text);
+    }
+
+    // 尝试按 JSON 值解析并提取可展示内容
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(content_json) {
+        let parts = parse_content_parts_from_json(&value);
+        if !parts.is_empty() {
+            return MessageContent::Parts(parts);
+        }
+
+        // 兼容历史 toolResponse 协议，将工具输出提取为文本用于后续 tool_response 恢复。
+        if let Some(tool_output) = extract_tool_response_text(&value) {
+            return MessageContent::Text(tool_output);
+        }
+
+        // 历史数据中常见工具协议 JSON（无可展示文本），避免将整段 JSON 暴露到 UI
+        if value.is_array() || value.is_object() {
+            return MessageContent::Text(String::new());
+        }
     }
 
     // 尝试直接解析为 ProxyCast MessageContent
@@ -59,6 +46,365 @@ fn parse_message_content(content_json: &str) -> MessageContent {
     MessageContent::Text(content_json.to_string())
 }
 
+fn normalize_json_type_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn push_non_empty(target: &mut Vec<String>, value: Option<&str>) {
+    let Some(raw) = value else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+        target.push(trimmed.to_string());
+    }
+}
+
+fn dedupe_preserve_order(items: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped = Vec::new();
+    for item in items {
+        if seen.insert(item.clone()) {
+            deduped.push(item);
+        }
+    }
+    deduped
+}
+
+fn collect_text_candidates(value: &serde_json::Value, target: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => push_non_empty(target, Some(text)),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_text_candidates(item, target);
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            if let Some(content) = obj.get("content") {
+                collect_text_candidates(content, target);
+            }
+
+            for key in ["text", "output", "stdout", "stderr", "message"] {
+                push_non_empty(target, obj.get(key).and_then(|v| v.as_str()));
+            }
+
+            if let Some(value) = obj.get("value") {
+                collect_text_candidates(value, target);
+            }
+
+            push_non_empty(target, obj.get("error").and_then(|v| v.as_str()));
+        }
+        _ => {}
+    }
+}
+
+fn extract_tool_response_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Array(items) => {
+            let mut segments = Vec::new();
+            for item in items {
+                if let Some(text) = extract_tool_response_text(item) {
+                    push_non_empty(&mut segments, Some(&text));
+                }
+            }
+            let deduped = dedupe_preserve_order(segments);
+            if deduped.is_empty() {
+                None
+            } else {
+                Some(deduped.join("\n"))
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            let type_token = obj
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(normalize_json_type_token);
+            let is_tool_response = matches!(type_token.as_deref(), Some("toolresponse"))
+                || obj.contains_key("toolResult")
+                || obj.contains_key("tool_result")
+                || obj.contains_key("ToolResponse")
+                || obj.contains_key("toolResponse")
+                || obj.contains_key("tool_response");
+
+            if !is_tool_response {
+                return None;
+            }
+
+            let mut segments = Vec::new();
+
+            if let Some(inner) = obj
+                .get("ToolResponse")
+                .or_else(|| obj.get("toolResponse"))
+                .or_else(|| obj.get("tool_response"))
+            {
+                collect_text_candidates(inner, &mut segments);
+            }
+
+            if let Some(tool_result) = obj.get("toolResult").or_else(|| obj.get("tool_result")) {
+                collect_text_candidates(tool_result, &mut segments);
+            }
+
+            push_non_empty(&mut segments, obj.get("output").and_then(|v| v.as_str()));
+            push_non_empty(&mut segments, obj.get("error").and_then(|v| v.as_str()));
+
+            let deduped = dedupe_preserve_order(segments);
+            if deduped.is_empty() {
+                None
+            } else {
+                Some(deduped.join("\n"))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn parse_content_parts_from_json(value: &serde_json::Value) -> Vec<ContentPart> {
+    match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(parse_content_part_item)
+            .collect::<Vec<_>>(),
+        serde_json::Value::Object(_) => parse_content_part_item(value).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_content_part_item(value: &serde_json::Value) -> Option<ContentPart> {
+    let obj = value.as_object()?;
+
+    // Aster 格式: {"Text":"..."} 或 {"Text":{"text":"..."}}
+    if let Some(text) = obj.get("Text").and_then(|v| v.as_str()) {
+        return Some(ContentPart::Text {
+            text: text.to_string(),
+        });
+    }
+    if let Some(text_obj) = obj.get("Text").and_then(|v| v.as_object()) {
+        if let Some(text) = text_obj
+            .get("text")
+            .and_then(|v| v.as_str())
+            .or_else(|| text_obj.get("content").and_then(|v| v.as_str()))
+        {
+            return Some(ContentPart::Text {
+                text: text.to_string(),
+            });
+        }
+    }
+
+    // 常见文本格式:
+    // - {"text":"..."}
+    // - {"type":"text","text":"..."}
+    // - {"type":"text","content":"..."}
+    // - {"type":"input_text","text":"..."}
+    // - {"type":"output_text","text":"..."}
+    if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
+        return Some(ContentPart::Text {
+            text: text.to_string(),
+        });
+    }
+
+    let part_type = obj.get("type").and_then(|v| v.as_str());
+
+    if matches!(part_type, Some("text" | "input_text" | "output_text")) {
+        if let Some(text) = obj.get("content").and_then(|v| v.as_str()) {
+            return Some(ContentPart::Text {
+                text: text.to_string(),
+            });
+        }
+    }
+
+    // 图片格式:
+    // - {"type":"image_url","image_url":{"url":"..."}}
+    // - {"type":"input_image","image_url":"..."}
+    // - {"type":"image","mime_type":"image/png","data":"base64..."}
+    // - {"type":"image","source":{"media_type":"image/png","data":"base64..."}}
+    if matches!(part_type, Some("image_url" | "input_image")) {
+        let image_url_value = obj.get("image_url").or_else(|| obj.get("url"))?;
+        let (url, detail) = if let Some(url) = image_url_value.as_str() {
+            (url.to_string(), None)
+        } else {
+            let image_url_obj = image_url_value.as_object()?;
+            let url = image_url_obj.get("url")?.as_str()?.to_string();
+            let detail = image_url_obj
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (url, detail)
+        };
+        return Some(ContentPart::ImageUrl {
+            image_url: crate::agent::types::ImageUrl { url, detail },
+        });
+    }
+
+    if part_type == Some("image") {
+        if let Some(url) = obj
+            .get("url")
+            .and_then(|v| v.as_str())
+            .or_else(|| obj.get("image_url").and_then(|v| v.as_str()))
+        {
+            return Some(ContentPart::ImageUrl {
+                image_url: crate::agent::types::ImageUrl {
+                    url: url.to_string(),
+                    detail: None,
+                },
+            });
+        }
+
+        let source_obj = obj.get("source").and_then(|v| v.as_object());
+        let mime_type = obj
+            .get("mime_type")
+            .or_else(|| obj.get("media_type"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                source_obj
+                    .and_then(|source| source.get("mime_type").or_else(|| source.get("media_type")))
+                    .and_then(|v| v.as_str())
+            });
+        let data = obj
+            .get("data")
+            .or_else(|| obj.get("image_base64"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                source_obj
+                    .and_then(|source| source.get("data"))
+                    .and_then(|v| v.as_str())
+            });
+
+        if let (Some(mime), Some(data)) = (mime_type, data) {
+            let url = format!("data:{mime};base64,{data}");
+            return Some(ContentPart::ImageUrl {
+                image_url: crate::agent::types::ImageUrl { url, detail: None },
+            });
+        }
+    }
+
+    // 兼容 {"image_url":{"url":"..."}}（无 type）
+    if let Some(image_url_obj) = obj.get("image_url").and_then(|v| v.as_object()) {
+        if let Some(url) = image_url_obj.get("url").and_then(|v| v.as_str()) {
+            let detail = image_url_obj
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            return Some(ContentPart::ImageUrl {
+                image_url: crate::agent::types::ImageUrl {
+                    url: url.to_string(),
+                    detail,
+                },
+            });
+        }
+    }
+
+    // 兼容 {"image_url":"..."}（无 type）
+    if let Some(url) = obj.get("image_url").and_then(|v| v.as_str()) {
+        return Some(ContentPart::ImageUrl {
+            image_url: crate::agent::types::ImageUrl {
+                url: url.to_string(),
+                detail: None,
+            },
+        });
+    }
+
+    None
+}
+
+/// 解析工具调用 JSON，兼容历史数据缺少 `type` 字段的情况
+fn parse_tool_calls(tool_calls_json: Option<&str>) -> Option<Vec<ToolCall>> {
+    let json = tool_calls_json?;
+    if json.trim().is_empty() {
+        return None;
+    }
+
+    // 新格式：直接反序列化
+    if let Ok(tool_calls) = serde_json::from_str::<Vec<ToolCall>>(json) {
+        return Some(tool_calls);
+    }
+
+    // 兼容旧格式：手动解析并补默认值
+    let raw_items = match serde_json::from_str::<Vec<serde_json::Value>>(json) {
+        Ok(items) => items,
+        Err(e) => {
+            tracing::warn!("[AgentDao] 解析 tool_calls_json 失败，已降级忽略: {}", e);
+            return None;
+        }
+    };
+
+    let mut parsed = Vec::new();
+
+    for (idx, item) in raw_items.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+
+        let id = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("legacy_tool_call_{idx}"));
+
+        // 历史数据可能没有 `type`，默认按 function 处理
+        let call_type = obj
+            .get("type")
+            .or_else(|| obj.get("call_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("function")
+            .to_string();
+
+        let tool_call_value = obj
+            .get("toolCall")
+            .and_then(|v| v.get("value"))
+            .or_else(|| obj.get("tool_call").and_then(|v| v.get("value")));
+
+        let function_name = obj
+            .get("function")
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                tool_call_value
+                    .and_then(|v| v.get("name"))
+                    .and_then(|v| v.as_str())
+            })
+            .or_else(|| obj.get("tool_name").and_then(|v| v.as_str()))
+            .or_else(|| obj.get("name").and_then(|v| v.as_str()));
+
+        let Some(function_name) = function_name else {
+            continue;
+        };
+
+        let function_arguments = obj
+            .get("function")
+            .and_then(|v| v.get("arguments"))
+            .or_else(|| tool_call_value.and_then(|v| v.get("arguments")))
+            .or_else(|| obj.get("arguments"))
+            .map(|v| {
+                if let Some(s) = v.as_str() {
+                    s.to_string()
+                } else {
+                    v.to_string()
+                }
+            })
+            .unwrap_or_else(|| "{}".to_string());
+
+        parsed.push(ToolCall {
+            id,
+            call_type,
+            function: FunctionCall {
+                name: function_name.to_string(),
+                arguments: function_arguments,
+            },
+        });
+    }
+
+    if parsed.is_empty() {
+        None
+    } else {
+        Some(parsed)
+    }
+}
+
 pub struct AgentDao;
 
 impl AgentDao {
@@ -68,8 +414,8 @@ impl AgentDao {
         session: &AgentSession,
     ) -> Result<(), rusqlite::Error> {
         conn.execute(
-            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir, execution_strategy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 session.id,
                 session.model,
@@ -78,6 +424,7 @@ impl AgentDao {
                 session.created_at,
                 session.updated_at,
                 session.working_dir,
+                session.execution_strategy,
             ],
         )?;
         Ok(())
@@ -89,7 +436,7 @@ impl AgentDao {
         session_id: &str,
     ) -> Result<Option<AgentSession>, rusqlite::Error> {
         let mut stmt = conn.prepare(
-            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
+            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir, execution_strategy
              FROM agent_sessions WHERE id = ?",
         )?;
 
@@ -105,6 +452,7 @@ impl AgentDao {
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
                 working_dir: row.get(6)?,
+                execution_strategy: row.get(7)?,
             }))
         } else {
             Ok(None)
@@ -128,7 +476,7 @@ impl AgentDao {
     /// 获取所有会话（不包含消息）
     pub fn list_sessions(conn: &Connection) -> Result<Vec<AgentSession>, rusqlite::Error> {
         let mut stmt = conn.prepare(
-            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
+            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir, execution_strategy
              FROM agent_sessions ORDER BY updated_at DESC",
         )?;
 
@@ -142,6 +490,7 @@ impl AgentDao {
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
                 working_dir: row.get(6)?,
+                execution_strategy: row.get(7)?,
             })
         })?;
 
@@ -240,16 +589,8 @@ impl AgentDao {
             // 2. ProxyCast 格式: "string" 或 [{"type":"text","text":"..."}]
             let content = parse_message_content(&content_json);
 
-            let tool_calls: Option<Vec<ToolCall>> = tool_calls_json
-                .map(|json| serde_json::from_str(&json))
-                .transpose()
-                .map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        3,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?;
+            // 兼容历史数据：tool_calls 中缺失 type 字段时自动降级解析
+            let tool_calls: Option<Vec<ToolCall>> = parse_tool_calls(tool_calls_json.as_deref());
 
             Ok(AgentMessage {
                 role,
@@ -309,5 +650,104 @@ impl AgentDao {
         } else {
             Ok(None)
         }
+    }
+
+    /// 更新会话执行策略
+    pub fn update_execution_strategy(
+        conn: &Connection,
+        session_id: &str,
+        execution_strategy: &str,
+    ) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "UPDATE agent_sessions SET execution_strategy = ? WHERE id = ?",
+            params![execution_strategy, session_id],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::agent::types::MessageContent;
+
+    use super::{parse_message_content, parse_tool_calls};
+
+    #[test]
+    fn parse_tool_calls_should_compat_with_legacy_missing_type() {
+        let legacy =
+            r#"[{"id":"call_1","function":{"name":"search","arguments":"{\"q\":\"rust\"}"}}]"#;
+        let result = parse_tool_calls(Some(legacy)).expect("应能解析旧格式 tool_calls");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "call_1");
+        assert_eq!(result[0].call_type, "function");
+        assert_eq!(result[0].function.name, "search");
+    }
+
+    #[test]
+    fn parse_tool_calls_should_return_none_on_invalid_json() {
+        let result = parse_tool_calls(Some("not-json"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_tool_calls_should_parse_aster_tool_request_shape() {
+        let legacy = r#"[{"id":"call_324","toolCall":{"status":"success","value":{"name":"Skill","arguments":{"skill":"user:canvas-design"}}}}]"#;
+        let result = parse_tool_calls(Some(legacy)).expect("应能解析 aster toolRequest 结构");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "call_324");
+        assert_eq!(result[0].function.name, "Skill");
+
+        let args_value: serde_json::Value =
+            serde_json::from_str(&result[0].function.arguments).expect("arguments 应为 JSON");
+        assert_eq!(args_value["skill"], serde_json::json!("user:canvas-design"));
+    }
+
+    #[test]
+    fn parse_message_content_should_not_expose_tool_payload_json() {
+        let tool_only =
+            r#"[{"type":"toolRequest","id":"call_1","toolName":"query","arguments":{"q":"rust"}}]"#;
+        let parsed = parse_message_content(tool_only);
+        assert_eq!(parsed.as_text(), "");
+    }
+
+    #[test]
+    fn parse_message_content_should_extract_text_parts() {
+        let mixed = r#"[{"type":"text","text":"hello"},{"Text":"world"}]"#;
+        let parsed = parse_message_content(mixed);
+        assert_eq!(parsed.as_text(), "hello\nworld");
+    }
+
+    #[test]
+    fn parse_message_content_should_extract_input_image_parts() {
+        let mixed = r#"[{"type":"input_text","text":"参考图"},{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]"#;
+        let parsed = parse_message_content(mixed);
+
+        match parsed {
+            MessageContent::Parts(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert!(parts.iter().any(|part| matches!(
+                    part,
+                    crate::agent::types::ContentPart::ImageUrl { image_url }
+                        if image_url.url == "data:image/png;base64,aGVsbG8="
+                )));
+            }
+            _ => panic!("应解析为 Parts"),
+        }
+    }
+
+    #[test]
+    fn parse_message_content_should_extract_tool_response_output() {
+        let tool_response = r#"[{"type":"toolResponse","id":"call_1","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"任务已完成"}],"isError":false}}}]"#;
+        let parsed = parse_message_content(tool_response);
+        assert_eq!(parsed.as_text(), "任务已完成");
+    }
+
+    #[test]
+    fn parse_message_content_should_extract_tool_response_error() {
+        let tool_response = r#"[{"type":"toolResponse","id":"call_2","toolResult":{"status":"error","error":"-32603: Tool not found"}}]"#;
+        let parsed = parse_message_content(tool_response);
+        assert_eq!(parsed.as_text(), "-32603: Tool not found");
     }
 }

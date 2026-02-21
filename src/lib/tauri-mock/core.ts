@@ -156,6 +156,7 @@ const defaultMocks: Record<string, any> = {
   aster_agent_chat_stream: () => ({}),
   aster_agent_stop: () => true,
   aster_session_create: () => "mock-aster-session",
+  aster_session_set_execution_strategy: () => ({}),
   aster_session_list: () => [],
   aster_session_get: () => ({ id: "mock", messages: [] }),
   aster_agent_confirm: () => ({}),
@@ -569,6 +570,56 @@ const defaultMocks: Record<string, any> = {
 
   // Check Config Sync 相关
   check_config_sync_status: () => ({ status: "synced" }),
+
+  // 心跳引擎相关
+  get_heartbeat_config: () => ({
+    enabled: false,
+    interval_secs: 300,
+    task_file: "HEARTBEAT.md",
+    execution_mode: "intelligent",
+    enable_history: true,
+    max_retries: 3,
+  }),
+  update_heartbeat_config: () => ({ success: true }),
+  get_heartbeat_status: () => ({
+    running: false,
+    last_run: null,
+    last_task_count: 0,
+    total_executions: 0,
+    current_task: null,
+  }),
+  get_heartbeat_tasks: () => [],
+  add_heartbeat_task: () => {},
+  delete_heartbeat_task: () => {},
+  update_heartbeat_task: () => {},
+  get_heartbeat_history: () => [],
+  get_heartbeat_execution_detail: () => null,
+  get_heartbeat_task_health: () => ({
+    totalTasks: 0,
+    pendingTasks: 0,
+    runningTasks: 0,
+    completedTasks: 0,
+    failedTasks: 0,
+    cancelledTasks: 0,
+    cooldownTasks: 0,
+    staleRunningTasks: 0,
+    failedLast24h: 0,
+    failureTrend24h: [],
+    alerts: [],
+    topRiskyTasks: [],
+    generatedAt: new Date().toISOString(),
+  }),
+  deliver_heartbeat_task_health_alerts: () => ({
+    delivered: false,
+    alert_count: 0,
+    message: "当前无告警，未触发投递",
+  }),
+  trigger_heartbeat_now: () => ({ task_count: 0, success_count: 0, failed_count: 0, timeout_count: 0 }),
+  get_task_templates: () => [],
+  apply_task_template: () => ({ success: true }),
+  generate_content_creator_tasks: () => 0,
+  execution_run_list: () => [],
+  execution_run_get: () => null,
 };
 
 /**

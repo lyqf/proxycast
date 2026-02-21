@@ -164,6 +164,9 @@ pub struct AgentSession {
     pub title: Option<String>,
     /// 会话工作目录（对应 Workspace.root_path）
     pub working_dir: Option<String>,
+    /// 会话执行策略（react / code_orchestrated / auto）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_strategy: Option<String>,
     /// 创建时间
     pub created_at: String,
     /// 最后活动时间

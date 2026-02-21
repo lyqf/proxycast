@@ -9,6 +9,7 @@ use axum::{
     Json,
 };
 use futures::stream;
+use proxycast_core::errors::{GatewayError, GatewayErrorCode, GatewayErrorResponse};
 use proxycast_core::models::openai::{ContentPart, FunctionCall, MessageContent, ToolCall};
 use std::collections::HashMap;
 
@@ -38,29 +39,54 @@ pub fn parse_error_status_code(error_message: &str) -> StatusCode {
 /// 构建错误响应
 pub fn build_error_response(error_message: &str) -> Response {
     let status_code = parse_error_status_code(error_message);
-    (
-        status_code,
-        Json(serde_json::json!({
-            "error": {
-                "message": error_message
-            }
-        })),
-    )
-        .into_response()
+    build_error_response_with_meta(status_code.as_u16(), error_message, None, None, None)
 }
 
 /// 从 HTTP 状态码构建错误响应
 pub fn build_error_response_with_status(status_code: u16, error_message: &str) -> Response {
+    build_error_response_with_meta(status_code, error_message, None, None, None)
+}
+
+/// 从 HTTP 状态码构建错误响应（带元信息）
+pub fn build_error_response_with_meta(
+    status_code: u16,
+    error_message: &str,
+    request_id: Option<&str>,
+    upstream_provider: Option<&str>,
+    code_override: Option<GatewayErrorCode>,
+) -> Response {
     let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (
-        status,
-        Json(serde_json::json!({
+    let body = build_gateway_error_json(
+        status_code,
+        error_message,
+        request_id,
+        upstream_provider,
+        code_override,
+    );
+    (status, Json(body)).into_response()
+}
+
+/// 构建统一网关错误 JSON
+pub fn build_gateway_error_json(
+    status_code: u16,
+    error_message: &str,
+    request_id: Option<&str>,
+    upstream_provider: Option<&str>,
+    code_override: Option<GatewayErrorCode>,
+) -> serde_json::Value {
+    let code = code_override.unwrap_or_else(|| GatewayErrorCode::infer(status_code, error_message));
+    let error = GatewayError::new(code, error_message)
+        .with_request_id(request_id)
+        .with_upstream_provider(upstream_provider);
+    serde_json::to_value(GatewayErrorResponse::new(error)).unwrap_or_else(|_| {
+        serde_json::json!({
             "error": {
-                "message": error_message
+                "code": "INTERNAL_ERROR",
+                "message": "序列化错误响应失败",
+                "retryable": false
             }
-        })),
-    )
-        .into_response()
+        })
+    })
 }
 
 /// CodeWhisperer 响应解析结果
@@ -665,6 +691,64 @@ mod tests {
             Some("{\"outer\":{\"inner\":\"value\"}}".to_string())
         );
         assert_eq!(extract_json_from_bytes(b"not json"), None);
+    }
+
+    #[test]
+    fn test_build_gateway_error_json_with_request_id() {
+        let body = build_gateway_error_json(
+            503,
+            "No available credentials",
+            Some("req_test_123"),
+            Some("kiro"),
+            None,
+        );
+
+        assert_eq!(
+            body.get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(|v| v.as_str()),
+            Some("NO_CREDENTIALS")
+        );
+        assert_eq!(
+            body.get("error")
+                .and_then(|e| e.get("requestId"))
+                .and_then(|v| v.as_str()),
+            Some("req_test_123")
+        );
+        assert_eq!(
+            body.get("error")
+                .and_then(|e| e.get("upstream"))
+                .and_then(|u| u.get("provider"))
+                .and_then(|v| v.as_str()),
+            Some("kiro")
+        );
+    }
+
+    #[test]
+    fn test_build_error_response_with_meta_uses_gateway_shape() {
+        let response =
+            build_error_response_with_meta(429, "Rate limited", Some("req_rate"), None, None);
+        let (parts, body) = response.into_parts();
+        assert_eq!(parts.status, StatusCode::TOO_MANY_REQUESTS);
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let bytes = rt
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await })
+            .expect("bytes");
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+        assert_eq!(
+            json.get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(|v| v.as_str()),
+            Some("RATE_LIMITED")
+        );
+        assert_eq!(
+            json.get("error")
+                .and_then(|e| e.get("requestId"))
+                .and_then(|v| v.as_str()),
+            Some("req_rate")
+        );
     }
 }
 

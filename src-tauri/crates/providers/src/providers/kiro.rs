@@ -14,6 +14,42 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::PathBuf;
 
+const MAX_KIRO_DEBUG_REQUEST_FILES: usize = 200;
+
+async fn prune_kiro_debug_request_files(debug_dir: &std::path::Path) {
+    let mut entries = match tokio::fs::read_dir(debug_dir).await {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if !file_name.starts_with("cw_request_") || !file_name.ends_with(".json") {
+            continue;
+        }
+
+        let modified = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        files.push((entry.path(), modified));
+    }
+
+    if files.len() <= MAX_KIRO_DEBUG_REQUEST_FILES {
+        return;
+    }
+
+    files.sort_by_key(|(_, modified)| *modified);
+    let overflow = files.len().saturating_sub(MAX_KIRO_DEBUG_REQUEST_FILES);
+    for (path, _) in files.into_iter().take(overflow) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
 /// 根据凭证信息生成唯一的 Machine ID
 ///
 /// 采用静态 UUID 方案：每个凭证生成固定的 Machine ID，不随时间变化
@@ -970,19 +1006,22 @@ impl KiroProvider {
             .unwrap_or(false);
         if debug_enabled {
             if let Ok(json_str) = serde_json::to_string_pretty(&cw_request) {
+                let debug_dir = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".proxycast")
+                    .join("logs");
                 let uuid_prefix = uuid::Uuid::new_v4()
                     .to_string()
                     .split('-')
                     .next()
                     .unwrap_or("unknown")
                     .to_string();
-                let debug_path = dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(".proxycast")
-                    .join("logs")
-                    .join(format!("cw_request_{uuid_prefix}.json"));
-                let _ = tokio::fs::write(&debug_path, &json_str).await;
-                tracing::debug!("[CW_REQ] Request saved to {:?}", debug_path);
+                let debug_path = debug_dir.join(format!("cw_request_{uuid_prefix}.json"));
+                let _ = tokio::fs::create_dir_all(&debug_dir).await;
+                if tokio::fs::write(&debug_path, &json_str).await.is_ok() {
+                    prune_kiro_debug_request_files(&debug_dir).await;
+                    tracing::debug!("[CW_REQ] Request saved to {:?}", debug_path);
+                }
             }
         }
 

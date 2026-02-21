@@ -104,8 +104,15 @@ impl AsterAgentWrapper {
         name: Option<String>,
         working_dir: Option<String>,
         workspace_id: String,
+        execution_strategy: Option<String>,
     ) -> Result<String, String> {
-        proxycast_agent::session_store::create_session_sync(db, name, working_dir, workspace_id)
+        proxycast_agent::session_store::create_session_sync(
+            db,
+            name,
+            working_dir,
+            workspace_id,
+            execution_strategy,
+        )
     }
 
     /// 列出所有会话

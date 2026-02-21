@@ -17,12 +17,11 @@ import { Page, PageParams } from "@/types/page";
 import { GeneralSettings } from "../../settings/GeneralSettings";
 // 网络代理
 import { ProxySettings } from "../../settings/ProxySettings";
-// 数据存储
-import { DirectorySettings } from "../../settings/DirectorySettings";
-import { QuotaSettings } from "../../settings/QuotaSettings";
-// 安全设置
-import { TlsSettings } from "../../settings/TlsSettings";
-import { RemoteManagementSettings } from "../../settings/RemoteManagementSettings";
+// 安全与性能
+import { SecurityPerformanceSettings } from "../system/security-performance";
+// 心跳引擎
+import { HeartbeatSettings } from "../system/heartbeat";
+import { ExecutionTrackerSettings } from "../system/execution-tracker";
 // 外部工具
 import { ExternalToolsSettings } from "../../settings/ExternalToolsSettings";
 // 实验功能
@@ -247,25 +246,26 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
         </>
       );
 
-    case SettingsTabs.Storage:
+    case SettingsTabs.SecurityPerformance:
       return (
         <>
-          <SettingHeader title="数据存储" />
-          <div className="space-y-4">
-            <DirectorySettings />
-            <QuotaSettings />
-          </div>
+          <SettingHeader title="安全与性能" />
+          <SecurityPerformanceSettings />
         </>
       );
 
-    case SettingsTabs.Security:
+    case SettingsTabs.Heartbeat:
       return (
         <>
-          <SettingHeader title="安全设置" />
-          <div className="space-y-6">
-            <TlsSettings />
-            <RemoteManagementSettings />
-          </div>
+          <HeartbeatSettings />
+        </>
+      );
+
+    case SettingsTabs.ExecutionTracker:
+      return (
+        <>
+          <SettingHeader title="执行轨迹" />
+          <ExecutionTrackerSettings />
         </>
       );
 
@@ -322,6 +322,7 @@ const WIDE_CONTENT_TABS = new Set<SettingsTabs>([
   SettingsTabs.Providers,
   SettingsTabs.ApiServer,
   SettingsTabs.McpServer,
+  SettingsTabs.ExecutionTracker,
 ]);
 
 export function SettingsLayoutV2({

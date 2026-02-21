@@ -26,6 +26,16 @@ export interface TokenUsage {
  * 工具执行结果
  * Requirements: 9.2 - THE Frontend SHALL display a collapsible section showing the tool result
  */
+export interface ToolResultImage {
+  src: string;
+  mimeType?: string;
+  origin?: "data_url" | "tool_payload" | "file_path";
+}
+
+/**
+ * 工具执行结果
+ * Requirements: 9.2 - THE Frontend SHALL display a collapsible section showing the tool result
+ */
 export interface ToolExecutionResult {
   /** 是否成功 */
   success: boolean;
@@ -33,6 +43,8 @@ export interface ToolExecutionResult {
   output: string;
   /** 错误信息（如果失败） */
   error?: string;
+  /** 工具返回的图片（可选） */
+  images?: ToolResultImage[];
 }
 
 /**
@@ -47,6 +59,7 @@ export type StreamEvent =
   | StreamEventActionRequired
   | StreamEventDone
   | StreamEventFinalDone
+  | StreamEventWarning
   | StreamEventError;
 
 /**
@@ -153,6 +166,17 @@ export interface StreamEventError {
 }
 
 /**
+ * 告警事件（不中断流程）
+ */
+export interface StreamEventWarning {
+  type: "warning";
+  /** 告警代码（可选） */
+  code?: string;
+  /** 告警信息 */
+  message: string;
+}
+
+/**
  * 工具调用状态（用于 UI 显示）
  */
 export interface ToolCallState {
@@ -213,15 +237,24 @@ export function parseStreamEvent(data: unknown): StreamEvent | null {
     case "action_required": {
       const actionData =
         (event.data as Record<string, unknown> | undefined) || {};
+      const requestId =
+        (event.request_id as string | undefined) ||
+        (actionData.request_id as string | undefined) ||
+        (actionData.id as string | undefined) ||
+        "";
+      const actionType =
+        (event.action_type as string | undefined) ||
+        (actionData.action_type as string | undefined) ||
+        (actionData.type as string | undefined) ||
+        "tool_confirmation";
 
       return {
         type: "action_required",
-        request_id: (event.request_id as string) || "",
-        action_type:
-          (event.action_type as
-            | "tool_confirmation"
-            | "ask_user"
-            | "elicitation") || "tool_confirmation",
+        request_id: requestId,
+        action_type: actionType as
+          | "tool_confirmation"
+          | "ask_user"
+          | "elicitation",
         tool_name:
           (event.tool_name as string | undefined) ||
           (actionData.tool_name as string | undefined),
@@ -275,6 +308,12 @@ export function parseStreamEvent(data: unknown): StreamEvent | null {
         type: "error",
         message: (event.message as string) || "Unknown error",
       };
+    case "warning":
+      return {
+        type: "warning",
+        code: event.code as string | undefined,
+        message: (event.message as string) || "Unknown warning",
+      };
     default:
       return null;
   }
@@ -298,7 +337,10 @@ export interface CreateSessionResponse {
   credential_uuid: string;
   provider_type: string;
   model?: string;
+  execution_strategy?: AsterExecutionStrategy;
 }
+
+export type AsterExecutionStrategy = "react" | "code_orchestrated" | "auto";
 
 /**
  * 会话信息
@@ -313,6 +355,7 @@ export interface SessionInfo {
   messages_count: number;
   workspace_id?: string;
   working_dir?: string;
+  execution_strategy?: AsterExecutionStrategy;
 }
 
 /**
@@ -373,6 +416,7 @@ export async function createAgentSession(
   model?: string,
   systemPrompt?: string,
   skills?: SkillInfo[],
+  executionStrategy?: AsterExecutionStrategy,
 ): Promise<CreateSessionResponse> {
   const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
 
@@ -382,6 +426,7 @@ export async function createAgentSession(
     systemPrompt,
     skills,
     workspaceId: resolvedWorkspaceId,
+    executionStrategy,
   });
 }
 
@@ -433,6 +478,7 @@ export async function sendAgentMessageStream(
   provider?: string,
   _terminalMode?: boolean,
   projectId?: string,
+  executionStrategy?: AsterExecutionStrategy,
 ): Promise<void> {
   const resolvedWorkspaceId = requireWorkspaceId(workspaceId, projectId);
 
@@ -451,6 +497,7 @@ export async function sendAgentMessageStream(
         : undefined,
       project_id: projectId,
       workspace_id: resolvedWorkspaceId,
+      execution_strategy: executionStrategy,
     },
   });
 }
@@ -681,6 +728,7 @@ export interface AsterSessionInfo {
   created_at: number;
   updated_at: number;
   messages_count?: number;
+  execution_strategy?: AsterExecutionStrategy;
 }
 
 /**
@@ -690,10 +738,15 @@ export interface TauriMessageContent {
   type: string;
   text?: string;
   id?: string;
+  action_type?: string;
+  data?: unknown;
   tool_name?: string;
   arguments?: unknown;
   success?: boolean;
   output?: string;
+  error?: string;
+  images?: ToolResultImage[];
+  mime_type?: string;
 }
 
 /**
@@ -704,6 +757,7 @@ export interface AsterSessionDetail {
   name?: string;
   created_at: number;
   updated_at: number;
+  execution_strategy?: AsterExecutionStrategy;
   messages: Array<{
     id?: string;
     role: string;
@@ -751,6 +805,7 @@ export async function sendAsterMessageStream(
   workspaceId: string,
   images?: ImageInput[],
   providerConfig?: AsterProviderConfig,
+  executionStrategy?: AsterExecutionStrategy,
 ): Promise<void> {
   const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
 
@@ -762,6 +817,7 @@ export async function sendAsterMessageStream(
       images,
       provider_config: providerConfig,
       workspace_id: resolvedWorkspaceId,
+      execution_strategy: executionStrategy,
     },
   });
 }
@@ -780,6 +836,7 @@ export async function createAsterSession(
   workspaceId: string,
   workingDir?: string,
   name?: string,
+  executionStrategy?: AsterExecutionStrategy,
 ): Promise<string> {
   const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
 
@@ -787,6 +844,7 @@ export async function createAsterSession(
     workingDir,
     workspaceId: resolvedWorkspaceId,
     name,
+    executionStrategy,
   });
 }
 
@@ -814,6 +872,19 @@ export async function renameAsterSession(
   name: string,
 ): Promise<void> {
   return await safeInvoke("aster_session_rename", { sessionId, name });
+}
+
+/**
+ * 设置 Aster 会话执行策略
+ */
+export async function setAsterSessionExecutionStrategy(
+  sessionId: string,
+  executionStrategy: AsterExecutionStrategy,
+): Promise<void> {
+  return await safeInvoke("aster_session_set_execution_strategy", {
+    sessionId,
+    executionStrategy,
+  });
 }
 
 /**

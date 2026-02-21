@@ -4,6 +4,7 @@
 
 use super::types::{ScheduledTask, TaskFilter, TaskStatus};
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
 use tracing::warn;
 
 pub struct SchedulerDao;
@@ -28,11 +29,15 @@ impl SchedulerDao {
                 error_message TEXT,
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 max_retries INTEGER NOT NULL DEFAULT 3,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                auto_disabled_until TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )",
             [],
         )?;
+
+        Self::ensure_columns(conn)?;
 
         // 创建索引
         conn.execute(
@@ -53,6 +58,28 @@ impl SchedulerDao {
         Ok(())
     }
 
+    fn ensure_columns(conn: &Connection) -> Result<(), rusqlite::Error> {
+        let mut stmt = conn.prepare("PRAGMA table_info(scheduled_tasks)")?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<HashSet<_>, _>>()?;
+
+        if !columns.contains("consecutive_failures") {
+            conn.execute(
+                "ALTER TABLE scheduled_tasks ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.contains("auto_disabled_until") {
+            conn.execute(
+                "ALTER TABLE scheduled_tasks ADD COLUMN auto_disabled_until TEXT",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// 创建新任务
     pub fn create_task(conn: &Connection, task: &ScheduledTask) -> Result<(), rusqlite::Error> {
         let params_json = serde_json::to_string(&task.params)
@@ -69,8 +96,8 @@ impl SchedulerDao {
             "INSERT INTO scheduled_tasks (
                 id, name, description, task_type, params, provider_type, model,
                 status, scheduled_at, started_at, completed_at, result, error_message,
-                retry_count, max_retries, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                retry_count, max_retries, consecutive_failures, auto_disabled_until, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 task.id,
                 task.name,
@@ -87,6 +114,8 @@ impl SchedulerDao {
                 task.error_message,
                 task.retry_count,
                 task.max_retries,
+                task.consecutive_failures,
+                task.auto_disabled_until,
                 task.created_at,
                 task.updated_at,
             ],
@@ -100,7 +129,7 @@ impl SchedulerDao {
         let mut stmt = conn.prepare(
             "SELECT id, name, description, task_type, params, provider_type, model,
                     status, scheduled_at, started_at, completed_at, result, error_message,
-                    retry_count, max_retries, created_at, updated_at
+                    retry_count, max_retries, consecutive_failures, auto_disabled_until, created_at, updated_at
              FROM scheduled_tasks WHERE id = ?",
         )?;
 
@@ -121,7 +150,7 @@ impl SchedulerDao {
         let mut query = String::from(
             "SELECT id, name, description, task_type, params, provider_type, model,
                     status, scheduled_at, started_at, completed_at, result, error_message,
-                    retry_count, max_retries, created_at, updated_at
+                    retry_count, max_retries, consecutive_failures, auto_disabled_until, created_at, updated_at
              FROM scheduled_tasks WHERE 1=1",
         );
 
@@ -144,7 +173,9 @@ impl SchedulerDao {
 
         if filter.only_due {
             query.push_str(&format!(
-                " AND status = 'pending' AND scheduled_at <= datetime('now')"
+                " AND status = 'pending'
+                  AND datetime(scheduled_at) <= datetime('now')
+                  AND (auto_disabled_until IS NULL OR datetime(auto_disabled_until) <= datetime('now'))"
             ));
         }
 
@@ -181,8 +212,9 @@ impl SchedulerDao {
                 name = ?1, description = ?2, task_type = ?3, params = ?4,
                 provider_type = ?5, model = ?6, status = ?7, scheduled_at = ?8,
                 started_at = ?9, completed_at = ?10, result = ?11, error_message = ?12,
-                retry_count = ?13, max_retries = ?14, updated_at = ?15
-             WHERE id = ?16",
+                retry_count = ?13, max_retries = ?14, consecutive_failures = ?15,
+                auto_disabled_until = ?16, updated_at = ?17
+             WHERE id = ?18",
             params![
                 task.name,
                 task.description,
@@ -198,6 +230,8 @@ impl SchedulerDao {
                 task.error_message,
                 task.retry_count,
                 task.max_retries,
+                task.consecutive_failures,
+                task.auto_disabled_until,
                 task.updated_at,
                 task.id,
             ],
@@ -220,9 +254,11 @@ impl SchedulerDao {
         let mut stmt = conn.prepare(
             "SELECT id, name, description, task_type, params, provider_type, model,
                     status, scheduled_at, started_at, completed_at, result, error_message,
-                    retry_count, max_retries, created_at, updated_at
+                    retry_count, max_retries, consecutive_failures, auto_disabled_until, created_at, updated_at
              FROM scheduled_tasks
-             WHERE status = 'pending' AND scheduled_at <= datetime('now')
+             WHERE status = 'pending'
+               AND datetime(scheduled_at) <= datetime('now')
+               AND (auto_disabled_until IS NULL OR datetime(auto_disabled_until) <= datetime('now'))
              ORDER BY scheduled_at ASC
              LIMIT ?",
         )?;
@@ -283,8 +319,10 @@ impl SchedulerDao {
             error_message: row.get(12)?,
             retry_count: row.get(13)?,
             max_retries: row.get(14)?,
-            created_at: row.get(15)?,
-            updated_at: row.get(16)?,
+            consecutive_failures: row.get(15)?,
+            auto_disabled_until: row.get(16)?,
+            created_at: row.get(17)?,
+            updated_at: row.get(18)?,
         })
     }
 }
@@ -384,6 +422,7 @@ mod tests {
         let updated = SchedulerDao::get_task(&conn, &task.id).unwrap().unwrap();
         assert_eq!(updated.status, TaskStatus::Completed);
         assert_eq!(updated.result, Some(serde_json::json!("done")));
+        assert_eq!(updated.consecutive_failures, 0);
     }
 
     #[test]
@@ -404,5 +443,44 @@ mod tests {
 
         let retrieved = SchedulerDao::get_task(&conn, &task.id).unwrap();
         assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_create_tables_should_add_missing_columns_for_existing_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE scheduled_tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                task_type TEXT NOT NULL,
+                params TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                model TEXT NOT NULL,
+                status TEXT NOT NULL,
+                scheduled_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                result TEXT,
+                error_message TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+
+        SchedulerDao::create_tables(&conn).unwrap();
+
+        let mut stmt = conn.prepare("PRAGMA table_info(scheduled_tasks)").unwrap();
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.contains(&"consecutive_failures".to_string()));
+        assert!(columns.contains(&"auto_disabled_until".to_string()));
     }
 }

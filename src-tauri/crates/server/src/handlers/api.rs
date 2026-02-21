@@ -22,11 +22,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
 use std::future::Future;
 
 use crate::client_detector::ClientType;
 use crate::{record_request_telemetry, record_token_usage, AppState};
+use proxycast_core::errors::GatewayErrorCode;
 use proxycast_core::models::anthropic::AnthropicMessagesRequest;
 use proxycast_core::models::openai::ChatCompletionRequest;
 use proxycast_core::ProviderType;
@@ -34,20 +34,21 @@ use proxycast_processor::RequestContext;
 use proxycast_providers::converter::anthropic_to_openai::convert_anthropic_to_openai;
 use proxycast_providers::streaming::StreamFormat as StreamingFormat;
 use proxycast_server_utils::{
-    build_anthropic_response, build_anthropic_stream_response, message_content_len,
-    parse_cw_response, safe_truncate,
+    build_anthropic_response, build_anthropic_stream_response, build_error_response_with_meta,
+    build_gateway_error_json, message_content_len, parse_cw_response, safe_truncate,
 };
 
 use super::{call_provider_anthropic, call_provider_openai};
 
 async fn select_credential_for_request(
     state: &AppState,
+    request_id: Option<&str>,
     selected_provider: &str,
     model: &str,
     client_type: &ClientType,
     explicit_provider_id: Option<&str>,
     log_prefix: &str,
-    include_error_code: bool,
+    _include_error_code: bool,
 ) -> Result<Option<proxycast_core::models::provider_pool_model::ProviderCredential>, Response> {
     let db = match &state.db {
         Some(db) => db,
@@ -81,17 +82,16 @@ async fn select_credential_for_request(
                 ),
             );
 
-            let mut error_body = json!({
-                "error": {
-                    "type": "provider_unavailable",
-                    "message": format!("No available credentials for provider '{}'", explicit_provider_id)
-                }
-            });
-            if include_error_code {
-                error_body["error"]["code"] = json!("no_credentials");
-            }
-
-            return Err((StatusCode::SERVICE_UNAVAILABLE, Json(error_body)).into_response());
+            return Err(build_error_response_with_meta(
+                StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                &format!(
+                    "No available credentials for provider '{}'",
+                    explicit_provider_id
+                ),
+                request_id,
+                Some(explicit_provider_id),
+                Some(GatewayErrorCode::NoCredentials),
+            ));
         }
 
         return Ok(cred);
@@ -205,17 +205,13 @@ where
                     ),
                 );
 
-                return (
-                    StatusCode::GATEWAY_TIMEOUT,
-                    Json(json!({
-                        "error": {
-                            "type": "timeout_error",
-                            "code": "provider_timeout",
-                            "message": format!("Provider request timeout: {}", timeout_err)
-                        }
-                    })),
-                )
-                    .into_response();
+                return build_error_response_with_meta(
+                    StatusCode::GATEWAY_TIMEOUT.as_u16(),
+                    &format!("Provider request timeout: {}", timeout_err),
+                    Some(request_id),
+                    Some(provider_label),
+                    Some(GatewayErrorCode::UpstreamTimeout),
+                );
             }
         };
 
@@ -308,18 +304,26 @@ pub async fn verify_api_key(
         Some(s) if s.starts_with("Bearer ") => &s[7..],
         Some(s) => s,
         None => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": {"message": "No API key provided"}})),
-            ))
+            let body = build_gateway_error_json(
+                StatusCode::UNAUTHORIZED.as_u16(),
+                "No API key provided",
+                None,
+                None,
+                Some(GatewayErrorCode::AuthenticationFailed),
+            );
+            return Err((StatusCode::UNAUTHORIZED, Json(body)));
         }
     };
 
     if key != expected_key {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": {"message": "Invalid API key"}})),
-        ));
+        let body = build_gateway_error_json(
+            StatusCode::UNAUTHORIZED.as_u16(),
+            "Invalid API key",
+            None,
+            None,
+            Some(GatewayErrorCode::AuthenticationFailed),
+        );
+        return Err((StatusCode::UNAUTHORIZED, Json(body)));
     }
 
     Ok(())
@@ -339,29 +343,31 @@ pub async fn verify_api_key_anthropic(
         Some(s) if s.starts_with("Bearer ") => &s[7..],
         Some(s) => s,
         None => {
+            let body = build_gateway_error_json(
+                StatusCode::UNAUTHORIZED.as_u16(),
+                "No API key provided. Please set the x-api-key header.",
+                None,
+                None,
+                Some(GatewayErrorCode::AuthenticationFailed),
+            );
             return Err((
                 StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "type": "error",
-                    "error": {
-                        "type": "authentication_error",
-                        "message": "No API key provided. Please set the x-api-key header."
-                    }
-                })),
-            ))
+                Json(serde_json::json!({ "type": "error", "error": body["error"].clone() })),
+            ));
         }
     };
 
     if key != expected_key {
+        let body = build_gateway_error_json(
+            StatusCode::UNAUTHORIZED.as_u16(),
+            "Invalid API key",
+            None,
+            None,
+            Some(GatewayErrorCode::AuthenticationFailed),
+        );
         return Err((
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "type": "error",
-                "error": {
-                    "type": "authentication_error",
-                    "message": "Invalid API key"
-                }
-            })),
+            Json(serde_json::json!({ "type": "error", "error": body["error"].clone() })),
         ));
     }
 
@@ -391,9 +397,65 @@ pub async fn chat_completions(
     }
     eprintln!("[CHAT_COMPLETIONS] 认证成功");
 
+    // 速率限制检查
+    if let Some(ref limiter) = state.rate_limiter {
+        let client_key = headers
+            .get("x-api-key")
+            .or_else(|| headers.get("authorization"))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("anonymous");
+        if let crate::middleware::rate_limit::RateLimitResult::Limited { retry_after } =
+            limiter.check_rate_limit(client_key)
+        {
+            let response = build_error_response_with_meta(
+                StatusCode::TOO_MANY_REQUESTS.as_u16(),
+                &format!(
+                    "Rate limited. Retry after {} seconds",
+                    retry_after.as_secs()
+                ),
+                None,
+                None,
+                Some(GatewayErrorCode::RateLimited),
+            );
+            let (mut parts, body) = response.into_parts();
+            parts.headers.insert(
+                header::RETRY_AFTER,
+                header::HeaderValue::from_str(&retry_after.as_secs().to_string())
+                    .unwrap_or_else(|_| header::HeaderValue::from_static("60")),
+            );
+            return Response::from_parts(parts, body);
+        }
+    }
+
     // 创建请求上下文
     let mut ctx = RequestContext::new(request.model.clone()).with_stream(request.stream);
     eprintln!("[CHAT_COMPLETIONS] 请求ID: {}", ctx.request_id);
+
+    // 幂等性检查（仅非流式）
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if !request.stream {
+        if let Some(ref key) = idempotency_key {
+            match state.idempotency_store.check(key) {
+                crate::middleware::idempotency::IdempotencyCheck::InProgress => {
+                    return build_error_response_with_meta(
+                        StatusCode::CONFLICT.as_u16(),
+                        "Request already in progress",
+                        Some(&ctx.request_id),
+                        None,
+                        Some(GatewayErrorCode::RequestConflict),
+                    );
+                }
+                crate::middleware::idempotency::IdempotencyCheck::Completed { status, body } => {
+                    let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+                    return (status_code, body).into_response();
+                }
+                crate::middleware::idempotency::IdempotencyCheck::New => {}
+            }
+        }
+    }
 
     state.logs.write().await.add(
         "info",
@@ -424,6 +486,27 @@ pub async fn chat_completions(
         );
     }
 
+    // 提示路由：从最后一条 user 消息提取 [hint]
+    {
+        let hint_router = state.processor.hint_router.read().await;
+        if hint_router.is_enabled() {
+            if let Some(last_user_msg) = request.messages.iter().rev().find(|m| m.role == "user") {
+                let content = last_user_msg.get_content_text();
+                if let Some(hint_match) = hint_router.match_message(&content) {
+                    request.model = hint_match.route.model.clone();
+                    ctx.set_resolved_model(hint_match.route.model.clone());
+                    state.logs.write().await.add(
+                        "info",
+                        &format!(
+                            "[HINT_ROUTE] request_id={} hint={} -> model={}",
+                            ctx.request_id, hint_match.route.hint, hint_match.route.model
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     // 应用参数注入
     let injection_enabled = *state.injection_enabled.read().await;
     if injection_enabled {
@@ -441,6 +524,32 @@ pub async fn chat_completions(
             // 更新请求
             if let Ok(updated) = serde_json::from_value(payload) {
                 request = updated;
+            }
+        }
+    }
+
+    // 对话修剪
+    {
+        let trimmer = &state.processor.conversation_trimmer;
+        let messages_json: Vec<serde_json::Value> = serde_json::to_value(&request.messages)
+            .ok()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        let trim_result = trimmer.trim_messages(messages_json);
+        if trim_result.trimmed {
+            if let Ok(trimmed_msgs) = serde_json::from_value(
+                serde_json::to_value(&trim_result.messages).unwrap_or_default(),
+            ) {
+                request.messages = trimmed_msgs;
+                state.logs.write().await.add(
+                    "info",
+                    &format!(
+                        "[TRIM] request_id={} removed={} remaining={}",
+                        ctx.request_id,
+                        trim_result.removed_count,
+                        request.messages.len()
+                    ),
+                );
             }
         }
     }
@@ -480,6 +589,7 @@ pub async fn chat_completions(
     eprintln!("[CHAT_COMPLETIONS] 开始选择凭证...");
     let credential = match select_credential_for_request(
         &state,
+        Some(&ctx.request_id),
         &selected_provider,
         &request.model,
         &client_type,
@@ -589,17 +699,13 @@ pub async fn chat_completions(
                 selected_provider
             )
         };
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": {
-                    "message": message,
-                    "type": "no_credential_error",
-                    "code": "no_credential"
-                }
-            })),
-        )
-            .into_response();
+        return build_error_response_with_meta(
+            StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+            &message,
+            Some(&ctx.request_id),
+            Some(&selected_provider),
+            Some(GatewayErrorCode::NoCredentials),
+        );
     }
 
     state.logs.write().await.add(
@@ -919,8 +1025,64 @@ pub async fn anthropic_messages(
         return e.into_response();
     }
 
+    // 速率限制检查
+    if let Some(ref limiter) = state.rate_limiter {
+        let client_key = headers
+            .get("x-api-key")
+            .or_else(|| headers.get("authorization"))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("anonymous");
+        if let crate::middleware::rate_limit::RateLimitResult::Limited { retry_after } =
+            limiter.check_rate_limit(client_key)
+        {
+            let response = build_error_response_with_meta(
+                StatusCode::TOO_MANY_REQUESTS.as_u16(),
+                &format!(
+                    "Rate limited. Retry after {} seconds",
+                    retry_after.as_secs()
+                ),
+                None,
+                None,
+                Some(GatewayErrorCode::RateLimited),
+            );
+            let (mut parts, body) = response.into_parts();
+            parts.headers.insert(
+                header::RETRY_AFTER,
+                header::HeaderValue::from_str(&retry_after.as_secs().to_string())
+                    .unwrap_or_else(|_| header::HeaderValue::from_static("60")),
+            );
+            return Response::from_parts(parts, body);
+        }
+    }
+
     // 创建请求上下文
     let mut ctx = RequestContext::new(request.model.clone()).with_stream(request.stream);
+
+    // 幂等性检查（仅非流式）
+    let _idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if !request.stream {
+        if let Some(ref key) = _idempotency_key {
+            match state.idempotency_store.check(key) {
+                crate::middleware::idempotency::IdempotencyCheck::InProgress => {
+                    return build_error_response_with_meta(
+                        StatusCode::CONFLICT.as_u16(),
+                        "Request already in progress",
+                        Some(&ctx.request_id),
+                        None,
+                        Some(GatewayErrorCode::RequestConflict),
+                    );
+                }
+                crate::middleware::idempotency::IdempotencyCheck::Completed { status, body } => {
+                    let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+                    return (status_code, body).into_response();
+                }
+                crate::middleware::idempotency::IdempotencyCheck::New => {}
+            }
+        }
+    }
 
     // 详细记录请求信息
     let msg_count = request.messages.len();
@@ -976,6 +1138,37 @@ pub async fn anthropic_messages(
         );
     }
 
+    // 提示路由：从最后一条 user 消息提取 [hint]
+    {
+        let hint_router = state.processor.hint_router.read().await;
+        if hint_router.is_enabled() {
+            if let Some(last_user_msg) = request.messages.iter().rev().find(|m| m.role == "user") {
+                let content_str = match &last_user_msg.content {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Array(arr) => arr
+                        .first()
+                        .and_then(|b| b.get("text"))
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string()),
+                    _ => None,
+                };
+                if let Some(content) = content_str {
+                    if let Some(hint_match) = hint_router.match_message(&content) {
+                        request.model = hint_match.route.model.clone();
+                        ctx.set_resolved_model(hint_match.route.model.clone());
+                        state.logs.write().await.add(
+                            "info",
+                            &format!(
+                                "[HINT_ROUTE] request_id={} hint={} -> model={}",
+                                ctx.request_id, hint_match.route.hint, hint_match.route.model
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // 应用参数注入
     let injection_enabled = *state.injection_enabled.read().await;
     if injection_enabled {
@@ -993,6 +1186,32 @@ pub async fn anthropic_messages(
             // 更新请求
             if let Ok(updated) = serde_json::from_value(payload) {
                 request = updated;
+            }
+        }
+    }
+
+    // 对话修剪
+    {
+        let trimmer = &state.processor.conversation_trimmer;
+        let messages_json: Vec<serde_json::Value> = serde_json::to_value(&request.messages)
+            .ok()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        let trim_result = trimmer.trim_messages(messages_json);
+        if trim_result.trimmed {
+            if let Ok(trimmed_msgs) = serde_json::from_value(
+                serde_json::to_value(&trim_result.messages).unwrap_or_default(),
+            ) {
+                request.messages = trimmed_msgs;
+                state.logs.write().await.add(
+                    "info",
+                    &format!(
+                        "[TRIM] request_id={} removed={} remaining={}",
+                        ctx.request_id,
+                        trim_result.removed_count,
+                        request.messages.len()
+                    ),
+                );
             }
         }
     }
@@ -1030,6 +1249,7 @@ pub async fn anthropic_messages(
     // 2) 否则走统一的“池优先 + API Key Provider 智能降级”路径
     let credential = match select_credential_for_request(
         &state,
+        Some(&ctx.request_id),
         &selected_provider,
         &request.model,
         &client_type,
@@ -1154,15 +1374,16 @@ pub async fn anthropic_messages(
                 selected_provider
             )
         };
+        let body = build_gateway_error_json(
+            StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+            &message,
+            Some(&ctx.request_id),
+            Some(&selected_provider),
+            Some(GatewayErrorCode::NoCredentials),
+        );
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "type": "error",
-                "error": {
-                    "type": "no_credential_error",
-                    "message": message
-                }
-            })),
+            Json(serde_json::json!({ "type": "error", "error": body["error"].clone() })),
         )
             .into_response();
     }
@@ -1562,40 +1783,39 @@ fn build_stream_error_response(
     message: &str,
     target_format: StreamingFormat,
 ) -> Response {
+    let status = match error_type {
+        "authentication_error" => StatusCode::UNAUTHORIZED.as_u16(),
+        "rate_limit_error" => StatusCode::TOO_MANY_REQUESTS.as_u16(),
+        "timeout_error" => StatusCode::GATEWAY_TIMEOUT.as_u16(),
+        _ => StatusCode::BAD_GATEWAY.as_u16(),
+    };
+    let error_body = build_gateway_error_json(status, message, None, None, None);
+
     let error_event = match target_format {
         StreamingFormat::AnthropicSse => {
             format!(
                 "event: error\ndata: {}\n\n",
                 serde_json::json!({
                     "type": "error",
-                    "error": {
-                        "type": error_type,
-                        "message": message
-                    }
+                    "error": error_body["error"].clone()
                 })
             )
         }
         // TODO: 任务 6 完成后，添加 GeminiStream 分支
         StreamingFormat::OpenAiSse => {
             format!(
-                "data: {}\n\n",
+                "data: {}\n\ndata: [DONE]\n\n",
                 serde_json::json!({
-                    "error": {
-                        "type": error_type,
-                        "message": message
-                    }
+                    "error": error_body["error"].clone()
                 })
             )
         }
         StreamingFormat::AwsEventStream => {
             // AWS Event Stream 格式的错误（不太可能作为目标格式）
             format!(
-                "data: {}\n\n",
+                "data: {}\n\ndata: [DONE]\n\n",
                 serde_json::json!({
-                    "error": {
-                        "type": error_type,
-                        "message": message
-                    }
+                    "error": error_body["error"].clone()
                 })
             )
         }

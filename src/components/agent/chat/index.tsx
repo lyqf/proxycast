@@ -53,6 +53,8 @@ import {
 import { generateProjectMemoryPrompt } from "@/components/content-creator/utils/projectPrompt";
 import {
   getProject,
+  getDefaultProject,
+  getOrCreateDefaultProject,
   getContent,
   updateContent,
   type Project,
@@ -66,6 +68,7 @@ import {
 import type { Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
 import { buildHomeAgentParams } from "@/lib/workspace/navigation";
+import { LatestRunStatusBadge } from "@/components/execution/LatestRunStatusBadge";
 
 import type { MessageImage } from "./types";
 import type {
@@ -75,6 +78,8 @@ import type {
 } from "@/components/content-creator/types";
 import type { A2UIFormData } from "@/components/content-creator/a2ui/types";
 import { getFileToStepMap } from "./utils/workflowMapping";
+import { normalizeProjectId } from "./utils/topicProjectResolution";
+import { resolveTopicSwitchProject } from "./utils/topicProjectSwitch";
 
 const SUPPORTED_ENTRY_THEMES: ThemeType[] = [
   "general",
@@ -149,6 +154,40 @@ function projectTypeToTheme(projectType: ProjectType): ThemeType {
     return "general";
   }
   return projectType as ThemeType;
+}
+
+const LAST_PROJECT_ID_KEY = "agent_last_project_id";
+const TOPIC_PROJECT_KEY_PREFIX = "agent_session_workspace_";
+
+function loadPersistedProjectId(key: string): string | null {
+  try {
+    const stored = localStorage.getItem(key);
+    if (!stored) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(stored);
+      return normalizeProjectId(typeof parsed === "string" ? parsed : stored);
+    } catch {
+      return normalizeProjectId(stored);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedProjectId(key: string, projectId: string) {
+  const normalized = normalizeProjectId(projectId);
+  if (!normalized) {
+    return;
+  }
+
+  try {
+    localStorage.setItem(key, JSON.stringify(normalized));
+  } catch {
+    // ignore write errors
+  }
 }
 
 export interface WorkflowProgressSnapshot {
@@ -296,6 +335,11 @@ export function AgentChatPage({
 
   // 用于追踪已处理的消息 ID，避免重复处理
   const processedMessageIds = useRef<Set<string>>(new Set());
+  const pendingTopicSwitchRef = useRef<{
+    topicId: string;
+    targetProjectId: string;
+  } | null>(null);
+  const isResolvingTopicProjectRef = useRef(false);
 
   // 文件写入回调 ref（用于传递给 useAgentChat）
   const handleWriteFileRef =
@@ -386,6 +430,29 @@ export function AgentChatPage({
     loadData();
   }, [projectId, contentId, lockTheme, initialTheme]);
 
+  useEffect(() => {
+    const normalizedProjectId = normalizeProjectId(projectId);
+    if (!normalizedProjectId) {
+      return;
+    }
+
+    if (project && project.id === normalizedProjectId && !project.isArchived) {
+      savePersistedProjectId(LAST_PROJECT_ID_KEY, normalizedProjectId);
+      return;
+    }
+
+    getProject(normalizedProjectId)
+      .then((resolvedProject) => {
+        if (!resolvedProject || resolvedProject.isArchived) {
+          return;
+        }
+        savePersistedProjectId(LAST_PROJECT_ID_KEY, resolvedProject.id);
+      })
+      .catch((error) => {
+        console.warn("[AgentChatPage] 记录最近项目失败:", error);
+      });
+  }, [project, projectId]);
+
   // 生成系统提示词（包含项目 Memory）
   const systemPrompt = useMemo(() => {
     let prompt = "";
@@ -411,6 +478,8 @@ export function AgentChatPage({
     setProviderType,
     model,
     setModel,
+    executionStrategy,
+    setExecutionStrategy,
     messages,
     isSending,
     sendMessage,
@@ -612,29 +681,114 @@ export function AgentChatPage({
     restoreFiles();
   }, [sessionId, sessionFiles, readSessionFile, taskFiles.length]);
 
-  // 包装 switchTopic，在切换话题时重置相关状态
-  const switchTopic = useCallback(
+  const resetTopicLocalState = useCallback(() => {
+    setLayoutMode("chat");
+    setCanvasState(null);
+    setGeneralCanvasState(DEFAULT_CANVAS_STATE);
+    setTaskFiles([]);
+    setSelectedFileId(undefined);
+    processedMessageIds.current.clear();
+    restoredMetaSessionId.current = null;
+    restoredFilesSessionId.current = null;
+  }, []);
+
+  const runTopicSwitch = useCallback(
     async (topicId: string) => {
       console.log("[AgentChatPage] switchTopic 包装函数被调用:", topicId);
-
-      // 先重置本地状态
-      setLayoutMode("chat");
-      setCanvasState(null);
-      setGeneralCanvasState(DEFAULT_CANVAS_STATE);
-      setTaskFiles([]);
-      setSelectedFileId(undefined);
-      processedMessageIds.current.clear();
-      // 清空已恢复的会话 ID，以便新话题能触发恢复
-      restoredMetaSessionId.current = null;
-      restoredFilesSessionId.current = null;
-
-      // 然后调用原始的 switchTopic
+      resetTopicLocalState();
       console.log("[AgentChatPage] 调用 originalSwitchTopic");
       await originalSwitchTopic(topicId);
       console.log("[AgentChatPage] originalSwitchTopic 完成");
     },
-    [originalSwitchTopic],
+    [originalSwitchTopic, resetTopicLocalState],
   );
+
+  const switchTopic = useCallback(
+    async (topicId: string) => {
+      if (isResolvingTopicProjectRef.current) {
+        return;
+      }
+
+      isResolvingTopicProjectRef.current = true;
+      try {
+        const decision = await resolveTopicSwitchProject({
+          lockedProjectId: externalProjectId ?? null,
+          topicBoundProjectId: loadPersistedProjectId(
+            `${TOPIC_PROJECT_KEY_PREFIX}${topicId}`,
+          ),
+          lastProjectId: loadPersistedProjectId(LAST_PROJECT_ID_KEY),
+          loadProjectById: async (candidateProjectId) => {
+            const project = await getProject(candidateProjectId);
+            return project
+              ? { id: project.id, isArchived: project.isArchived }
+              : null;
+          },
+          loadDefaultProject: async () => {
+            const project = await getDefaultProject();
+            return project
+              ? { id: project.id, isArchived: project.isArchived }
+              : null;
+          },
+          createDefaultProject: async () => {
+            const project = await getOrCreateDefaultProject();
+            return project
+              ? { id: project.id, isArchived: project.isArchived }
+              : null;
+          },
+        });
+
+        if (decision.status === "blocked") {
+          toast.error("该话题绑定了其他项目，请先切换到对应项目");
+          return;
+        }
+
+        if (decision.status === "missing") {
+          toast.error("未找到可用项目，请先创建项目");
+          return;
+        }
+
+        const targetProjectId = decision.projectId;
+        if (decision.createdDefault) {
+          toast.info("未找到可用项目，已自动创建默认项目");
+        }
+
+        savePersistedProjectId(LAST_PROJECT_ID_KEY, targetProjectId);
+
+        const currentProjectId = normalizeProjectId(projectId);
+        if (currentProjectId !== targetProjectId) {
+          pendingTopicSwitchRef.current = { topicId, targetProjectId };
+          setInternalProjectId(targetProjectId);
+          return;
+        }
+
+        await runTopicSwitch(topicId);
+      } catch (error) {
+        console.error("[AgentChatPage] 解析话题项目失败:", error);
+        toast.error("切换话题失败，请稍后重试");
+      } finally {
+        isResolvingTopicProjectRef.current = false;
+      }
+    },
+    [externalProjectId, projectId, runTopicSwitch],
+  );
+
+  useEffect(() => {
+    const pending = pendingTopicSwitchRef.current;
+    if (!pending) {
+      return;
+    }
+
+    const currentProjectId = normalizeProjectId(projectId);
+    if (currentProjectId !== pending.targetProjectId) {
+      return;
+    }
+
+    pendingTopicSwitchRef.current = null;
+    runTopicSwitch(pending.topicId).catch((error) => {
+      console.error("[AgentChatPage] 执行待切换话题失败:", error);
+      toast.error("加载话题失败，请重试");
+    });
+  }, [projectId, runTopicSwitch]);
 
   /**
    * 从 AI 响应中提取文档内容
@@ -792,6 +946,7 @@ export function AgentChatPage({
       webSearch?: boolean,
       thinking?: boolean,
       textOverride?: string,
+      sendExecutionStrategy?: "react" | "code_orchestrated" | "auto",
     ) => {
       const sourceText = textOverride ?? input;
       if (!sourceText.trim() && (!images || images.length === 0)) return;
@@ -820,7 +975,14 @@ export function AgentChatPage({
 
       setInput("");
       setMentionedCharacters([]); // 清空引用的角色
-      await sendMessage(text, images || [], webSearch, thinking);
+      await sendMessage(
+        text,
+        images || [],
+        webSearch,
+        thinking,
+        false,
+        sendExecutionStrategy,
+      );
     },
     [input, mentionedCharacters, projectId, sendMessage],
   );
@@ -838,6 +1000,8 @@ export function AgentChatPage({
     setTaskFiles([]);
     setSelectedFileId(undefined);
     processedMessageIds.current.clear();
+    pendingTopicSwitchRef.current = null;
+    isResolvingTopicProjectRef.current = false;
   }, [clearMessages]);
 
   // 响应首页导航触发的新会话请求
@@ -846,7 +1010,7 @@ export function AgentChatPage({
       return;
     }
 
-    const requestKey = `${newChatAt}:${projectId ?? ""}`;
+    const requestKey = String(newChatAt);
     if (handledNewChatRequestRef.current === requestKey) {
       return;
     }
@@ -864,10 +1028,26 @@ export function AgentChatPage({
     setSelectedFileId(undefined);
     setMentionedCharacters([]);
     processedMessageIds.current.clear();
+    pendingTopicSwitchRef.current = null;
+    isResolvingTopicProjectRef.current = false;
     restoredMetaSessionId.current = null;
     restoredFilesSessionId.current = null;
     hasTriggeredGuide.current = false;
-  }, [newChatAt, projectId, clearMessages]);
+
+    if (!externalProjectId) {
+      setInternalProjectId(null);
+      setProject(null);
+      setProjectMemory(null);
+      setActiveTheme(normalizeInitialTheme(initialTheme));
+      setCreationMode(initialCreationMode ?? "guided");
+    }
+  }, [
+    newChatAt,
+    clearMessages,
+    externalProjectId,
+    initialTheme,
+    initialCreationMode,
+  ]);
 
   const handleBackHome = useCallback(() => {
     clearMessages({
@@ -881,6 +1061,8 @@ export function AgentChatPage({
     setTaskFiles([]);
     setSelectedFileId(undefined);
     processedMessageIds.current.clear();
+    pendingTopicSwitchRef.current = null;
+    isResolvingTopicProjectRef.current = false;
     setInternalProjectId(null);
     setProject(null);
     setProjectMemory(null);
@@ -1671,13 +1853,15 @@ export function AgentChatPage({
           <EmptyState
             input={input}
             setInput={setInput}
-            onSend={(text) => {
-              handleSend([], false, false, text);
+            onSend={(text, sendExecutionStrategy) => {
+              handleSend([], false, false, text, sendExecutionStrategy);
             }}
             providerType={providerType}
             setProviderType={setProviderType}
             model={model}
             setModel={setModel}
+            executionStrategy={executionStrategy}
+            setExecutionStrategy={setExecutionStrategy}
             onManageProviders={handleManageProviders}
             creationMode={creationMode}
             onCreationModeChange={setCreationMode}
@@ -1707,6 +1891,8 @@ export function AgentChatPage({
               setProviderType={setProviderType}
               model={model}
               setModel={setModel}
+              executionStrategy={executionStrategy}
+              setExecutionStrategy={setExecutionStrategy}
               activeTheme={activeTheme}
               onManageProviders={handleManageProviders}
               disabled={!projectId}
@@ -1844,7 +2030,15 @@ export function AgentChatPage({
           onBackToProjectManagement={onBackToProjectManagement}
           onBackToResources={fromResources ? handleBackToResources : undefined}
           projectId={projectId ?? null}
-          onProjectChange={(newProjectId) => setInternalProjectId(newProjectId)}
+          onProjectChange={(newProjectId) => {
+            if (externalProjectId) {
+              return;
+            }
+            pendingTopicSwitchRef.current = null;
+            isResolvingTopicProjectRef.current = false;
+            savePersistedProjectId(LAST_PROJECT_ID_KEY, newProjectId);
+            setInternalProjectId(newProjectId);
+          }}
           workspaceType={activeTheme}
           onBackHome={handleBackHome}
           onToggleSettings={() => {
@@ -1862,6 +2056,12 @@ export function AgentChatPage({
                 }
               : null
           }
+        />
+
+        <LatestRunStatusBadge
+          source="chat"
+          label="统一执行状态"
+          className="px-4 py-1 border-b border-border/60"
         />
 
         {/* 同步状态指示器 */}

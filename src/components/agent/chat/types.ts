@@ -39,6 +39,14 @@ export interface ActionRequired {
   questions?: Question[];
   /** 请求的数据结构（elicitation 类型） */
   requestedSchema?: any;
+  /** 前端交互状态（用于保留已提交的 ask/elicitation 面板） */
+  status?: "pending" | "submitted";
+  /** 是否为前端根据 Ask 工具调用生成的临时请求（尚未拿到真实 requestId） */
+  isFallback?: boolean;
+  /** 已提交的响应文本（用于展示回显） */
+  submittedResponse?: string;
+  /** 已提交的原始用户数据 */
+  submittedUserData?: unknown;
 }
 
 /** 问题定义（用于 ask_user 类型） */

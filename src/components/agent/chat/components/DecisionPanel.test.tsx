@@ -82,6 +82,44 @@ function createElicitationRequest(requestId: string): ActionRequired {
   };
 }
 
+function createAskUserRequest(requestId: string): ActionRequired {
+  return {
+    requestId,
+    actionType: "ask_user",
+    questions: [
+      {
+        question:
+          '请选择执行模式："自动执行（Auto）"、"确认后执行（Ask）"、"只读模式"',
+      },
+    ],
+  };
+}
+
+function createAskUserNumberedRequest(requestId: string): ActionRequired {
+  return {
+    requestId,
+    actionType: "ask_user",
+    questions: [
+      {
+        question:
+          "请选择宣传画方向：\n1. 产品宣传海报\n2. 活动推广海报\n3. 品牌展示海报",
+      },
+    ],
+  };
+}
+
+function createSubmittedAskUserRequest(requestId: string): ActionRequired {
+  return {
+    requestId,
+    actionType: "ask_user",
+    status: "submitted",
+    prompt: "请选择执行模式",
+    questions: [{ question: "你希望如何执行？" }],
+    submittedResponse: "自动执行（Auto）",
+    submittedUserData: { answer: "自动执行（Auto）" },
+  };
+}
+
 afterEach(() => {
   while (mountedRoots.length > 0) {
     const mounted = mountedRoots.pop();
@@ -131,5 +169,125 @@ describe("DecisionPanel elicitation", () => {
     expect(payload.actionType).toBe("elicitation");
     expect(payload.response).toBe("用户拒绝了请求");
     expect(payload.userData).toBe("");
+  });
+});
+
+describe("DecisionPanel ask_user", () => {
+  it("缺少 options 时应从问题文本提取可点击选项并支持提交", () => {
+    const request = createAskUserRequest("req-ask-user-fallback");
+    const { container, onSubmit } = renderDecisionPanel(request);
+
+    expect(container.textContent).toContain("助手的问题");
+    expect(container.textContent).not.toContain("Claude");
+    expect(container.textContent).toContain("自动执行（Auto）");
+    expect(container.textContent).toContain("确认后执行（Ask）");
+    expect(container.textContent).toContain("只读模式");
+
+    clickButton(findButtonByText(container, "自动执行（Auto）"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: "req-ask-user-fallback",
+      confirmed: true,
+      response: "自动执行（Auto）",
+      actionType: "ask_user",
+      userData: { answer: "自动执行（Auto）" },
+    });
+  });
+
+  it("编号列表文本应提取为可点击选项", () => {
+    const request = createAskUserNumberedRequest("req-ask-user-numbered");
+    const { container, onSubmit } = renderDecisionPanel(request);
+
+    expect(container.textContent).toContain("产品宣传海报");
+    expect(container.textContent).toContain("活动推广海报");
+    expect(container.textContent).toContain("品牌展示海报");
+
+    clickButton(findButtonByText(container, "活动推广海报"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: "req-ask-user-numbered",
+      confirmed: true,
+      response: "活动推广海报",
+      actionType: "ask_user",
+      userData: { answer: "活动推广海报" },
+    });
+  });
+
+  it("questions.options 为字符串数组时应归一化并可点击提交", () => {
+    const request: ActionRequired = {
+      requestId: "req-ask-user-string-options",
+      actionType: "ask_user",
+      questions: [
+        {
+          question: "请选择执行模式",
+          options: ["自动执行（Auto）", "确认后执行（Ask）"] as any,
+        },
+      ],
+    };
+    const { container, onSubmit } = renderDecisionPanel(request);
+
+    clickButton(findButtonByText(container, "确认后执行（Ask）"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: "req-ask-user-string-options",
+      confirmed: true,
+      response: "确认后执行（Ask）",
+      actionType: "ask_user",
+      userData: { answer: "确认后执行（Ask）" },
+    });
+  });
+
+  it("fallback ask 在 request_id 未就绪时应允许先选择答案但禁用提交", () => {
+    const request: ActionRequired = {
+      requestId: "fallback:tool-1",
+      actionType: "ask_user",
+      isFallback: true,
+      questions: [
+        {
+          question: "请选择执行模式",
+          options: [{ label: "自动执行（Auto）" }],
+        },
+      ],
+    };
+    const { container, onSubmit } = renderDecisionPanel(request);
+
+    expect(container.textContent).toContain("正在等待系统生成可提交的 Ask 请求");
+    const waitingSubmitButton = findButtonByText(container, "等待系统就绪...");
+    expect(waitingSubmitButton.disabled).toBe(true);
+    const optionButton = findButtonByText(container, "自动执行（Auto）");
+    expect(optionButton.disabled).toBe(false);
+    clickButton(optionButton);
+    expect(optionButton.className).toContain("border-blue-500");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("提交后应显示只读回显，不应再次出现可提交按钮", () => {
+    const request = createSubmittedAskUserRequest("req-ask-user-submitted");
+    const { container } = renderDecisionPanel(request);
+
+    expect(container.textContent).toContain("已提交你的回答");
+    expect(container.textContent).toContain("你的回答");
+    expect(container.textContent).toContain("自动执行（Auto）");
+    expect(container.textContent).toContain("已提交，等待助手继续执行");
+    expect(container.textContent).not.toContain("提交答案");
+    expect(container.textContent).not.toContain("取消");
+  });
+});
+
+describe("DecisionPanel copywriting", () => {
+  it("tool_confirmation 文案应为中性助手，不应出现 Claude", () => {
+    const request: ActionRequired = {
+      requestId: "req-tool-confirm",
+      actionType: "tool_confirmation",
+      toolName: "exec_command",
+      arguments: { cmd: "ls" },
+    };
+    const { container } = renderDecisionPanel(request);
+
+    expect(container.textContent).toContain("助手想要使用");
+    expect(container.textContent).not.toContain("Claude");
   });
 });

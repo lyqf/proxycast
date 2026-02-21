@@ -239,6 +239,11 @@ pub async fn handle_command(
             let provider_type = args["provider_type"].as_str().unwrap_or("").to_string();
             let model = args["model"].as_str().map(|s| s.to_string());
             let system_prompt = args["system_prompt"].as_str().map(|s| s.to_string());
+            let execution_strategy = args["execution_strategy"]
+                .as_str()
+                .map(|s| s.to_string())
+                .or_else(|| args["executionStrategy"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "react".to_string());
 
             if let Some(db) = &state.db {
                 // 简化版本：直接创建会话，不需要 agent_state
@@ -256,6 +261,7 @@ pub async fn handle_command(
                     system_prompt,
                     title: None, // 初始会话没有标题，后续会自动生成
                     working_dir: None,
+                    execution_strategy: Some(execution_strategy.clone()),
                     created_at: now.clone(),
                     updated_at: now,
                 };
@@ -269,7 +275,8 @@ pub async fn handle_command(
                     "credential_name": "ProxyCast",
                     "credential_uuid": null,
                     "provider_type": provider_type,
-                    "model": model_name
+                    "model": model_name,
+                    "execution_strategy": execution_strategy
                 }))
             } else {
                 Err("Database not initialized".into())

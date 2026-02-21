@@ -1,7 +1,7 @@
 {
   "name": "proxycast",
   "private": true,
-  "version": "0.69.0",
+  "version": "0.70.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,7 +13,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev:headless": "tauri dev --config src-tauri/tauri.conf.headless.json",
+    "tauri:dev": "CARGO_TARGET_DIR=src-tauri/target tauri dev",
+    "tauri:dev:headless": "CARGO_TARGET_DIR=src-tauri/target tauri dev --config src-tauri/tauri.conf.headless.json",
+    "tauri:dev:nowatch": "CARGO_TARGET_DIR=src-tauri/target tauri dev --no-watch",
     "lint": "eslint src --max-warnings 0",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "prepare": "husky",

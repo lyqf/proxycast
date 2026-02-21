@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { User, Copy, Edit2, Trash2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -65,6 +65,16 @@ export const MessageList: React.FC<MessageListProps> = ({
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter((msg) => {
+        if (msg.role !== "user") return true;
+        if (msg.content.trim().length > 0) return true;
+        return Array.isArray(msg.images) && msg.images.length > 0;
+      }),
+    [messages],
+  );
+
   // 检测用户是否在手动滚动
   useEffect(() => {
     const container = containerRef.current;
@@ -101,7 +111,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     if (shouldAutoScroll && !isUserScrolling && scrollRef.current) {
       scrollRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, shouldAutoScroll, isUserScrolling]);
+  }, [visibleMessages, shouldAutoScroll, isUserScrolling]);
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -146,7 +156,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   return (
     <MessageListContainer ref={containerRef}>
       <div className="py-8 flex flex-col">
-        {messages.length === 0 && (
+        {visibleMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-64 text-muted-foreground opacity-50">
             <img
               src={logoImg}
@@ -157,7 +167,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           </div>
         )}
 
-        {messages.map((msg) => (
+        {visibleMessages.map((msg) => (
           <MessageWrapper key={msg.id} $isUser={msg.role === "user"}>
             <AvatarColumn>
               {msg.role === "user" ? (

@@ -29,7 +29,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ToolCallState } from "@/lib/api/agent";
+import type { ToolCallState, ToolResultImage } from "@/lib/api/agent";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 // ============ 类型定义 ============
@@ -283,6 +283,31 @@ const snakeToTitleCase = (str: string): string => {
     .join(" ");
 };
 
+const normalizeToolResultImages = (
+  rawImages: unknown,
+): ToolResultImage[] => {
+  if (!Array.isArray(rawImages)) return [];
+  const normalized: ToolResultImage[] = [];
+  for (const item of rawImages) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const src = typeof record.src === "string" ? record.src.trim() : "";
+    if (!src) continue;
+    const mimeType =
+      (typeof record.mimeType === "string" && record.mimeType) ||
+      (typeof record.mime_type === "string" && record.mime_type) ||
+      undefined;
+    const origin =
+      record.origin === "data_url" ||
+      record.origin === "tool_payload" ||
+      record.origin === "file_path"
+        ? record.origin
+        : undefined;
+    normalized.push({ src, mimeType, origin });
+  }
+  return normalized;
+};
+
 // ============ 可展开面板组件 ============
 
 interface ExpandablePanelProps {
@@ -528,6 +553,7 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
   onFileClick,
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
 
   // 解析参数
   const parsedArgs = useMemo(() => {
@@ -577,6 +603,11 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
   const isCompleted = toolCall.status === "completed";
   const isFailed = toolCall.status === "failed";
   const hasResult = !isRunning && toolCall.result;
+  const resultImages = useMemo(
+    () => normalizeToolResultImages(toolCall.result?.images),
+    [toolCall.result?.images],
+  );
+  const hasResultImages = resultImages.length > 0;
 
   // 处理点击事件 - 如果是文件写入工具，打开右边栏
   const handleOpenFile = useCallback(() => {
@@ -662,6 +693,26 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         </div>
       </div>
 
+      {hasResultImages && (
+        <div className="ml-4 mt-2 mb-2 flex flex-wrap gap-2">
+          {resultImages.map((image, index) => (
+            <button
+              key={`${image.src.slice(0, 48)}-${index}`}
+              className="overflow-hidden rounded-lg border border-[var(--ink-900)]/10 bg-[var(--surface-tertiary)]"
+              onClick={() => setPreviewImageSrc(image.src)}
+              title="点击查看大图"
+            >
+              <img
+                src={image.src}
+                alt="工具结果图片预览"
+                className="h-20 w-20 object-cover"
+                loading="lazy"
+              />
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* 展开的详情 - Claude 风格 */}
       {isExpanded && hasResult && (
         <div className="ml-4 mt-2 mb-2 p-3 rounded-xl bg-[var(--surface-tertiary)] border border-[var(--ink-900)]/10">
@@ -680,6 +731,20 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
             {toolCall.result?.error || toolCall.result?.output || "(无输出)"}
           </pre>
         </div>
+      )}
+
+      {previewImageSrc && (
+        <button
+          type="button"
+          className="fixed inset-0 z-50 bg-black/70 p-6"
+          onClick={() => setPreviewImageSrc(null)}
+        >
+          <img
+            src={previewImageSrc}
+            alt="工具结果图片大图"
+            className="mx-auto max-h-full max-w-full rounded-lg object-contain"
+          />
+        </button>
       )}
     </div>
   );

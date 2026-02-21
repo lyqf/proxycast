@@ -3,7 +3,9 @@
 //! 提供任务调度的核心功能
 
 use super::dao::SchedulerDao;
-use super::types::{ScheduledTask, TaskFilter};
+use super::types::{
+    ScheduledTask, TaskFilter, DEFAULT_TASK_COOLDOWN_SECS, DEFAULT_TASK_FAILURE_THRESHOLD,
+};
 use async_trait::async_trait;
 use proxycast_core::database::DbConnection;
 
@@ -50,12 +52,51 @@ pub trait SchedulerTrait: Send + Sync {
 /// Agent Scheduler 实现
 pub struct AgentScheduler {
     db: DbConnection,
+    governance_config: SchedulerGovernanceConfig,
+}
+
+/// 调度任务治理配置
+#[derive(Debug, Clone)]
+pub struct SchedulerGovernanceConfig {
+    /// 连续失败阈值，达到后进入冷却停用
+    pub failure_threshold: u32,
+    /// 冷却时长（秒）
+    pub cooldown_secs: i64,
+}
+
+impl Default for SchedulerGovernanceConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: DEFAULT_TASK_FAILURE_THRESHOLD,
+            cooldown_secs: DEFAULT_TASK_COOLDOWN_SECS,
+        }
+    }
+}
+
+impl SchedulerGovernanceConfig {
+    fn normalized(&self) -> Self {
+        Self {
+            failure_threshold: self.failure_threshold.max(1),
+            cooldown_secs: self.cooldown_secs.max(30),
+        }
+    }
 }
 
 impl AgentScheduler {
     /// 创建新的调度器实例
     pub fn new(db: DbConnection) -> Self {
-        Self { db }
+        Self {
+            db,
+            governance_config: SchedulerGovernanceConfig::default(),
+        }
+    }
+
+    /// 使用指定治理配置创建调度器
+    pub fn with_governance_config(db: DbConnection, config: SchedulerGovernanceConfig) -> Self {
+        Self {
+            db,
+            governance_config: config.normalized(),
+        }
     }
 
     /// 初始化数据库表
@@ -111,6 +152,14 @@ impl SchedulerTrait for AgentScheduler {
             .map_err(|e| format!("获取任务失败: {e}"))?
             .ok_or_else(|| format!("任务不存在: {id}"))?;
 
+        if task.is_in_cooldown() {
+            let until = task
+                .auto_disabled_until
+                .clone()
+                .unwrap_or_else(|| "未知时间".to_string());
+            return Err(format!("任务处于冷却停用中，截止时间: {until}"));
+        }
+
         task.mark_running();
         SchedulerDao::update_task(&conn, &task).map_err(|e| format!("更新任务状态失败: {e}"))?;
         tracing::info!("[AgentScheduler] 任务开始执行: {}", id);
@@ -140,8 +189,26 @@ impl SchedulerTrait for AgentScheduler {
             .ok_or_else(|| format!("任务不存在: {id}"))?;
 
         task.mark_failed(error.clone());
+        let triggered_cooldown = task.apply_failure_governance(
+            self.governance_config.failure_threshold,
+            self.governance_config.cooldown_secs,
+        );
         SchedulerDao::update_task(&conn, &task).map_err(|e| format!("更新任务状态失败: {e}"))?;
-        tracing::warn!("[AgentScheduler] 任务执行失败: {} - {}", id, error);
+        if triggered_cooldown {
+            tracing::warn!(
+                "[AgentScheduler] 任务执行失败并触发自动停用: {} - {} (consecutive_failures={})",
+                id,
+                error,
+                task.consecutive_failures
+            );
+        } else {
+            tracing::warn!(
+                "[AgentScheduler] 任务执行失败: {} - {} (consecutive_failures={})",
+                id,
+                error,
+                task.consecutive_failures
+            );
+        }
         Ok(())
     }
 
@@ -170,7 +237,13 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         SchedulerDao::create_tables(&conn).unwrap();
         let db = Arc::new(Mutex::new(conn));
-        AgentScheduler::new(db)
+        AgentScheduler::with_governance_config(
+            db,
+            SchedulerGovernanceConfig {
+                failure_threshold: 2,
+                cooldown_secs: 120,
+            },
+        )
     }
 
     #[tokio::test]
@@ -270,5 +343,33 @@ mod tests {
         let due_tasks = scheduler.get_due_tasks(10).await.unwrap();
         assert_eq!(due_tasks.len(), 1);
         assert_eq!(due_tasks[0].name, "Past");
+    }
+
+    #[tokio::test]
+    async fn test_mark_task_failed_should_trigger_cooldown() {
+        let scheduler = setup_test_scheduler();
+        let task = ScheduledTask::new(
+            "Failing Task".to_string(),
+            "agent_chat".to_string(),
+            serde_json::json!({"prompt": "fail"}),
+            "openai".to_string(),
+            "gpt-4".to_string(),
+            Utc::now(),
+        );
+
+        let task_id = scheduler.create_task(task).await.unwrap();
+        scheduler
+            .mark_task_failed(&task_id, "error1".to_string())
+            .await
+            .unwrap();
+        scheduler
+            .mark_task_failed(&task_id, "error2".to_string())
+            .await
+            .unwrap();
+
+        let updated = scheduler.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(updated.consecutive_failures, 2);
+        assert!(updated.auto_disabled_until.is_some());
+        assert!(updated.is_in_cooldown());
     }
 }

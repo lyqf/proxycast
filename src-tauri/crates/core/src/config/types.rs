@@ -423,6 +423,21 @@ pub struct Config {
     /// 用户资料
     #[serde(default)]
     pub user_profile: UserProfile,
+    /// 速率限制配置
+    #[serde(default)]
+    pub rate_limit: RateLimitSettings,
+    /// 对话管理配置
+    #[serde(default)]
+    pub conversation: ConversationSettings,
+    /// 提示路由配置
+    #[serde(default)]
+    pub hint_router: HintRouterSettings,
+    /// 配对认证配置
+    #[serde(default)]
+    pub pairing: PairingSettings,
+    /// 心跳引擎配置
+    #[serde(default)]
+    pub heartbeat: HeartbeatSettings,
 }
 
 // ============ Native Agent 配置类型 ============
@@ -431,6 +446,47 @@ pub struct Config {
 ///
 /// 配置内置 Agent 的行为，包括系统提示词、工具使用规则等
 /// 参考 Manus Agent 的模块化设计，支持灵活配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceSandboxConfig {
+    /// 是否启用 workspace 本地 sandbox
+    #[serde(default = "default_workspace_sandbox_enabled")]
+    pub enabled: bool,
+    /// 严格模式：若 sandbox 不可用则直接失败
+    #[serde(default = "default_workspace_sandbox_strict")]
+    pub strict: bool,
+    /// 发生降级时是否提醒用户
+    #[serde(default = "default_workspace_sandbox_notify_on_fallback")]
+    pub notify_on_fallback: bool,
+}
+
+impl WorkspaceSandboxConfig {
+    pub fn is_default(value: &Self) -> bool {
+        value == &Self::default()
+    }
+}
+
+fn default_workspace_sandbox_enabled() -> bool {
+    false
+}
+
+fn default_workspace_sandbox_strict() -> bool {
+    false
+}
+
+fn default_workspace_sandbox_notify_on_fallback() -> bool {
+    true
+}
+
+impl Default for WorkspaceSandboxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_workspace_sandbox_enabled(),
+            strict: default_workspace_sandbox_strict(),
+            notify_on_fallback: default_workspace_sandbox_notify_on_fallback(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NativeAgentConfig {
     /// 是否使用默认系统提示词
@@ -454,6 +510,9 @@ pub struct NativeAgentConfig {
     /// 默认最大 token 数
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// workspace 本地 sandbox 配置（可选安全增强）
+    #[serde(default, skip_serializing_if = "WorkspaceSandboxConfig::is_default")]
+    pub workspace_sandbox: WorkspaceSandboxConfig,
 }
 
 fn default_use_default_prompt() -> bool {
@@ -481,6 +540,7 @@ impl Default for NativeAgentConfig {
             default_model: default_agent_model(),
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
+            workspace_sandbox: WorkspaceSandboxConfig::default(),
         }
     }
 }
@@ -1720,6 +1780,11 @@ impl Default for Config {
             image_gen: ImageGenConfig::default(),
             assistant: AssistantConfig::default(),
             user_profile: UserProfile::default(),
+            rate_limit: RateLimitSettings::default(),
+            conversation: ConversationSettings::default(),
+            hint_router: HintRouterSettings::default(),
+            pairing: PairingSettings::default(),
+            heartbeat: HeartbeatSettings::default(),
         }
     }
 }
@@ -2300,5 +2365,248 @@ mod unit_tests {
         let parsed: CredentialPoolConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(parsed.asr.len(), 1);
         assert_eq!(parsed.asr[0].provider, AsrProviderType::Xunfei);
+    }
+}
+
+// ============ 心跳引擎配置类型 ============
+
+/// 任务调度类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum TaskSchedule {
+    /// 固定间隔（现有行为）
+    Every { every_secs: u64 },
+    /// Cron 表达式
+    Cron {
+        expr: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tz: Option<String>,
+    },
+    /// 指定时间点（一次性，RFC3339 格式）
+    At { at: String },
+}
+
+impl Default for TaskSchedule {
+    fn default() -> Self {
+        Self::Every { every_secs: 300 }
+    }
+}
+
+/// 通知投递配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeliveryConfig {
+    /// 投递模式: "none" | "announce"
+    #[serde(default = "default_delivery_mode")]
+    pub mode: String,
+    /// 投递渠道: "webhook" | "telegram" | ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// 目标地址: URL 或 chat_id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// 投递失败是否算任务失败
+    #[serde(default)]
+    pub best_effort: bool,
+}
+
+fn default_delivery_mode() -> String {
+    "none".to_string()
+}
+
+impl Default for DeliveryConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_delivery_mode(),
+            channel: None,
+            target: None,
+            best_effort: true,
+        }
+    }
+}
+
+/// 心跳执行模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatExecutionMode {
+    /// 智能模式：通过 AI Agent 执行任务
+    Intelligent,
+    /// 技能模式：调用已注册的技能
+    Skill,
+    /// 日志模式：仅记录任务，不执行
+    LogOnly,
+}
+
+impl Default for HeartbeatExecutionMode {
+    fn default() -> Self {
+        Self::Intelligent
+    }
+}
+
+/// 心跳引擎配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HeartbeatSettings {
+    /// 是否启用心跳引擎
+    #[serde(default)]
+    pub enabled: bool,
+    /// 心跳间隔（秒），最小 300（5分钟）- 向后兼容
+    #[serde(default = "default_heartbeat_interval")]
+    pub interval_secs: u64,
+    /// 灵活调度配置（优先于 interval_secs）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<TaskSchedule>,
+    /// 任务文件名（相对于应用数据目录）
+    #[serde(default = "default_heartbeat_task_file")]
+    pub task_file: String,
+    /// 执行模式
+    #[serde(default)]
+    pub execution_mode: HeartbeatExecutionMode,
+    /// 是否启用任务历史记录
+    #[serde(default = "default_enable_history")]
+    pub enable_history: bool,
+    /// 失败重试次数
+    #[serde(default = "default_heartbeat_max_retries")]
+    pub max_retries: u32,
+    /// 通知投递配置
+    #[serde(default)]
+    pub delivery: DeliveryConfig,
+    /// 安全策略配置
+    #[serde(default)]
+    pub security: HeartbeatSecurityConfig,
+}
+
+/// 心跳安全策略配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HeartbeatSecurityConfig {
+    /// 允许的命令白名单（仅适用于 shell 类任务）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_commands: Vec<String>,
+    /// 允许的路径前缀（安全起见）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_paths: Vec<String>,
+    /// 是否启用安全检查
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_heartbeat_interval() -> u64 {
+    300
+}
+fn default_heartbeat_task_file() -> String {
+    "HEARTBEAT.md".to_string()
+}
+fn default_enable_history() -> bool {
+    true
+}
+fn default_heartbeat_max_retries() -> u32 {
+    3
+}
+
+impl Default for HeartbeatSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 300,
+            schedule: None,
+            task_file: "HEARTBEAT.md".to_string(),
+            execution_mode: HeartbeatExecutionMode::default(),
+            enable_history: true,
+            max_retries: default_heartbeat_max_retries(),
+            delivery: DeliveryConfig::default(),
+            security: HeartbeatSecurityConfig::default(),
+        }
+    }
+}
+
+// ============ 安全与性能配置类型 ============
+
+/// 速率限制配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RateLimitSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_requests_per_minute")]
+    pub requests_per_minute: u32,
+    #[serde(default = "default_window_secs")]
+    pub window_secs: u64,
+}
+
+fn default_requests_per_minute() -> u32 {
+    60
+}
+fn default_window_secs() -> u64 {
+    60
+}
+
+impl Default for RateLimitSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            requests_per_minute: 60,
+            window_secs: 60,
+        }
+    }
+}
+
+/// 对话管理配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationSettings {
+    #[serde(default)]
+    pub trim_enabled: bool,
+    #[serde(default = "default_max_messages")]
+    pub max_messages: usize,
+    #[serde(default)]
+    pub summary_enabled: bool,
+}
+
+fn default_max_messages() -> usize {
+    50
+}
+
+impl Default for ConversationSettings {
+    fn default() -> Self {
+        Self {
+            trim_enabled: false,
+            max_messages: 50,
+            summary_enabled: false,
+        }
+    }
+}
+
+/// 提示路由配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HintRouterSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub routes: Vec<HintRouteSettingsEntry>,
+}
+
+impl Default for HintRouterSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            routes: Vec::new(),
+        }
+    }
+}
+
+/// 提示路由条目（配置层面，provider 为字符串）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HintRouteSettingsEntry {
+    pub hint: String,
+    pub provider: String,
+    pub model: String,
+}
+
+/// 配对认证配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PairingSettings {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for PairingSettings {
+    fn default() -> Self {
+        Self { enabled: false }
     }
 }

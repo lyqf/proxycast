@@ -14,11 +14,7 @@
 | `SettingsPage.tsx` | 设置页面主容器，管理标签页切换 |
 | `GeneralSettings.tsx` | 通用设置（主题、语言等） |
 | `ProxySettings.tsx` | 代理服务器设置 |
-| `DirectorySettings.tsx` | 目录路径设置 |
-| `TlsSettings.tsx` | TLS/SSL 证书设置 |
-| `QuotaSettings.tsx` | 配额管理设置 |
 | `ConnectionsSettings.tsx` | 连接管理设置 |
-| `RemoteManagementSettings.tsx` | 远程管理设置 |
 | `DeveloperSettings.tsx` | 开发者选项设置 |
 | `ExperimentalSettings.tsx` | 实验室功能设置（截图对话、自动更新检查等） |
 | `ExtensionsSettings.tsx` | 扩展管理设置 |

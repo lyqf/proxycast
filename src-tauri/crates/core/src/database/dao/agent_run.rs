@@ -1,0 +1,295 @@
+//! 统一执行追踪（agent_runs）数据访问对象
+//!
+//! 提供跨 chat / skill / heartbeat 的执行摘要记录能力。
+
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunStatus {
+    Queued,
+    Running,
+    Success,
+    Error,
+    Canceled,
+    Timeout,
+}
+
+impl AgentRunStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Error => "error",
+            Self::Canceled => "canceled",
+            Self::Timeout => "timeout",
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Success | Self::Error | Self::Canceled | Self::Timeout
+        )
+    }
+}
+
+impl TryFrom<&str> for AgentRunStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, String> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "running" => Ok(Self::Running),
+            "success" => Ok(Self::Success),
+            "error" => Ok(Self::Error),
+            "canceled" => Ok(Self::Canceled),
+            "timeout" => Ok(Self::Timeout),
+            other => Err(format!("未知执行状态: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRun {
+    pub id: String,
+    pub source: String,
+    pub source_ref: Option<String>,
+    pub session_id: Option<String>,
+    pub status: AgentRunStatus,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub struct AgentRunDao;
+
+impl AgentRunDao {
+    pub fn create_run(conn: &Connection, run: &AgentRun) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "INSERT INTO agent_runs (
+                id, source, source_ref, session_id, status, started_at, finished_at, duration_ms,
+                error_code, error_message, metadata, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                run.id,
+                run.source,
+                run.source_ref,
+                run.session_id,
+                run.status.as_str(),
+                run.started_at,
+                run.finished_at,
+                run.duration_ms,
+                run.error_code,
+                run.error_message,
+                run.metadata,
+                run.created_at,
+                run.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 仅允许从非终态更新到终态，幂等保护：`finished_at IS NULL`
+    pub fn finish_run(
+        conn: &Connection,
+        id: &str,
+        status: AgentRunStatus,
+        finished_at: &str,
+        duration_ms: Option<i64>,
+        error_code: Option<&str>,
+        error_message: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<bool, rusqlite::Error> {
+        if !status.is_terminal() {
+            return Ok(false);
+        }
+
+        let changed = conn.execute(
+            "UPDATE agent_runs
+             SET status = ?1,
+                 finished_at = ?2,
+                 duration_ms = ?3,
+                 error_code = ?4,
+                 error_message = ?5,
+                 metadata = COALESCE(?6, metadata),
+                 updated_at = ?2
+             WHERE id = ?7
+               AND finished_at IS NULL",
+            params![
+                status.as_str(),
+                finished_at,
+                duration_ms,
+                error_code,
+                error_message,
+                metadata,
+                id,
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn get_run(conn: &Connection, id: &str) -> Result<Option<AgentRun>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT id, source, source_ref, session_id, status, started_at, finished_at, duration_ms,
+                    error_code, error_message, metadata, created_at, updated_at
+             FROM agent_runs
+             WHERE id = ?1",
+        )?;
+
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            let status_raw: String = row.get(4)?;
+            let status = AgentRunStatus::try_from(status_raw.as_str()).map_err(|_| {
+                rusqlite::Error::InvalidColumnType(4, "status".into(), rusqlite::types::Type::Text)
+            })?;
+            Ok(Some(AgentRun {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                source_ref: row.get(2)?,
+                session_id: row.get(3)?,
+                status,
+                started_at: row.get(5)?,
+                finished_at: row.get(6)?,
+                duration_ms: row.get(7)?,
+                error_code: row.get(8)?,
+                error_message: row.get(9)?,
+                metadata: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_runs(
+        conn: &Connection,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AgentRun>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT id, source, source_ref, session_id, status, started_at, finished_at, duration_ms,
+                    error_code, error_message, metadata, created_at, updated_at
+             FROM agent_runs
+             ORDER BY started_at DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+
+        let iter = stmt.query_map(params![limit as i64, offset as i64], |row| {
+            let status_raw: String = row.get(4)?;
+            let status =
+                AgentRunStatus::try_from(status_raw.as_str()).unwrap_or(AgentRunStatus::Error);
+            Ok(AgentRun {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                source_ref: row.get(2)?,
+                session_id: row.get(3)?,
+                status,
+                started_at: row.get(5)?,
+                finished_at: row.get(6)?,
+                duration_ms: row.get(7)?,
+                error_code: row.get(8)?,
+                error_message: row.get(9)?,
+                metadata: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        })?;
+
+        iter.collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::schema::create_tables;
+    use chrono::Utc;
+    use rusqlite::Connection;
+
+    fn setup_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("创建内存数据库失败");
+        create_tables(&conn).expect("创建表结构失败");
+        conn
+    }
+
+    fn sample_run(id: &str, status: AgentRunStatus) -> AgentRun {
+        let now = Utc::now().to_rfc3339();
+        AgentRun {
+            id: id.to_string(),
+            source: "chat".to_string(),
+            source_ref: Some("sample".to_string()),
+            session_id: Some("s1".to_string()),
+            status,
+            started_at: now.clone(),
+            finished_at: None,
+            duration_ms: None,
+            error_code: None,
+            error_message: None,
+            metadata: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn create_and_get_run_should_work() {
+        let conn = setup_conn();
+        let run = sample_run("run-1", AgentRunStatus::Running);
+        AgentRunDao::create_run(&conn, &run).expect("写入 run 失败");
+
+        let fetched = AgentRunDao::get_run(&conn, "run-1")
+            .expect("查询 run 失败")
+            .expect("run 不存在");
+        assert_eq!(fetched.id, "run-1");
+        assert_eq!(fetched.status, AgentRunStatus::Running);
+    }
+
+    #[test]
+    fn finish_run_should_be_idempotent() {
+        let conn = setup_conn();
+        let run = sample_run("run-2", AgentRunStatus::Running);
+        AgentRunDao::create_run(&conn, &run).expect("写入 run 失败");
+
+        let now = Utc::now().to_rfc3339();
+        let first = AgentRunDao::finish_run(
+            &conn,
+            "run-2",
+            AgentRunStatus::Success,
+            &now,
+            Some(100),
+            None,
+            None,
+            None,
+        )
+        .expect("第一次结束 run 失败");
+        let second = AgentRunDao::finish_run(
+            &conn,
+            "run-2",
+            AgentRunStatus::Error,
+            &now,
+            Some(120),
+            Some("err"),
+            Some("error"),
+            None,
+        )
+        .expect("第二次结束 run 失败");
+
+        assert!(first);
+        assert!(!second);
+
+        let fetched = AgentRunDao::get_run(&conn, "run-2")
+            .expect("查询 run 失败")
+            .expect("run 不存在");
+        assert_eq!(fetched.status, AgentRunStatus::Success);
+        assert_eq!(fetched.duration_ms, Some(100));
+    }
+}

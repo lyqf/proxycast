@@ -121,6 +121,7 @@ export type TauriAgentEvent =
   | { type: "model_change"; model: string; mode: string }
   | { type: "done"; usage?: TokenUsage }
   | { type: "final_done"; usage?: TokenUsage }
+  | { type: "warning"; code?: string; message: string }
   | { type: "error"; message: string }
   | { type: "message"; message: unknown };
 
@@ -686,6 +687,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           currentAssistantMsgId: null,
         }));
         get()._cleanup();
+        break;
+
+      case "warning":
+        console.warn("[AgentStore] warning:", event.code, event.message);
         break;
     }
   },

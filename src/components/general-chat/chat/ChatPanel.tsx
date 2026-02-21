@@ -9,6 +9,7 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { Settings, AlertTriangle, Loader2 } from "lucide-react";
 import { useGeneralChatStore } from "../store/useGeneralChatStore";
+import { useProvider } from "../hooks/useProvider";
 import type { CanvasState, ContentBlock } from "../types";
 import { DEFAULT_PAGINATION_STATE } from "../types";
 import { MessageList } from "./MessageList";
@@ -17,6 +18,7 @@ import { CompactModelSelector } from "./CompactModelSelector";
 import { WorkflowStatusPanel } from "../components/WorkflowStatusPanel";
 import { useConfiguredProviders } from "@/hooks/useConfiguredProviders";
 import type { MessageImage } from "@/components/agent/chat/types";
+import { createGeneralInputAdapter } from "@/components/input-kit";
 
 interface ChatPanelProps {
   /** 当前会话 ID */
@@ -139,6 +141,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // 直接使用 useConfiguredProviders 检查是否有可用的 Provider
   const { providers, loading: isProviderLoading } = useConfiguredProviders();
   const hasAvailableProvider = providers.length > 0;
+  const {
+    selectedProvider,
+    selectedModelId,
+    selectProvider,
+    selectModel,
+    hasAvailableProvider: hasProviderSelection,
+    isLoading: providerSelectionLoading,
+    error: providerSelectionError,
+  } = useProvider();
 
   // 从 streaming 对象中解构状态
   const { isStreaming, partialContent } = streaming;
@@ -232,6 +243,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const handleStop = useCallback(() => {
     stopGeneration();
   }, [stopGeneration]);
+
+  const inputAdapter = useMemo(
+    () =>
+      createGeneralInputAdapter({
+        text: input,
+        setText: setInput,
+        isSending: isStreaming,
+        disabled: !sessionId,
+        providerType: selectedProvider?.key || "",
+        model: selectedModelId || "",
+        setProviderType: selectProvider,
+        setModel: selectModel,
+        send: () => {
+          void handleSend();
+        },
+        stop: handleStop,
+      }),
+    [
+      handleSend,
+      handleStop,
+      input,
+      isStreaming,
+      selectModel,
+      selectProvider,
+      selectedModelId,
+      selectedProvider,
+      sessionId,
+    ],
+  );
 
   // 处理复制内容
   const handleCopy = useCallback((content: string) => {
@@ -337,17 +377,26 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         <div className="border-t border-ink-100 px-4 py-3 space-y-2">
           {/* 模型选择器 */}
           <div className="flex items-center">
-            <CompactModelSelector disabled={isStreaming} />
+            <CompactModelSelector
+              disabled={isStreaming}
+              providerType={inputAdapter.model?.providerType || ""}
+              model={inputAdapter.model?.model || ""}
+              setProviderType={inputAdapter.actions.setProviderType || selectProvider}
+              setModel={inputAdapter.actions.setModel || selectModel}
+              hasAvailableProvider={hasProviderSelection}
+              isLoading={providerSelectionLoading}
+              error={providerSelectionError}
+            />
           </div>
 
           {/* 输入栏 */}
           <Inputbar
-            input={input}
-            setInput={setInput}
+            input={inputAdapter.state.text}
+            setInput={inputAdapter.actions.setText}
             onSend={handleSend}
-            onStop={handleStop}
-            isLoading={isStreaming}
-            disabled={!sessionId}
+            onStop={inputAdapter.actions.stop}
+            isLoading={inputAdapter.state.isSending}
+            disabled={inputAdapter.state.disabled}
           />
         </div>
       </div>

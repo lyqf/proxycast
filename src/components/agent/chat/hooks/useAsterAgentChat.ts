@@ -17,14 +17,24 @@ import {
   getAsterSession,
   renameAsterSession,
   deleteAsterSession,
+  setAsterSessionExecutionStrategy,
   stopAsterSession,
   confirmAsterAction,
   submitAsterElicitationResponse,
   parseStreamEvent,
   type StreamEvent,
   type AsterSessionInfo,
+  type AsterExecutionStrategy,
+  type ToolResultImage,
 } from "@/lib/api/agent";
-import { Message, MessageImage, ContentPart } from "../types";
+import {
+  Message,
+  MessageImage,
+  ContentPart,
+  type ActionRequired,
+  type ConfirmResponse,
+  type Question,
+} from "../types";
 
 /** 话题信息 */
 export interface Topic {
@@ -32,26 +42,7 @@ export interface Topic {
   title: string;
   createdAt: Date;
   messagesCount: number;
-}
-
-/** 权限确认请求 */
-export interface ActionRequired {
-  requestId: string;
-  actionType: "tool_confirmation" | "ask_user" | "elicitation";
-  toolName?: string;
-  arguments?: Record<string, unknown>;
-  prompt?: string;
-  requestedSchema?: Record<string, unknown>;
-  timestamp: Date;
-}
-
-/** 确认响应 */
-export interface ConfirmResponse {
-  requestId: string;
-  confirmed: boolean;
-  response?: string;
-  actionType?: ActionRequired["actionType"];
-  userData?: unknown;
+  executionStrategy: AsterExecutionStrategy;
 }
 
 /** Hook 配置选项 */
@@ -60,6 +51,569 @@ interface UseAsterAgentChatOptions {
   onWriteFile?: (content: string, fileName: string) => void;
   workspaceId: string;
 }
+
+const normalizeExecutionStrategy = (
+  value?: string | null,
+): AsterExecutionStrategy =>
+  value === "code_orchestrated" || value === "auto" ? value : "react";
+
+const normalizeActionType = (
+  value?: string,
+): ActionRequired["actionType"] | null => {
+  if (
+    value === "tool_confirmation" ||
+    value === "ask_user" ||
+    value === "elicitation"
+  ) {
+    return value;
+  }
+  if (value === "ask") {
+    return "ask_user";
+  }
+  return null;
+};
+
+const appendActionRequiredToParts = (
+  parts: ContentPart[],
+  actionRequired: ActionRequired,
+): ContentPart[] => {
+  const exists = parts.some(
+    (part) =>
+      part.type === "action_required" &&
+      part.actionRequired.requestId === actionRequired.requestId,
+  );
+
+  if (exists) {
+    return parts;
+  }
+
+  return [...parts, { type: "action_required", actionRequired }];
+};
+
+const parseJsonObject = (raw?: string): Record<string, unknown> | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const isAskToolName = (toolName: string): boolean => {
+  const normalized = toolName.toLowerCase().trim();
+  return (
+    normalized === "ask" ||
+    normalized === "ask_user" ||
+    /(^|[_-])ask($|[_-])/.test(normalized)
+  );
+};
+
+const normalizeAskOptions = (
+  value: unknown,
+): Array<{ label: string; description?: string }> | undefined => {
+  if (!Array.isArray(value)) return undefined;
+
+  const normalized = value
+    .map((item) => {
+      if (typeof item === "string") {
+        const label = item.trim();
+        return label ? { label } : null;
+      }
+      if (item && typeof item === "object") {
+        const candidate = item as Record<string, unknown>;
+        const label =
+          (typeof candidate.label === "string" && candidate.label.trim()) ||
+          (typeof candidate.value === "string" && candidate.value.trim()) ||
+          "";
+        if (!label) return null;
+        const description =
+          typeof candidate.description === "string"
+            ? candidate.description
+            : undefined;
+        return { label, description };
+      }
+      return null;
+    })
+    .filter(
+      (item): item is { label: string; description?: string } =>
+        item !== null,
+    );
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const normalizeActionQuestions = (
+  value: unknown,
+  fallbackQuestion?: string,
+): ActionRequired["questions"] | undefined => {
+  const toQuestion = (item: unknown): Question | null => {
+    if (typeof item === "string") {
+      const question = item.trim();
+      if (!question) return null;
+      return {
+        question,
+        multiSelect: false,
+      };
+    }
+
+    if (!item || typeof item !== "object") return null;
+    const record = item as Record<string, unknown>;
+    const questionCandidate = [
+      record.question,
+      record.prompt,
+      record.message,
+      record.text,
+      record.title,
+    ].find(
+      (candidate): candidate is string =>
+        typeof candidate === "string" && candidate.trim().length > 0,
+    );
+
+    if (!questionCandidate) return null;
+
+    const options = normalizeAskOptions(
+      record.options || record.choices || record.enum,
+    );
+    const header =
+      typeof record.header === "string" ? record.header : undefined;
+    const multiSelect =
+      record.multiSelect === true || record.multi_select === true;
+
+    return {
+      question: questionCandidate.trim(),
+      header,
+      options,
+      multiSelect,
+    };
+  };
+
+  const normalized = Array.isArray(value)
+    ? value
+        .map(toQuestion)
+        .filter((item): item is Question => item !== null)
+    : [];
+
+  if (normalized.length > 0) return normalized;
+
+  if (typeof fallbackQuestion === "string" && fallbackQuestion.trim()) {
+    return [
+      {
+        question: fallbackQuestion.trim(),
+        multiSelect: false,
+      },
+    ];
+  }
+
+  return undefined;
+};
+
+const resolveAskQuestionText = (
+  args: Record<string, unknown>,
+): string | undefined => {
+  const candidates = [
+    args.question,
+    args.prompt,
+    args.message,
+    args.text,
+    args.query,
+    args.title,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      const value = candidate.trim();
+      if (value) return value;
+    }
+  }
+
+  return undefined;
+};
+
+const resolveAskRequestId = (
+  args: Record<string, unknown> | null,
+): string | undefined => {
+  if (!args) return undefined;
+
+  const directCandidates = [
+    args.request_id,
+    args.requestId,
+    args.action_request_id,
+    args.actionRequestId,
+    args.action_id,
+    args.actionId,
+    args.elicitation_id,
+    args.elicitationId,
+    args.id,
+  ];
+
+  for (const candidate of directCandidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  const nestedData =
+    args.data && typeof args.data === "object"
+      ? (args.data as Record<string, unknown>)
+      : undefined;
+
+  if (nestedData) {
+    const nestedCandidates = [
+      nestedData.request_id,
+      nestedData.requestId,
+      nestedData.id,
+      nestedData.action_id,
+      nestedData.actionId,
+    ];
+    for (const candidate of nestedCandidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const resolveHistoryUserDataText = (userData: unknown): string | undefined => {
+  if (typeof userData === "string") {
+    const value = userData.trim();
+    return value || undefined;
+  }
+
+  if (userData && typeof userData === "object") {
+    const record = userData as Record<string, unknown>;
+    const answer = record.answer;
+    if (typeof answer === "string" && answer.trim()) {
+      return answer.trim();
+    }
+    const other = record.other;
+    if (typeof other === "string" && other.trim()) {
+      return other.trim();
+    }
+    try {
+      const serialized = JSON.stringify(record);
+      return serialized === "{}" ? undefined : serialized;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (userData === null || userData === undefined) return undefined;
+  return String(userData);
+};
+
+const stringifyToolArguments = (argumentsValue: unknown): string | undefined => {
+  if (argumentsValue === null || argumentsValue === undefined) return undefined;
+  if (typeof argumentsValue === "string") {
+    const value = argumentsValue.trim();
+    return value || undefined;
+  }
+  try {
+    return JSON.stringify(argumentsValue);
+  } catch {
+    return undefined;
+  }
+};
+
+const parseDataUrlToHistoryImage = (rawUrl: string): MessageImage | null => {
+  const normalized = rawUrl.trim();
+  if (!normalized.startsWith("data:")) return null;
+
+  const commaIndex = normalized.indexOf(",");
+  if (commaIndex <= 5) return null;
+
+  const meta = normalized.slice(5, commaIndex);
+  const payload = normalized.slice(commaIndex + 1).trim();
+  if (!payload) return null;
+
+  const metaSegments = meta.split(";").map((segment) => segment.trim());
+  const mediaType = metaSegments[0] || "image/png";
+  const hasBase64 = metaSegments.some(
+    (segment) => segment.toLowerCase() === "base64",
+  );
+  if (!hasBase64) return null;
+
+  return {
+    mediaType,
+    data: payload,
+  };
+};
+
+const normalizeHistoryImagePart = (
+  rawPart: Record<string, unknown>,
+): MessageImage | null => {
+  if (typeof rawPart.data === "string" && rawPart.data.trim()) {
+    const mediaType =
+      (typeof rawPart.mime_type === "string" && rawPart.mime_type.trim()) ||
+      (typeof rawPart.media_type === "string" && rawPart.media_type.trim()) ||
+      "image/png";
+    return {
+      mediaType,
+      data: rawPart.data.trim(),
+    };
+  }
+
+  const imageUrlValue = rawPart.image_url ?? rawPart.url;
+  if (typeof imageUrlValue === "string") {
+    return parseDataUrlToHistoryImage(imageUrlValue);
+  }
+
+  if (imageUrlValue && typeof imageUrlValue === "object") {
+    const imageUrlRecord = imageUrlValue as Record<string, unknown>;
+    const nestedUrl =
+      (typeof imageUrlRecord.url === "string" && imageUrlRecord.url) ||
+      (typeof imageUrlRecord.image_url === "string" &&
+        imageUrlRecord.image_url) ||
+      "";
+    if (nestedUrl) {
+      return parseDataUrlToHistoryImage(nestedUrl);
+    }
+  }
+
+  return null;
+};
+
+const parseMimeTypeFromDataUrl = (rawUrl: string): string | undefined => {
+  const normalized = rawUrl.trim();
+  if (!normalized.startsWith("data:image/")) return undefined;
+  const commaIndex = normalized.indexOf(",");
+  if (commaIndex <= 5) return undefined;
+  const meta = normalized.slice(5, commaIndex);
+  const mimeType = meta.split(";")[0]?.trim();
+  if (!mimeType || !mimeType.startsWith("image/")) return undefined;
+  return mimeType;
+};
+
+const extractDataImageUrlsFromText = (text: string): string[] => {
+  if (!text.trim()) return [];
+  const pattern = /data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+/g;
+  const matches = text.match(pattern);
+  if (!matches) return [];
+  const deduped = new Set<string>();
+  for (const match of matches) {
+    const value = match.trim();
+    if (value) deduped.add(value);
+  }
+  return Array.from(deduped);
+};
+
+const normalizeToolResultImages = (
+  value: unknown,
+  fallbackText?: string,
+): ToolResultImage[] | undefined => {
+  const normalized: ToolResultImage[] = [];
+  const seen = new Set<string>();
+
+  const appendImage = (
+    rawSrc: string,
+    mimeType?: string,
+    origin?: ToolResultImage["origin"],
+  ) => {
+    const src = rawSrc.trim();
+    if (!src || seen.has(src)) return;
+    seen.add(src);
+    normalized.push({ src, mimeType, origin });
+  };
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item === "string") {
+        appendImage(item, parseMimeTypeFromDataUrl(item), "data_url");
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const src = typeof record.src === "string" ? record.src : "";
+      if (!src.trim()) continue;
+      const mimeType =
+        (typeof record.mimeType === "string" && record.mimeType) ||
+        (typeof record.mime_type === "string" && record.mime_type) ||
+        parseMimeTypeFromDataUrl(src);
+      const origin =
+        record.origin === "data_url" ||
+        record.origin === "tool_payload" ||
+        record.origin === "file_path"
+          ? record.origin
+          : undefined;
+      appendImage(src, mimeType, origin);
+    }
+  }
+
+  if (normalized.length === 0 && typeof fallbackText === "string") {
+    for (const dataUrl of extractDataImageUrlsFromText(fallbackText)) {
+      appendImage(dataUrl, parseMimeTypeFromDataUrl(dataUrl), "data_url");
+    }
+  }
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const normalizeHistoryPartType = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase();
+};
+
+const normalizeHistoryMessage = (message: Message): Message | null => {
+  if (message.role !== "user") return message;
+
+  const text = message.content.trim();
+  const hasImages = Array.isArray(message.images) && message.images.length > 0;
+  if (text.length > 0 || hasImages) return message;
+
+  const hasToolCalls =
+    Array.isArray(message.toolCalls) && message.toolCalls.length > 0;
+  const hasOnlyToolUseParts =
+    Array.isArray(message.contentParts) &&
+    message.contentParts.length > 0 &&
+    message.contentParts.every((part) => part.type === "tool_use");
+
+  // 历史里偶发 role=user 的工具协议记录：不展示成 user 空白气泡，
+  // 改为 assistant 轨迹，保留工具执行历史。
+  if (hasToolCalls || hasOnlyToolUseParts) {
+    return {
+      ...message,
+      role: "assistant",
+    };
+  }
+
+  return null;
+};
+
+const normalizeHistoryMessages = (messages: Message[]): Message[] =>
+  messages
+    .map((msg) => normalizeHistoryMessage(msg))
+    .filter((msg): msg is Message => msg !== null);
+
+const hasLegacyFallbackToolNames = (messages: Message[]): boolean =>
+  messages.some((message) =>
+    (message.toolCalls || []).some((toolCall) =>
+      /^工具调用\s+call_[0-9a-z]+$/i.test(toolCall.name.trim()),
+    ),
+  );
+
+const resolveHistoryToolName = (
+  toolId: string,
+  nameById: Map<string, string>,
+): string => {
+  const existing = nameById.get(toolId);
+  if (existing && existing.trim()) {
+    return existing.trim();
+  }
+  const shortId = toolId.trim().slice(0, 8);
+  return shortId ? `工具调用 ${shortId}` : "工具调用";
+};
+
+const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
+  const merged: Message[] = [];
+
+  for (const current of messages) {
+    if (merged.length === 0) {
+      merged.push(current);
+      continue;
+    }
+
+    const previous = merged[merged.length - 1];
+    if (!previous || previous.role !== "assistant" || current.role !== "assistant") {
+      merged.push(current);
+      continue;
+    }
+
+    const content = [previous.content.trim(), current.content.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    const contentParts = (() => {
+      const nextParts: ContentPart[] = [...(previous.contentParts || [])];
+      for (const part of current.contentParts || []) {
+        if (part.type === "tool_use") {
+          const existingIndex = nextParts.findIndex(
+            (item) =>
+              item.type === "tool_use" &&
+              item.toolCall.id === part.toolCall.id,
+          );
+          if (existingIndex >= 0) {
+            // 同一工具调用在历史里会先有 running，再有 completed/failed。
+            // 这里保留同一位置并覆盖为最新状态，避免渲染重复条目。
+            nextParts[existingIndex] = part;
+            continue;
+          }
+          nextParts.push(part);
+          continue;
+        }
+
+        if (part.type === "action_required") {
+          const existingIndex = nextParts.findIndex(
+            (item) =>
+              item.type === "action_required" &&
+              item.actionRequired.requestId === part.actionRequired.requestId,
+          );
+          if (existingIndex >= 0) {
+            nextParts[existingIndex] = part;
+            continue;
+          }
+          nextParts.push(part);
+          continue;
+        }
+
+        nextParts.push(part);
+      }
+      return nextParts;
+    })();
+    const toolCallMap = new Map<string, NonNullable<Message["toolCalls"]>[number]>();
+    for (const toolCall of [...(previous.toolCalls || []), ...(current.toolCalls || [])]) {
+      toolCallMap.set(toolCall.id, toolCall);
+    }
+    const toolCalls = Array.from(toolCallMap.values());
+
+    merged[merged.length - 1] = {
+      ...previous,
+      content,
+      contentParts: contentParts.length > 0 ? contentParts : undefined,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      timestamp: current.timestamp,
+      isThinking: false,
+      thinkingContent: undefined,
+    };
+  }
+
+  return merged;
+};
+
+const resolveActionPromptKey = (action: ActionRequired): string | null => {
+  if (typeof action.prompt === "string" && action.prompt.trim()) {
+    return action.prompt.trim();
+  }
+
+  if (action.questions && action.questions.length > 0) {
+    const question = action.questions[0]?.question;
+    if (typeof question === "string" && question.trim()) {
+      return question.trim();
+    }
+  }
+
+  const schema = action.requestedSchema as Record<string, unknown> | undefined;
+  const properties =
+    schema?.properties && typeof schema.properties === "object"
+      ? (schema.properties as Record<string, unknown>)
+      : undefined;
+  const answer =
+    properties?.answer && typeof properties.answer === "object"
+      ? (properties.answer as Record<string, unknown>)
+      : undefined;
+  const description = answer?.description;
+  if (typeof description === "string" && description.trim()) {
+    return description.trim();
+  }
+
+  return null;
+};
 
 // 音效相关（复用）
 let toolcallAudio: HTMLAudioElement | null = null;
@@ -132,10 +686,17 @@ const loadTransient = <T>(key: string, defaultValue: T): T => {
     if (stored) {
       const parsed = JSON.parse(stored);
       if (key.startsWith("aster_messages") && Array.isArray(parsed)) {
-        return parsed.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp),
-        })) as unknown as T;
+        const normalizedMessages = parsed
+          .map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp),
+          })) as Message[];
+        const normalized = normalizeHistoryMessages(normalizedMessages);
+        // 清理旧版本历史缓存中的 fallback 工具名，触发回源重建真实工具名称。
+        if (hasLegacyFallbackToolNames(normalized)) {
+          return [] as unknown as T;
+        }
+        return normalized as unknown as T;
       }
       return parsed;
     }
@@ -189,6 +750,11 @@ interface AgentPreferenceKeys {
   migratedKey: string;
 }
 
+interface SessionModelPreference {
+  providerType: string;
+  model: string;
+}
+
 const getAgentPreferenceKeys = (
   workspaceId?: string | null,
 ): AgentPreferenceKeys => {
@@ -206,6 +772,35 @@ const getAgentPreferenceKeys = (
     modelKey: `agent_pref_model_${resolvedWorkspaceId}`,
     migratedKey: `agent_pref_migrated_${resolvedWorkspaceId}`,
   };
+};
+
+const getSessionModelPreferenceKey = (
+  workspaceId: string | null | undefined,
+  sessionId: string,
+): string => {
+  const resolvedWorkspaceId = workspaceId?.trim();
+  if (!resolvedWorkspaceId) {
+    return `agent_topic_model_pref_global_${sessionId}`;
+  }
+  return `agent_topic_model_pref_${resolvedWorkspaceId}_${sessionId}`;
+};
+
+const loadSessionModelPreference = (
+  workspaceId: string | null | undefined,
+  sessionId: string,
+): SessionModelPreference | null => {
+  const key = getSessionModelPreferenceKey(workspaceId, sessionId);
+  const parsed = loadPersisted<SessionModelPreference | null>(key, null);
+  if (!parsed) {
+    return null;
+  }
+  if (
+    typeof parsed.providerType !== "string" ||
+    typeof parsed.model !== "string"
+  ) {
+    return null;
+  }
+  return parsed;
 };
 
 const resolveWorkspaceAgentPreferences = (
@@ -282,6 +877,16 @@ const mapProviderName = (providerType: string): string => {
   return mapping[providerType.toLowerCase()] || providerType;
 };
 
+const mapSessionToTopic = (session: AsterSessionInfo): Topic => ({
+  id: session.id,
+  title:
+    session.name ||
+    `话题 ${new Date(session.created_at * 1000).toLocaleDateString("zh-CN")}`,
+  createdAt: new Date(session.created_at * 1000),
+  messagesCount: session.messages_count ?? 0,
+  executionStrategy: normalizeExecutionStrategy(session.execution_strategy),
+});
+
 export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   const { onWriteFile, workspaceId } = options;
 
@@ -341,6 +946,15 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       ? loadTransient<Message[]>(`aster_messages_${workspaceId.trim()}`, [])
       : [],
   );
+
+  // 兜底清理：防止旧状态中遗留空白 user 消息导致历史出现空白气泡
+  useEffect(() => {
+    setMessages((prev) => {
+      const normalized = normalizeHistoryMessages(prev);
+      return normalized.length === prev.length ? prev : normalized;
+    });
+  }, [sessionId, workspaceId]);
+
   const [topics, setTopics] = useState<Topic[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [pendingActions, setPendingActions] = useState<ActionRequired[]>([]);
@@ -350,17 +964,37 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   );
 
   // Provider/Model（按工作区保存）
-  const [providerType, setProviderType] = useState(
+  const [providerType, setProviderTypeState] = useState(
     () => initialPreferencesRef.current.providerType,
   );
-  const [model, setModel] = useState(() => initialPreferencesRef.current.model);
+  const [model, setModelState] = useState(
+    () => initialPreferencesRef.current.model,
+  );
+  const [executionStrategy, setExecutionStrategyState] =
+    useState<AsterExecutionStrategy>(() => {
+      const resolvedWorkspaceId = workspaceId?.trim();
+      if (!resolvedWorkspaceId) {
+        return "react";
+      }
+      return normalizeExecutionStrategy(
+        loadPersisted<string | null>(
+          `aster_execution_strategy_${resolvedWorkspaceId}`,
+          "react",
+        ),
+      );
+    });
 
   // Refs
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const currentAssistantMsgIdRef = useRef<string | null>(null);
+  const currentStreamingSessionIdRef = useRef<string | null>(null);
+  const warnedKeysRef = useRef<Set<string>>(new Set());
   const restoredWorkspaceRef = useRef<string | null>(null);
   const hydratedSessionRef = useRef<string | null>(null);
   const skipAutoRestoreRef = useRef(false);
+  const sessionIdRef = useRef<string | null>(sessionId);
+  const providerTypeRef = useRef(providerType);
+  const modelRef = useRef(model);
   const scopedProviderPrefKeyRef = useRef<string>(
     getAgentPreferenceKeys(workspaceId).providerKey,
   );
@@ -368,19 +1002,104 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     getAgentPreferenceKeys(workspaceId).modelKey,
   );
 
+  sessionIdRef.current = sessionId;
+  providerTypeRef.current = providerType;
+  modelRef.current = model;
+
+  const persistSessionModelPreference = useCallback(
+    (targetSessionId: string, targetProviderType: string, targetModel: string) => {
+      savePersisted(getSessionModelPreferenceKey(workspaceId, targetSessionId), {
+        providerType: targetProviderType,
+        model: targetModel,
+      });
+    },
+    [workspaceId],
+  );
+
+  const filterSessionsByWorkspace = useCallback(
+    (sessions: AsterSessionInfo[]): AsterSessionInfo[] => {
+      const resolvedWorkspaceId = workspaceId?.trim();
+      if (!resolvedWorkspaceId) {
+        return [];
+      }
+
+      return sessions.filter((session) => {
+        const mappedWorkspaceId = loadPersistedString(
+          `agent_session_workspace_${session.id}`,
+        );
+
+        if (!mappedWorkspaceId || mappedWorkspaceId === "__invalid__") {
+          // 兼容历史会话：未写入映射时暂归入当前工作区，避免会话“消失”。
+          return true;
+        }
+
+        return mappedWorkspaceId === resolvedWorkspaceId;
+      });
+    },
+    [workspaceId],
+  );
+
+  const setProviderType = useCallback(
+    (nextProviderType: string) => {
+      providerTypeRef.current = nextProviderType;
+      setProviderTypeState(nextProviderType);
+      savePersisted(scopedProviderPrefKeyRef.current, nextProviderType);
+
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
+        persistSessionModelPreference(
+          currentSessionId,
+          nextProviderType,
+          modelRef.current,
+        );
+      }
+    },
+    [persistSessionModelPreference],
+  );
+
+  const setModel = useCallback(
+    (nextModel: string) => {
+      modelRef.current = nextModel;
+      setModelState(nextModel);
+      savePersisted(scopedModelPrefKeyRef.current, nextModel);
+
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
+        persistSessionModelPreference(
+          currentSessionId,
+          providerTypeRef.current,
+          nextModel,
+        );
+      }
+    },
+    [persistSessionModelPreference],
+  );
+
   // workspace 变化时恢复 Provider/Model 偏好
   useEffect(() => {
     const { providerKey, modelKey } = getAgentPreferenceKeys(workspaceId);
+    warnedKeysRef.current.clear();
 
     scopedProviderPrefKeyRef.current = providerKey;
     scopedModelPrefKeyRef.current = modelKey;
 
     const scopedPreferences = resolveWorkspaceAgentPreferences(workspaceId);
-    setProviderType(scopedPreferences.providerType);
-    setModel(scopedPreferences.model);
+    setProviderTypeState(scopedPreferences.providerType);
+    setModelState(scopedPreferences.model);
 
     savePersisted(providerKey, scopedPreferences.providerType);
     savePersisted(modelKey, scopedPreferences.model);
+
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) {
+      setExecutionStrategyState("react");
+      return;
+    }
+    const persistedStrategy = loadPersisted<string | null>(
+      `aster_execution_strategy_${resolvedWorkspaceId}`,
+      "react",
+    );
+    setExecutionStrategyState(normalizeExecutionStrategy(persistedStrategy));
   }, [workspaceId]);
 
   // 持久化 provider/model（仅写当前工作区）
@@ -391,6 +1110,54 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   useEffect(() => {
     savePersisted(scopedModelPrefKeyRef.current, model);
   }, [model]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    savePersisted(getSessionModelPreferenceKey(workspaceId, sessionId), {
+      providerType,
+      model,
+    });
+  }, [model, providerType, sessionId, workspaceId]);
+
+  useEffect(() => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!resolvedWorkspaceId) {
+      return;
+    }
+    savePersisted(
+      `aster_execution_strategy_${resolvedWorkspaceId}`,
+      executionStrategy,
+    );
+  }, [executionStrategy, workspaceId]);
+
+  const setExecutionStrategy = useCallback(
+    (nextStrategy: AsterExecutionStrategy) => {
+      const normalized = normalizeExecutionStrategy(nextStrategy);
+      setExecutionStrategyState(normalized);
+
+      if (!sessionId) {
+        return;
+      }
+
+      setAsterSessionExecutionStrategy(sessionId, normalized)
+        .then(() => {
+          setTopics((prev) =>
+            prev.map((topic) =>
+              topic.id === sessionId
+                ? { ...topic, executionStrategy: normalized }
+                : topic,
+            ),
+          );
+        })
+        .catch((error) => {
+          console.warn("[AsterChat] 更新会话执行策略失败:", error);
+        });
+    },
+    [sessionId],
+  );
 
   useEffect(() => {
     const resolvedWorkspaceId = workspaceId?.trim();
@@ -405,10 +1172,22 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     savePersisted(scopedPersistedSessionKey, sessionId);
 
     if (sessionId) {
-      savePersisted(
-        `agent_session_workspace_${sessionId}`,
-        resolvedWorkspaceId,
-      );
+      const sessionWorkspaceKey = `agent_session_workspace_${sessionId}`;
+      const existingWorkspaceId = loadPersistedString(sessionWorkspaceKey);
+
+      if (
+        existingWorkspaceId &&
+        existingWorkspaceId !== "__invalid__" &&
+        existingWorkspaceId !== resolvedWorkspaceId
+      ) {
+        console.warn("[AsterChat] 检测到会话与工作区映射冲突，跳过覆盖", {
+          sessionId,
+          existingWorkspaceId,
+          currentWorkspaceId: resolvedWorkspaceId,
+        });
+      } else {
+        savePersisted(sessionWorkspaceKey, resolvedWorkspaceId);
+      }
     }
   }, [
     getScopedPersistedSessionKey,
@@ -430,6 +1209,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       setSessionId(null);
       setMessages([]);
       setPendingActions([]);
+      currentAssistantMsgIdRef.current = null;
+      currentStreamingSessionIdRef.current = null;
       restoredWorkspaceRef.current = null;
       hydratedSessionRef.current = null;
       skipAutoRestoreRef.current = false;
@@ -445,6 +1226,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     setSessionId(scopedSessionId);
     setMessages(scopedMessages);
     setPendingActions([]);
+    currentAssistantMsgIdRef.current = null;
+    currentStreamingSessionIdRef.current = null;
     restoredWorkspaceRef.current = null;
     hydratedSessionRef.current = null;
     skipAutoRestoreRef.current = false;
@@ -462,17 +1245,6 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
         await initAsterAgent();
         setIsInitialized(true);
         console.log("[AsterChat] Agent 初始化成功");
-        // 初始化后加载话题列表
-        const sessions = await listAsterSessions();
-        const topicList: Topic[] = sessions.map((s: AsterSessionInfo) => ({
-          id: s.id,
-          title:
-            s.name ||
-            `话题 ${new Date(s.created_at * 1000).toLocaleDateString("zh-CN")}`,
-          createdAt: new Date(s.created_at * 1000),
-          messagesCount: s.messages_count ?? 0,
-        }));
-        setTopics(topicList);
       } catch (err) {
         console.error("[AsterChat] 初始化失败:", err);
       }
@@ -492,38 +1264,29 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
     listAsterSessions()
       .then((sessions) => {
-        const topicList: Topic[] = sessions.map((s: AsterSessionInfo) => ({
-          id: s.id,
-          title:
-            s.name ||
-            `话题 ${new Date(s.created_at * 1000).toLocaleDateString("zh-CN")}`,
-          createdAt: new Date(s.created_at * 1000),
-          messagesCount: s.messages_count ?? 0,
-        }));
+        const topicList = filterSessionsByWorkspace(sessions).map(mapSessionToTopic);
         setTopics(topicList);
       })
       .catch((error) => {
         console.error("[AsterChat] 加载话题失败:", error);
       });
-  }, [isInitialized, workspaceId]);
+  }, [filterSessionsByWorkspace, isInitialized, workspaceId]);
 
   // 加载话题列表
   const loadTopics = useCallback(async () => {
+    if (!workspaceId?.trim()) {
+      setTopics([]);
+      return;
+    }
+
     try {
       const sessions = await listAsterSessions();
-      const topicList: Topic[] = sessions.map((s: AsterSessionInfo) => ({
-        id: s.id,
-        title:
-          s.name ||
-          `话题 ${new Date(s.created_at * 1000).toLocaleDateString("zh-CN")}`,
-        createdAt: new Date(s.created_at * 1000),
-        messagesCount: s.messages_count ?? 0,
-      }));
+      const topicList = filterSessionsByWorkspace(sessions).map(mapSessionToTopic);
       setTopics(topicList);
     } catch (error) {
       console.error("[AsterChat] 加载话题失败:", error);
     }
-  }, []);
+  }, [filterSessionsByWorkspace, workspaceId]);
 
   // 确保有会话
   const ensureSession = useCallback(async (): Promise<string | null> => {
@@ -531,7 +1294,12 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
     try {
       const resolvedWorkspaceId = getRequiredWorkspaceId();
-      const newSessionId = await createAsterSession(resolvedWorkspaceId);
+      const newSessionId = await createAsterSession(
+        resolvedWorkspaceId,
+        undefined,
+        undefined,
+        executionStrategy,
+      );
       setSessionId(newSessionId);
       skipAutoRestoreRef.current = false;
       return newSessionId;
@@ -540,7 +1308,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       toast.error(`创建会话失败: ${error}`);
       return null;
     }
-  }, [getRequiredWorkspaceId, sessionId]);
+  }, [executionStrategy, getRequiredWorkspaceId, sessionId]);
 
   // 辅助函数：追加文本到 contentParts
   const appendTextToParts = (
@@ -569,7 +1337,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       _webSearch?: boolean,
       _thinking?: boolean,
       skipUserMessage = false,
+      executionStrategyOverride?: AsterExecutionStrategy,
     ) => {
+      const effectiveExecutionStrategy =
+        executionStrategyOverride || executionStrategy;
       // 助手消息占位符
       const assistantMsgId = crypto.randomUUID();
       const assistantMsg: Message = {
@@ -604,8 +1375,81 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       try {
         const activeSessionId = await ensureSession();
         if (!activeSessionId) throw new Error("无法创建会话");
+        currentStreamingSessionIdRef.current = activeSessionId;
 
         const eventName = `aster_stream_${assistantMsgId}`;
+
+        const upsertActionRequest = (
+          actionData: ActionRequired,
+          options?: { replaceByPrompt?: boolean },
+        ) => {
+          const replaceByPrompt = options?.replaceByPrompt ?? false;
+          const promptKey = replaceByPrompt
+            ? resolveActionPromptKey(actionData)
+            : null;
+
+          setPendingActions((prev) => {
+            let next = [...prev];
+
+            if (replaceByPrompt && promptKey) {
+              next = next.filter((item) => {
+                const itemKey = resolveActionPromptKey(item);
+                return !(
+                  item.requestId !== actionData.requestId &&
+                  itemKey &&
+                  itemKey === promptKey
+                );
+              });
+            }
+
+            if (next.some((item) => item.requestId === actionData.requestId)) {
+              return next;
+            }
+
+            return [...next, actionData];
+          });
+
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id !== assistantMsgId) return msg;
+
+              let nextRequests = [...(msg.actionRequests || [])];
+              let nextParts = [...(msg.contentParts || [])];
+
+              if (replaceByPrompt && promptKey) {
+                nextRequests = nextRequests.filter((item) => {
+                  const itemKey = resolveActionPromptKey(item);
+                  return !(
+                    item.requestId !== actionData.requestId &&
+                    itemKey &&
+                    itemKey === promptKey
+                  );
+                });
+                nextParts = nextParts.filter(
+                  (part) =>
+                    !(
+                      part.type === "action_required" &&
+                      part.actionRequired.requestId !== actionData.requestId &&
+                      resolveActionPromptKey(part.actionRequired) === promptKey
+                    ),
+                );
+              }
+
+              if (nextRequests.some((item) => item.requestId === actionData.requestId)) {
+                return msg;
+              }
+
+              nextRequests.push(actionData);
+              nextParts = appendActionRequiredToParts(nextParts, actionData);
+
+              return {
+                ...msg,
+                actionRequests: nextRequests,
+                contentParts: nextParts,
+              };
+            }),
+          );
+        };
 
         // 设置事件监听
         unlisten = await safeListen<StreamEvent>(eventName, (event) => {
@@ -643,18 +1487,24 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 startTime: new Date(),
               };
 
+              const toolArgs = parseJsonObject(data.arguments);
+
               // 检查是否是写入文件工具
               const toolName = data.tool_name.toLowerCase();
               if (toolName.includes("write") || toolName.includes("create")) {
-                try {
-                  const args = JSON.parse(data.arguments || "{}");
-                  const filePath = args.path || args.file_path || args.filePath;
-                  const fileContent = args.content || args.text || "";
-                  if (filePath && fileContent && onWriteFile) {
+                if (toolArgs) {
+                  const filePath =
+                    toolArgs.path || toolArgs.file_path || toolArgs.filePath;
+                  const fileContent = toolArgs.content || toolArgs.text || "";
+                  if (
+                    typeof filePath === "string" &&
+                    typeof fileContent === "string" &&
+                    filePath &&
+                    fileContent &&
+                    onWriteFile
+                  ) {
                     onWriteFile(fileContent, filePath);
                   }
-                } catch (e) {
-                  console.warn("[AsterChat] 解析工具参数失败:", e);
                 }
               }
 
@@ -673,6 +1523,37 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                   };
                 }),
               );
+
+              if (isAskToolName(data.tool_name)) {
+                const requestIdFromArgs = resolveAskRequestId(toolArgs);
+                const question =
+                  (toolArgs && resolveAskQuestionText(toolArgs)) ||
+                  "请提供继续执行所需信息";
+                const options = normalizeAskOptions(
+                  toolArgs?.options || toolArgs?.choices || toolArgs?.enum,
+                );
+                const explicitRequestId = requestIdFromArgs?.trim();
+                const normalizedQuestions =
+                  normalizeActionQuestions(toolArgs?.questions) ?? [
+                    {
+                      question,
+                      options,
+                      multiSelect: false,
+                    },
+                  ];
+
+                const fallbackAction: ActionRequired = {
+                  requestId:
+                    explicitRequestId ||
+                    `fallback:${data.tool_id || crypto.randomUUID()}`,
+                  actionType: "ask_user",
+                  prompt: question,
+                  isFallback: !explicitRequestId,
+                  questions: normalizedQuestions,
+                };
+
+                upsertActionRequest(fallbackAction, { replaceByPrompt: true });
+              }
               break;
             }
 
@@ -680,6 +1561,13 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               setMessages((prev) =>
                 prev.map((msg) => {
                   if (msg.id !== assistantMsgId) return msg;
+                  const normalizedResult = {
+                    ...data.result,
+                    images: normalizeToolResultImages(
+                      data.result?.images,
+                      data.result?.output,
+                    ),
+                  };
                   const updatedToolCalls = (msg.toolCalls || []).map((tc) =>
                     tc.id === data.tool_id
                       ? {
@@ -687,7 +1575,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                           status: data.result.success
                             ? ("completed" as const)
                             : ("failed" as const),
-                          result: data.result,
+                          result: normalizedResult,
                           endTime: new Date(),
                         }
                       : tc,
@@ -705,7 +1593,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                             status: data.result.success
                               ? ("completed" as const)
                               : ("failed" as const),
-                            result: data.result,
+                            result: normalizedResult,
                             endTime: new Date(),
                           },
                         };
@@ -722,6 +1610,50 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               );
               break;
 
+            case "action_required": {
+              const actionType = normalizeActionType(data.action_type);
+              if (!actionType) {
+                console.warn(
+                  `[AsterChat] 忽略未知 action_required 类型: ${data.action_type}`,
+                );
+                break;
+              }
+
+              const actionData: ActionRequired = {
+                requestId: data.request_id,
+                actionType,
+                toolName: data.tool_name,
+                arguments: data.arguments,
+                prompt: data.prompt,
+                questions: normalizeActionQuestions(data.questions, data.prompt),
+                requestedSchema: data.requested_schema,
+                isFallback: false,
+              };
+
+              if (
+                effectiveExecutionStrategy === "auto" &&
+                actionData.actionType === "tool_confirmation"
+              ) {
+                void confirmAsterAction(
+                  actionData.requestId,
+                  true,
+                  "Auto 模式自动确认",
+                ).catch((error) => {
+                  console.error("[AsterChat] Auto 模式自动确认失败:", error);
+                  upsertActionRequest(actionData);
+                  toast.error("Auto 模式自动确认失败，请手动确认");
+                });
+                break;
+              }
+
+              upsertActionRequest(actionData, {
+                replaceByPrompt:
+                  actionData.actionType === "ask_user" ||
+                  actionData.actionType === "elicitation",
+              });
+              break;
+            }
+
             case "final_done":
               setMessages((prev) =>
                 prev.map((msg) =>
@@ -737,6 +1669,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               setIsSending(false);
               unlistenRef.current = null;
               currentAssistantMsgIdRef.current = null;
+              currentStreamingSessionIdRef.current = null;
               if (unlisten) {
                 unlisten();
                 unlisten = null;
@@ -744,7 +1677,11 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               break;
 
             case "error":
-              toast.error(`响应错误: ${data.message}`);
+              if (data.message.includes("429") || data.message.toLowerCase().includes("rate limit")) {
+                toast.warning("请求过于频繁，请稍后重试");
+              } else {
+                toast.error(`响应错误: ${data.message}`);
+              }
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === assistantMsgId
@@ -757,42 +1694,23 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 ),
               );
               setIsSending(false);
+              currentStreamingSessionIdRef.current = null;
               if (unlisten) {
                 unlisten();
                 unlisten = null;
               }
               break;
 
-            // 处理权限确认请求
-            default: {
-              // 检查是否是 action_required 事件（通过原始 payload）
-              const rawEvent = event.payload as unknown as Record<
-                string,
-                unknown
-              >;
-              if (rawEvent.type === "action_required") {
-                const actionPayload =
-                  (rawEvent.data as Record<string, unknown> | undefined) || {};
-                const actionData: ActionRequired = {
-                  requestId: rawEvent.request_id as string,
-                  actionType:
-                    rawEvent.action_type as ActionRequired["actionType"],
-                  toolName: actionPayload.tool_name as string | undefined,
-                  arguments: actionPayload.arguments as
-                    | Record<string, unknown>
-                    | undefined,
-                  prompt:
-                    (actionPayload.prompt as string | undefined) ||
-                    (actionPayload.message as string | undefined),
-                  requestedSchema: actionPayload.requested_schema as
-                    | Record<string, unknown>
-                    | undefined,
-                  timestamp: new Date(),
-                };
-                setPendingActions((prev) => [...prev, actionData]);
+            case "warning": {
+              const warningKey = `${activeSessionId}:${data.code || data.message}`;
+              if (!warnedKeysRef.current.has(warningKey)) {
+                warnedKeysRef.current.add(warningKey);
+                toast.warning(data.message);
               }
               break;
             }
+            default:
+              break;
           }
         });
 
@@ -822,16 +1740,30 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
           resolvedWorkspaceId,
           imagesToSend,
           providerConfig,
+          effectiveExecutionStrategy,
         );
       } catch (error) {
         console.error("[AsterChat] 发送失败:", error);
-        toast.error(`发送失败: ${error}`);
+        const errMsg = String(error);
+        if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
+          toast.warning("请求过于频繁，请稍后重试");
+        } else {
+          toast.error(`发送失败: ${error}`);
+        }
         setMessages((prev) => prev.filter((msg) => msg.id !== assistantMsgId));
         setIsSending(false);
+        currentStreamingSessionIdRef.current = null;
         if (unlisten) unlisten();
       }
     },
-    [ensureSession, getRequiredWorkspaceId, onWriteFile, providerType, model],
+    [
+      ensureSession,
+      executionStrategy,
+      getRequiredWorkspaceId,
+      onWriteFile,
+      providerType,
+      model,
+    ],
   );
 
   // 停止发送
@@ -841,9 +1773,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       unlistenRef.current = null;
     }
 
-    if (sessionId) {
+    const activeSessionId = currentStreamingSessionIdRef.current || sessionId;
+    if (activeSessionId) {
       try {
-        await stopAsterSession(sessionId);
+        await stopAsterSession(activeSessionId);
       } catch (e) {
         console.error("[AsterChat] 停止失败:", e);
       }
@@ -860,6 +1793,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       currentAssistantMsgIdRef.current = null;
     }
 
+    currentStreamingSessionIdRef.current = null;
     setIsSending(false);
     toast.info("已停止生成");
   }, [sessionId]);
@@ -868,13 +1802,22 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   const confirmAction = useCallback(
     async (response: ConfirmResponse) => {
       try {
+        const pendingAction = pendingActions.find(
+          (item) => item.requestId === response.requestId,
+        );
         const actionType =
           response.actionType ||
-          pendingActions.find((item) => item.requestId === response.requestId)
-            ?.actionType;
+          pendingAction?.actionType;
+        const normalizedResponse =
+          typeof response.response === "string" ? response.response.trim() : "";
+        let submittedUserData: unknown = response.userData;
+        let effectiveRequestId = response.requestId;
+        const acknowledgedRequestIds = new Set<string>([response.requestId]);
 
         if (actionType === "elicitation" || actionType === "ask_user") {
-          if (!sessionId) {
+          const activeSessionId =
+            currentStreamingSessionIdRef.current || sessionId;
+          if (!activeSessionId) {
             throw new Error("缺少会话 ID，无法提交 elicitation 响应");
           }
 
@@ -898,14 +1841,34 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
             userData = "";
           }
 
+          submittedUserData = userData;
+
+          if (pendingAction?.isFallback) {
+            const fallbackPromptKey = resolveActionPromptKey(pendingAction);
+            const resolvedAction = pendingActions.find((item) => {
+              if (item.requestId === pendingAction.requestId) return false;
+              if (item.isFallback) return false;
+              if (item.actionType !== pendingAction.actionType) return false;
+              if (!fallbackPromptKey) return false;
+              return resolveActionPromptKey(item) === fallbackPromptKey;
+            });
+
+            if (!resolvedAction) {
+              throw new Error("Ask 请求 ID 尚未就绪，请稍后再试");
+            }
+
+            effectiveRequestId = resolvedAction.requestId;
+            acknowledgedRequestIds.add(resolvedAction.requestId);
+          }
+
           await submitAsterElicitationResponse(
-            sessionId,
-            response.requestId,
+            activeSessionId,
+            effectiveRequestId,
             userData,
           );
         } else {
           await confirmAsterAction(
-            response.requestId,
+            effectiveRequestId,
             response.confirmed,
             response.response,
           );
@@ -913,11 +1876,56 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
         // 移除已处理的请求
         setPendingActions((prev) =>
-          prev.filter((a) => a.requestId !== response.requestId),
+          prev.filter((a) => !acknowledgedRequestIds.has(a.requestId)),
+        );
+        const shouldPersistSubmittedAction =
+          actionType === "elicitation" || actionType === "ask_user";
+        setMessages((prev) =>
+          prev.map((msg) => ({
+            ...msg,
+            actionRequests: shouldPersistSubmittedAction
+              ? msg.actionRequests?.map((item) =>
+                  acknowledgedRequestIds.has(item.requestId)
+                    ? {
+                        ...item,
+                        status: "submitted" as const,
+                        submittedResponse: normalizedResponse || undefined,
+                        submittedUserData,
+                      }
+                    : item,
+                )
+              : msg.actionRequests?.filter(
+                  (item) => !acknowledgedRequestIds.has(item.requestId),
+                ),
+            contentParts: shouldPersistSubmittedAction
+              ? msg.contentParts?.map((part) =>
+                  part.type === "action_required" &&
+                  acknowledgedRequestIds.has(part.actionRequired.requestId)
+                    ? {
+                        ...part,
+                        actionRequired: {
+                          ...part.actionRequired,
+                          status: "submitted" as const,
+                          submittedResponse: normalizedResponse || undefined,
+                          submittedUserData,
+                        },
+                      }
+                    : part,
+                )
+              : msg.contentParts?.filter(
+                  (part) =>
+                    part.type !== "action_required" ||
+                    !acknowledgedRequestIds.has(part.actionRequired.requestId),
+                ),
+          })),
         );
       } catch (error) {
         console.error("[AsterChat] 确认失败:", error);
-        toast.error("确认操作失败");
+        toast.error(
+          error instanceof Error && error.message
+            ? error.message
+            : "确认操作失败",
+        );
       }
     },
     [pendingActions, sessionId],
@@ -952,6 +1960,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       restoredWorkspaceRef.current = null;
       hydratedSessionRef.current = null;
       skipAutoRestoreRef.current = true;
+      currentAssistantMsgIdRef.current = null;
+      currentStreamingSessionIdRef.current = null;
 
       if (showToast) {
         toast.success(toastMessage);
@@ -979,35 +1989,236 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     async (topicId: string) => {
       if (topicId === sessionId && messages.length > 0) return;
 
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
+        persistSessionModelPreference(
+          currentSessionId,
+          providerTypeRef.current,
+          modelRef.current,
+        );
+      }
+
       skipAutoRestoreRef.current = false;
       try {
         const detail = await getAsterSession(topicId);
-        const loadedMessages: Message[] = detail.messages.map((msg, index) => {
-          // 从 TauriMessageContent 数组中提取文本和 contentParts
-          const contentParts: ContentPart[] = [];
-          const textParts: string[] = [];
+        const topicPreference = loadSessionModelPreference(workspaceId, topicId);
+        const historyToolNameById = new Map<string, string>();
+        const loadedMessages: Message[] = detail.messages
+          .filter(
+            (msg) =>
+              msg.role === "user" || msg.role === "assistant" || msg.role === "tool",
+          )
+          .flatMap((msg, index) => {
+            // 从 TauriMessageContent 数组中提取文本和 contentParts
+            const contentParts: ContentPart[] = [];
+            const textParts: string[] = [];
+            const toolCalls: Message["toolCalls"] = [];
+            const images: MessageImage[] = [];
+            const messageTimestamp = new Date(msg.timestamp * 1000);
+            const rawParts = Array.isArray(msg.content) ? msg.content : [];
 
-          for (const part of msg.content) {
-            if (part.type === "text" && part.text) {
-              textParts.push(part.text);
-              contentParts.push({ type: "text", text: part.text });
-            } else if (part.type === "thinking" && part.text) {
-              contentParts.push({ type: "thinking", text: part.text });
+            const appendText = (value: unknown) => {
+              if (typeof value !== "string") return;
+              const normalized = value.trim();
+              if (!normalized) return;
+              textParts.push(normalized);
+              contentParts.push({ type: "text", text: normalized });
+            };
+
+            for (const rawPart of rawParts) {
+              if (!rawPart || typeof rawPart !== "object") continue;
+              const part = rawPart as unknown as Record<string, unknown>;
+              const partType = normalizeHistoryPartType(part.type);
+
+              if (
+                partType === "text" ||
+                partType === "input_text" ||
+                partType === "output_text"
+              ) {
+                appendText(part.text ?? part.content);
+                continue;
+              }
+
+              if (
+                (partType === "thinking" || partType === "reasoning") &&
+                typeof (part.text ?? part.content) === "string"
+              ) {
+                const thinkingText = String(part.text ?? part.content).trim();
+                if (thinkingText) {
+                  contentParts.push({ type: "thinking", text: thinkingText });
+                }
+                continue;
+              }
+
+              if (
+                partType === "image" ||
+                partType === "input_image" ||
+                partType === "image_url"
+              ) {
+                const normalizedImage = normalizeHistoryImagePart(part);
+                if (normalizedImage) {
+                  images.push(normalizedImage);
+                }
+                continue;
+              }
+
+              if (partType === "tool_request") {
+                if (!part.id || typeof part.id !== "string") continue;
+                const nestedToolCall =
+                  part.toolCall && typeof part.toolCall === "object"
+                    ? (part.toolCall as Record<string, unknown>)
+                    : part.tool_call && typeof part.tool_call === "object"
+                      ? (part.tool_call as Record<string, unknown>)
+                      : undefined;
+                const nestedToolCallValue =
+                  nestedToolCall?.value && typeof nestedToolCall.value === "object"
+                    ? (nestedToolCall.value as Record<string, unknown>)
+                    : undefined;
+                const toolName =
+                  (
+                    (typeof part.tool_name === "string" && part.tool_name.trim()) ||
+                    (typeof part.toolName === "string" && part.toolName.trim()) ||
+                    (typeof part.name === "string" && part.name.trim()) ||
+                    (typeof nestedToolCallValue?.name === "string" &&
+                      nestedToolCallValue.name.trim())
+                  )
+                    ? (
+                        (typeof part.tool_name === "string" &&
+                          part.tool_name.trim()) ||
+                        (typeof part.toolName === "string" &&
+                          part.toolName.trim()) ||
+                        (typeof part.name === "string" && part.name.trim()) ||
+                        (typeof nestedToolCallValue?.name === "string" &&
+                          nestedToolCallValue.name.trim()) ||
+                        ""
+                      )
+                    : resolveHistoryToolName(part.id, historyToolNameById);
+                const rawArguments =
+                  part.arguments ??
+                  nestedToolCallValue?.arguments ??
+                  nestedToolCall?.arguments;
+                const toolCall = {
+                  id: part.id,
+                  name: toolName,
+                  arguments: stringifyToolArguments(rawArguments),
+                  status: "running" as const,
+                  startTime: messageTimestamp,
+                };
+                historyToolNameById.set(part.id, toolName);
+                toolCalls.push(toolCall);
+                contentParts.push({ type: "tool_use", toolCall });
+                continue;
+              }
+
+              if (partType === "tool_response") {
+                if (!part.id || typeof part.id !== "string") continue;
+                const success = part.success !== false;
+                const toolName =
+                  resolveHistoryToolName(part.id, historyToolNameById);
+                const outputText =
+                  typeof part.output === "string" ? part.output : "";
+                const toolCall = {
+                  id: part.id,
+                  name: toolName,
+                  status: success ? ("completed" as const) : ("failed" as const),
+                  startTime: messageTimestamp,
+                  endTime: messageTimestamp,
+                  result: {
+                    success,
+                    output: outputText,
+                    error:
+                      typeof part.error === "string"
+                        ? part.error
+                        : undefined,
+                    images: normalizeToolResultImages(part.images, outputText),
+                  },
+                };
+                toolCalls.push(toolCall);
+                contentParts.push({ type: "tool_use", toolCall });
+                continue;
+              }
+
+              if (partType !== "action_required") continue;
+
+              const actionType =
+                typeof part.action_type === "string" ? part.action_type : "";
+              if (actionType !== "elicitation_response") continue;
+
+              const data =
+                part.data && typeof part.data === "object"
+                  ? (part.data as Record<string, unknown>)
+                  : undefined;
+              const userData =
+                data && "user_data" in data ? data.user_data : part.data;
+              const resolved = resolveHistoryUserDataText(userData);
+              if (!resolved) continue;
+
+              textParts.push(resolved);
+              contentParts.push({ type: "text", text: resolved });
             }
-          }
 
-          return {
-            id: `${topicId}-${index}`,
-            role: msg.role as "user" | "assistant",
-            content: textParts.join("\n"),
-            contentParts: contentParts.length > 0 ? contentParts : undefined,
-            timestamp: new Date(msg.timestamp * 1000),
-            isThinking: false,
-          };
-        });
+            const content = textParts.join("\n").trim();
+            let normalizedRole =
+              msg.role === "tool" ? "assistant" : (msg.role as "user" | "assistant");
+            const hasToolMetadata =
+              toolCalls.length > 0 ||
+              contentParts.some((part) => part.type === "tool_use");
 
-        setMessages(loadedMessages);
+            if (normalizedRole === "user" && !content && images.length === 0) {
+              if (hasToolMetadata) {
+                normalizedRole = "assistant";
+              } else {
+                return [];
+              }
+            }
+
+            if (
+              !content &&
+              images.length === 0 &&
+              contentParts.length === 0 &&
+              toolCalls.length === 0
+            ) {
+              return [];
+            }
+
+            return [
+              {
+                id: `${topicId}-${index}`,
+                role: normalizedRole,
+                content,
+                images: images.length > 0 ? images : undefined,
+                contentParts: contentParts.length > 0 ? contentParts : undefined,
+                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                timestamp: messageTimestamp,
+                isThinking: false,
+              },
+            ];
+          });
+
+        setMessages(mergeAdjacentAssistantMessages(loadedMessages));
+        const selectedTopic = topics.find((topic) => topic.id === topicId);
+        setExecutionStrategyState(
+          normalizeExecutionStrategy(
+            detail.execution_strategy || selectedTopic?.executionStrategy,
+          ),
+        );
         setSessionId(topicId);
+        if (topicPreference) {
+          providerTypeRef.current = topicPreference.providerType;
+          modelRef.current = topicPreference.model;
+          setProviderTypeState(topicPreference.providerType);
+          setModelState(topicPreference.model);
+          savePersisted(
+            scopedProviderPrefKeyRef.current,
+            topicPreference.providerType,
+          );
+          savePersisted(scopedModelPrefKeyRef.current, topicPreference.model);
+          persistSessionModelPreference(
+            topicId,
+            topicPreference.providerType,
+            topicPreference.model,
+          );
+        }
         toast.info("已切换话题");
       } catch (error) {
         console.error("[AsterChat] 切换话题失败:", error);
@@ -1023,7 +2234,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       getScopedPersistedSessionKey,
       getScopedSessionKey,
       messages.length,
+      persistSessionModelPreference,
       sessionId,
+      topics,
+      workspaceId,
     ],
   );
 
@@ -1109,6 +2323,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
           setSessionId(null);
           setMessages([]);
           setPendingActions([]);
+          currentAssistantMsgIdRef.current = null;
+          currentStreamingSessionIdRef.current = null;
           hydratedSessionRef.current = null;
           restoredWorkspaceRef.current = null;
           saveTransient(getScopedSessionKey(), null);
@@ -1155,6 +2371,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     setSessionId(null);
     setMessages([]);
     setPendingActions([]);
+    currentAssistantMsgIdRef.current = null;
+    currentStreamingSessionIdRef.current = null;
     restoredWorkspaceRef.current = null;
     hydratedSessionRef.current = null;
   }, []);
@@ -1169,6 +2387,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     setProviderType,
     model,
     setModel,
+    executionStrategy,
+    setExecutionStrategy,
     providerConfig: {}, // 简化版本
     isConfigLoading: false,
 

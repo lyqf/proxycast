@@ -10,23 +10,216 @@ use serde::{Deserialize, Serialize};
 /// 从工具结果中提取文本内容
 ///
 /// 使用 serde_json 来处理，避免直接依赖 rmcp 类型
+fn push_non_empty(target: &mut Vec<String>, value: Option<&str>) {
+    let Some(raw) = value else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+        target.push(trimmed.to_string());
+    }
+}
+
+fn dedupe_preserve_order(items: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped = Vec::new();
+    for item in items {
+        if seen.insert(item.clone()) {
+            deduped.push(item);
+        }
+    }
+    deduped
+}
+
+fn collect_tool_result_text(value: &serde_json::Value, target: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => push_non_empty(target, Some(text)),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_tool_result_text(item, target);
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            if let Some(content) = obj.get("content") {
+                collect_tool_result_text(content, target);
+            }
+            if let Some(value) = obj.get("value") {
+                collect_tool_result_text(value, target);
+            }
+            for key in ["text", "output", "stdout", "stderr", "message", "error"] {
+                push_non_empty(target, obj.get(key).and_then(|v| v.as_str()));
+            }
+        }
+        _ => {}
+    }
+}
+
 fn extract_tool_result_text<T: serde::Serialize>(result: &T) -> String {
     if let Ok(json) = serde_json::to_value(result) {
-        if let Some(content) = json.get("content").and_then(|c| c.as_array()) {
-            return content
-                .iter()
-                .filter_map(|item| {
-                    if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        item.get("text").and_then(|t| t.as_str()).map(String::from)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+        let mut parts = Vec::new();
+        collect_tool_result_text(&json, &mut parts);
+        let deduped = dedupe_preserve_order(parts);
+        if !deduped.is_empty() {
+            return deduped.join("\n");
         }
     }
     String::new()
+}
+
+#[derive(Debug, Clone)]
+struct ExtractedToolResult {
+    output: String,
+    images: Vec<TauriToolImage>,
+}
+
+fn parse_mime_type_from_data_url(data_url: &str) -> Option<String> {
+    let normalized = data_url.trim();
+    if !normalized.starts_with("data:image/") {
+        return None;
+    }
+
+    let comma_index = normalized.find(',')?;
+    let meta = &normalized[5..comma_index];
+    let mut parts = meta.split(';');
+    let mime_type = parts.next()?.trim();
+    if mime_type.starts_with("image/") {
+        Some(mime_type.to_string())
+    } else {
+        None
+    }
+}
+
+fn build_tool_image_from_data_url(raw: &str, origin: &str) -> Option<TauriToolImage> {
+    let normalized = raw.trim();
+    if !normalized.starts_with("data:image/") {
+        return None;
+    }
+
+    let comma_index = normalized.find(',')?;
+    let meta = &normalized[..comma_index];
+    if !meta.to_ascii_lowercase().contains(";base64") {
+        return None;
+    }
+
+    Some(TauriToolImage {
+        src: normalized.to_string(),
+        mime_type: parse_mime_type_from_data_url(normalized),
+        origin: Some(origin.to_string()),
+    })
+}
+
+fn extract_data_urls_from_text(text: &str) -> Vec<String> {
+    const PREFIX: &str = "data:image/";
+    let mut urls = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < text.len() {
+        let Some(relative_start) = text[offset..].find(PREFIX) else {
+            break;
+        };
+        let start = offset + relative_start;
+        let slice = &text[start..];
+
+        let end = slice
+            .char_indices()
+            .find_map(|(idx, ch)| {
+                if ch.is_whitespace()
+                    || ch == '"'
+                    || ch == '\''
+                    || ch == ')'
+                    || ch == ']'
+                    || ch == '>'
+                    || ch == '<'
+                {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(slice.len());
+
+        let candidate = slice[..end].trim_end_matches(['.', ',', ';']);
+        if candidate.starts_with(PREFIX) {
+            urls.push(candidate.to_string());
+        }
+
+        if end == 0 {
+            break;
+        }
+        offset = start + end;
+    }
+
+    urls
+}
+
+fn push_tool_image_if_new(
+    target: &mut Vec<TauriToolImage>,
+    seen_sources: &mut std::collections::HashSet<String>,
+    candidate: Option<TauriToolImage>,
+) {
+    if let Some(image) = candidate {
+        if seen_sources.insert(image.src.clone()) {
+            target.push(image);
+        }
+    }
+}
+
+fn collect_tool_result_images(
+    value: &serde_json::Value,
+    target: &mut Vec<TauriToolImage>,
+    seen_sources: &mut std::collections::HashSet<String>,
+) {
+    match value {
+        serde_json::Value::String(text) => {
+            for data_url in extract_data_urls_from_text(text) {
+                push_tool_image_if_new(
+                    target,
+                    seen_sources,
+                    build_tool_image_from_data_url(&data_url, "data_url"),
+                );
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_tool_result_images(item, target, seen_sources);
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            for key in ["image_url", "url", "data"] {
+                if let Some(serde_json::Value::String(raw)) = obj.get(key) {
+                    push_tool_image_if_new(
+                        target,
+                        seen_sources,
+                        build_tool_image_from_data_url(raw, "tool_payload"),
+                    );
+                }
+            }
+            for nested in obj.values() {
+                collect_tool_result_images(nested, target, seen_sources);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_tool_result_data<T: serde::Serialize>(result: &T) -> ExtractedToolResult {
+    let output = extract_tool_result_text(result);
+    let mut images = Vec::new();
+    let mut seen_sources = std::collections::HashSet::new();
+
+    for data_url in extract_data_urls_from_text(&output) {
+        push_tool_image_if_new(
+            &mut images,
+            &mut seen_sources,
+            build_tool_image_from_data_url(&data_url, "data_url"),
+        );
+    }
+
+    if let Ok(json) = serde_json::to_value(result) {
+        collect_tool_result_images(&json, &mut images, &mut seen_sources);
+    }
+
+    ExtractedToolResult { output, images }
 }
 
 /// Tauri Agent 事件
@@ -89,9 +282,27 @@ pub enum TauriAgentEvent {
     #[serde(rename = "error")]
     Error { message: String },
 
+    /// 告警（不中断流程）
+    #[serde(rename = "warning")]
+    Warning {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        message: String,
+    },
+
     /// 完整消息（用于历史记录）
     #[serde(rename = "message")]
     Message { message: TauriMessage },
+}
+
+/// 工具执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TauriToolImage {
+    pub src: String,
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// 工具执行结果
@@ -101,6 +312,8 @@ pub struct TauriToolResult {
     pub output: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<TauriToolImage>>,
 }
 
 /// Token 使用量
@@ -144,6 +357,8 @@ pub enum TauriMessageContent {
         output: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<TauriToolImage>>,
     },
 
     #[serde(rename = "action_required")]
@@ -210,13 +425,21 @@ fn convert_message(message: Message) -> Vec<TauriAgentEvent> {
                 }
             },
             MessageContent::ToolResponse(tool_response) => {
-                let (success, output, error) = match &tool_response.tool_result {
+                let (success, output, error, images) = match &tool_response.tool_result {
                     Ok(result) => {
-                        // 从 CallToolResult 中提取文本内容
-                        let output = extract_tool_result_text(result);
-                        (true, output, None)
+                        let extracted = extract_tool_result_data(result);
+                        (
+                            true,
+                            extracted.output,
+                            None,
+                            if extracted.images.is_empty() {
+                                None
+                            } else {
+                                Some(extracted.images)
+                            },
+                        )
                     }
-                    Err(e) => (false, String::new(), Some(e.to_string())),
+                    Err(e) => (false, String::new(), Some(e.to_string()), None),
                 };
 
                 events.push(TauriAgentEvent::ToolEnd {
@@ -225,6 +448,7 @@ fn convert_message(message: Message) -> Vec<TauriAgentEvent> {
                         success,
                         output,
                         error,
+                        images,
                     },
                 });
             }
@@ -351,18 +575,28 @@ fn convert_message_content(content: &MessageContent) -> Option<TauriMessageConte
                 })
         }
         MessageContent::ToolResponse(resp) => {
-            let (success, output, error) = match &resp.tool_result {
+            let (success, output, error, images) = match &resp.tool_result {
                 Ok(result) => {
-                    let output = extract_tool_result_text(result);
-                    (true, output, None)
+                    let extracted = extract_tool_result_data(result);
+                    (
+                        true,
+                        extracted.output,
+                        None,
+                        if extracted.images.is_empty() {
+                            None
+                        } else {
+                            Some(extracted.images)
+                        },
+                    )
                 }
-                Err(e) => (false, String::new(), Some(e.to_string())),
+                Err(e) => (false, String::new(), Some(e.to_string()), None),
             };
             Some(TauriMessageContent::ToolResponse {
                 id: resp.id.clone(),
                 success,
                 output,
                 error,
+                images,
             })
         }
         MessageContent::ActionRequired(action) => {
@@ -447,5 +681,69 @@ mod tests {
             }
             _ => panic!("Expected ModelChange event"),
         }
+    }
+
+    #[test]
+    fn test_extract_tool_result_text_should_handle_nested_content_and_error() {
+        let payload = serde_json::json!({
+            "status": "success",
+            "value": {
+                "content": [
+                    { "type": "text", "text": "任务已启动" },
+                    { "type": "text", "text": "任务 ID: 123" }
+                ]
+            }
+        });
+        let text = extract_tool_result_text(&payload);
+        assert!(text.contains("任务已启动"));
+        assert!(text.contains("任务 ID: 123"));
+
+        let error_payload = serde_json::json!({
+            "status": "error",
+            "error": "-32603: Tool not found"
+        });
+        let error_text = extract_tool_result_text(&error_payload);
+        assert_eq!(error_text, "-32603: Tool not found");
+    }
+
+    #[test]
+    fn test_extract_tool_result_data_extracts_image_data_url_from_text() {
+        let payload = serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "图片如下 data:image/png;base64,aGVsbG8= 结束"
+                }
+            ]
+        });
+
+        let extracted = extract_tool_result_data(&payload);
+        assert_eq!(
+            extracted.output,
+            "图片如下 data:image/png;base64,aGVsbG8= 结束"
+        );
+        assert_eq!(extracted.images.len(), 1);
+        assert_eq!(extracted.images[0].src, "data:image/png;base64,aGVsbG8=");
+        assert_eq!(extracted.images[0].mime_type.as_deref(), Some("image/png"));
+    }
+
+    #[test]
+    fn test_extract_tool_result_data_should_dedupe_same_image() {
+        let payload = serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "data:image/png;base64,aGVsbG8="
+                },
+                {
+                    "type": "text",
+                    "text": "重复 data:image/png;base64,aGVsbG8="
+                }
+            ]
+        });
+
+        let extracted = extract_tool_result_data(&payload);
+        assert_eq!(extracted.images.len(), 1);
+        assert_eq!(extracted.images[0].src, "data:image/png;base64,aGVsbG8=");
     }
 }

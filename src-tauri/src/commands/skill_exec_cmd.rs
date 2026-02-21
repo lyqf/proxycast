@@ -30,6 +30,7 @@ use crate::commands::skill_error::{
     SKILL_ERR_STREAM_FAILED,
 };
 use crate::database::DbConnection;
+use crate::services::execution_tracker_service::{ExecutionTracker, RunFinishDecision, RunSource};
 use crate::skills::TauriExecutionCallback;
 use proxycast_agent::event_converter::convert_agent_event;
 use proxycast_skills::{
@@ -164,135 +165,182 @@ pub async fn execute_skill(
     // 生成执行 ID，并优先复用前端会话 ID（提升 /skill 与主会话上下文一致性）
     let execution_id = execution_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let session_id = session_id.unwrap_or_else(|| format!("skill-exec-{}", Uuid::new_v4()));
+    let tracker = ExecutionTracker::new(db.inner().clone());
 
-    tracing::info!(
-        "[execute_skill] 开始执行 Skill: name={}, execution_id={}, session_id={}, provider_override={:?}, model_override={:?}",
-        skill_name,
-        execution_id,
-        session_id,
-        provider_override,
-        model_override
-    );
-
-    // 1. 从 registry 加载 skill（Requirements 3.2）
-    let skill = find_skill_by_name(&skill_name).map_err(map_find_skill_error)?;
-
-    // 检查是否禁用了模型调用
-    if skill.disable_model_invocation {
-        return Err(format_skill_error(
-            SKILL_ERR_EXECUTE_FAILED,
-            format!("Skill '{skill_name}' 已禁用模型调用，无法执行"),
-        ));
-    }
-
-    // 2. 创建 TauriExecutionCallback
-    let callback = TauriExecutionCallback::new(app_handle.clone(), execution_id.clone());
-
-    // 3. 初始化 Agent（如果未初始化）
-    if !aster_state.is_initialized().await {
-        tracing::info!("[execute_skill] Agent 未初始化，开始初始化...");
-        aster_state.init_agent_with_db(&db).await.map_err(|e| {
-            format_skill_error(
-                SKILL_ERR_SESSION_INIT_FAILED,
-                format!("初始化 Agent 失败: {e}"),
-            )
-        })?;
-        tracing::info!("[execute_skill] Agent 初始化完成");
-    }
-
-    // 4. 配置 Provider（从凭证池选择，支持 fallback）
-    let preferred_provider = provider_override
-        .or_else(|| skill.provider.clone())
-        .unwrap_or_else(|| "anthropic".to_string());
-
-    let preferred_model = model_override
-        .or_else(|| skill.model.clone())
-        .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
-
-    // 支持工具调用的 Provider fallback 列表
-    // 注意：provider 名称需要与 ProviderType::FromStr 匹配
-    let fallback_providers: Vec<(&str, &str)> = vec![
-        ("anthropic", "claude-sonnet-4-20250514"),
-        ("openai", "gpt-4o"),
-        ("gemini", "gemini-2.0-flash"),
-    ];
-
-    let mut configure_result = aster_state
-        .configure_provider_from_pool(&db, &preferred_provider, &preferred_model, &session_id)
-        .await;
-
-    if configure_result.is_err() {
-        tracing::warn!(
-            "[execute_skill] 首选 Provider {} 配置失败: {:?}，尝试 fallback",
-            preferred_provider,
-            configure_result.as_ref().err()
+    tracker
+        .with_run_custom(
+            RunSource::Skill,
+            Some(skill_name.clone()),
+            Some(session_id.clone()),
+            Some(serde_json::json!({
+                "execution_id": execution_id.clone(),
+                "provider_override": provider_override.clone(),
+                "model_override": model_override.clone(),
+            })),
+            async {
+        tracing::info!(
+            "[execute_skill] 开始执行 Skill: name={}, execution_id={}, session_id={}, provider_override={:?}, model_override={:?}",
+            skill_name,
+            execution_id,
+            session_id,
+            provider_override,
+            model_override
         );
 
-        for (fb_provider, fb_model) in &fallback_providers {
-            if *fb_provider == preferred_provider {
-                continue;
-            }
-            match aster_state
-                .configure_provider_from_pool(&db, fb_provider, fb_model, &session_id)
-                .await
-            {
-                Ok(config) => {
-                    tracing::info!(
-                        "[execute_skill] Fallback 到 {} / {} 成功",
-                        fb_provider,
-                        fb_model
-                    );
-                    configure_result = Ok(config);
-                    break;
+        // 1. 从 registry 加载 skill（Requirements 3.2）
+        let skill = find_skill_by_name(&skill_name).map_err(map_find_skill_error)?;
+
+        // 检查是否禁用了模型调用
+        if skill.disable_model_invocation {
+            return Err(format_skill_error(
+                SKILL_ERR_EXECUTE_FAILED,
+                format!("Skill '{skill_name}' 已禁用模型调用，无法执行"),
+            ));
+        }
+
+        // 2. 创建 TauriExecutionCallback
+        let callback = TauriExecutionCallback::new(app_handle.clone(), execution_id.clone());
+
+        // 3. 初始化 Agent（如果未初始化）
+        if !aster_state.is_initialized().await {
+            tracing::info!("[execute_skill] Agent 未初始化，开始初始化...");
+            aster_state.init_agent_with_db(&db).await.map_err(|e| {
+                format_skill_error(
+                    SKILL_ERR_SESSION_INIT_FAILED,
+                    format!("初始化 Agent 失败: {e}"),
+                )
+            })?;
+            tracing::info!("[execute_skill] Agent 初始化完成");
+        }
+
+        // 4. 配置 Provider（从凭证池选择，支持 fallback）
+        let preferred_provider = provider_override
+            .clone()
+            .or_else(|| skill.provider.clone())
+            .unwrap_or_else(|| "anthropic".to_string());
+
+        let preferred_model = model_override
+            .clone()
+            .or_else(|| skill.model.clone())
+            .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+
+        // 支持工具调用的 Provider fallback 列表
+        // 注意：provider 名称需要与 ProviderType::FromStr 匹配
+        let fallback_providers: Vec<(&str, &str)> = vec![
+            ("anthropic", "claude-sonnet-4-20250514"),
+            ("openai", "gpt-4o"),
+            ("gemini", "gemini-2.0-flash"),
+        ];
+
+        let mut configure_result = aster_state
+            .configure_provider_from_pool(&db, &preferred_provider, &preferred_model, &session_id)
+            .await;
+
+        if configure_result.is_err() {
+            tracing::warn!(
+                "[execute_skill] 首选 Provider {} 配置失败: {:?}，尝试 fallback",
+                preferred_provider,
+                configure_result.as_ref().err()
+            );
+
+            for (fb_provider, fb_model) in &fallback_providers {
+                if *fb_provider == preferred_provider {
+                    continue;
                 }
-                Err(e) => {
-                    tracing::warn!("[execute_skill] Fallback {} 也失败: {}", fb_provider, e);
+                match aster_state
+                    .configure_provider_from_pool(&db, fb_provider, fb_model, &session_id)
+                    .await
+                {
+                    Ok(config) => {
+                        tracing::info!(
+                            "[execute_skill] Fallback 到 {} / {} 成功",
+                            fb_provider,
+                            fb_model
+                        );
+                        configure_result = Ok(config);
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!("[execute_skill] Fallback {} 也失败: {}", fb_provider, e);
+                    }
                 }
             }
         }
-    }
 
-    configure_result.map_err(|e| {
-        format_skill_error(
-            SKILL_ERR_PROVIDER_UNAVAILABLE,
-            format!(
-                "无法配置任何可用的 Provider（需要支持工具调用的 Provider，如 Anthropic、OpenAI 或 Google）: {e}"
-            ),
-        )
-    })?;
+        configure_result.map_err(|e| {
+            format_skill_error(
+                SKILL_ERR_PROVIDER_UNAVAILABLE,
+                format!(
+                    "无法配置任何可用的 Provider（需要支持工具调用的 Provider，如 Anthropic、OpenAI 或 Google）: {e}"
+                ),
+            )
+        })?;
 
-    tracing::info!(
-        "[execute_skill] Provider 配置成功: preferred={}, model={}",
-        preferred_provider,
-        preferred_model
-    );
+        tracing::info!(
+            "[execute_skill] Provider 配置成功: preferred={}, model={}",
+            preferred_provider,
+            preferred_model
+        );
 
-    // 5. 根据 execution_mode 分支执行
-    if skill.execution_mode == "workflow" && !skill.workflow_steps.is_empty() {
-        // ========== Workflow 模式：按步骤顺序执行 ==========
-        execute_skill_workflow(
-            &app_handle,
-            &aster_state,
-            &skill,
-            &user_input,
-            &execution_id,
-            &session_id,
-            &callback,
+        // 5. 根据 execution_mode 分支执行
+        if skill.execution_mode == "workflow" && !skill.workflow_steps.is_empty() {
+            // ========== Workflow 模式：按步骤顺序执行 ==========
+            execute_skill_workflow(
+                &app_handle,
+                &aster_state,
+                &skill,
+                &user_input,
+                &execution_id,
+                &session_id,
+                &callback,
+            )
+            .await
+        } else {
+            // ========== Prompt 模式：单次执行 ==========
+            execute_skill_prompt(
+                &app_handle,
+                &aster_state,
+                &skill,
+                &user_input,
+                &execution_id,
+                &session_id,
+                &callback,
+            )
+            .await
+        }
+            },
+            |result| match result {
+                Ok(exec_result) if exec_result.success => RunFinishDecision {
+                    status: crate::database::dao::agent_run::AgentRunStatus::Success,
+                    error_code: None,
+                    error_message: None,
+                    metadata: Some(serde_json::json!({
+                        "skill_name": skill_name,
+                        "execution_id": execution_id,
+                    })),
+                },
+                Ok(exec_result) => RunFinishDecision {
+                    status: crate::database::dao::agent_run::AgentRunStatus::Error,
+                    error_code: Some("skill_execute_failed".to_string()),
+                    error_message: exec_result.error.clone(),
+                    metadata: Some(serde_json::json!({
+                        "skill_name": skill_name,
+                        "execution_id": execution_id,
+                        "success": false,
+                    })),
+                },
+                Err(err) => RunFinishDecision {
+                    status: crate::database::dao::agent_run::AgentRunStatus::Error,
+                    error_code: Some("skill_execute_failed".to_string()),
+                    error_message: Some(err.clone()),
+                    metadata: Some(serde_json::json!({
+                        "skill_name": skill_name,
+                        "execution_id": execution_id,
+                    })),
+                },
+            },
         )
         .await
-    } else {
-        // ========== Prompt 模式：单次执行 ==========
-        execute_skill_prompt(
-            &app_handle,
-            &aster_state,
-            &skill,
-            &user_input,
-            &execution_id,
-            &session_id,
-            &callback,
-        )
-        .await
-    }
 }
 
 /// Prompt 模式执行（单步）

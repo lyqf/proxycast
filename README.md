@@ -134,9 +134,11 @@ brew install --cask proxycast
 
 ```bash
 npm install
-npm run tauri dev
+npm run tauri:dev
 npm run tauri build
 ```
+
+说明：开发脚本统一使用 `CARGO_TARGET_DIR=src-tauri/target`，避免生成分散的 `target_*` 目录。
 
 ---
 

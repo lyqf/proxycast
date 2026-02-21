@@ -17,9 +17,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::AppState;
+use proxycast_core::errors::GatewayErrorCode;
 use proxycast_core::models::anthropic::AnthropicMessagesRequest;
 use proxycast_core::models::openai::ChatCompletionRequest;
 use proxycast_core::models::provider_pool_model::ProviderCredential;
+use proxycast_core::websocket::WsErrorCode;
 use proxycast_processor::RequestContext;
 use proxycast_providers::converter::anthropic_to_openai::convert_anthropic_to_openai;
 use proxycast_providers::converter::openai_to_antigravity::{
@@ -313,6 +315,63 @@ async fn handle_ws_api_request(state: &AppState, request: &WsApiRequest) -> WsPr
     }
 }
 
+fn gateway_code_name(code: GatewayErrorCode) -> &'static str {
+    match code {
+        GatewayErrorCode::InvalidRequest => "INVALID_REQUEST",
+        GatewayErrorCode::AuthenticationFailed => "AUTHENTICATION_FAILED",
+        GatewayErrorCode::RequestConflict => "REQUEST_CONFLICT",
+        GatewayErrorCode::RateLimited => "RATE_LIMITED",
+        GatewayErrorCode::NoCredentials => "NO_CREDENTIALS",
+        GatewayErrorCode::UpstreamTimeout => "UPSTREAM_TIMEOUT",
+        GatewayErrorCode::UpstreamUnavailable => "UPSTREAM_UNAVAILABLE",
+        GatewayErrorCode::UpstreamError => "UPSTREAM_ERROR",
+        GatewayErrorCode::InternalError => "INTERNAL_ERROR",
+    }
+}
+
+fn gateway_to_ws_error_code(code: GatewayErrorCode) -> WsErrorCode {
+    match code {
+        GatewayErrorCode::InvalidRequest | GatewayErrorCode::RequestConflict => {
+            WsErrorCode::InvalidRequest
+        }
+        GatewayErrorCode::AuthenticationFailed => WsErrorCode::Unauthorized,
+        GatewayErrorCode::UpstreamTimeout => WsErrorCode::Timeout,
+        GatewayErrorCode::InternalError => WsErrorCode::InternalError,
+        GatewayErrorCode::RateLimited
+        | GatewayErrorCode::NoCredentials
+        | GatewayErrorCode::UpstreamUnavailable
+        | GatewayErrorCode::UpstreamError => WsErrorCode::UpstreamError,
+    }
+}
+
+fn build_ws_gateway_error(
+    request_id: Option<String>,
+    gateway_code: GatewayErrorCode,
+    message: impl Into<String>,
+) -> WsProtoMessage {
+    let message = message.into();
+    let final_message = if message.trim().is_empty() {
+        gateway_code.default_message().to_string()
+    } else {
+        message
+    };
+
+    WsProtoMessage::Error(WsError {
+        request_id,
+        code: gateway_to_ws_error_code(gateway_code),
+        message: format!("[{}] {}", gateway_code_name(gateway_code), final_message),
+    })
+}
+
+fn build_ws_error_from_text(
+    request_id: Option<String>,
+    message: impl Into<String>,
+) -> WsProtoMessage {
+    let message = message.into();
+    let gateway_code = GatewayErrorCode::infer(500, &message);
+    build_ws_gateway_error(request_id, gateway_code, message)
+}
+
 /// 处理 WebSocket chat completions 请求
 async fn handle_ws_chat_completions(
     state: &AppState,
@@ -365,16 +424,17 @@ async fn handle_ws_chat_completions(
                 request_id: request_id.to_string(),
                 payload: response,
             }),
-            Err(e) => WsProtoMessage::Error(WsError::upstream(Some(request_id.to_string()), e)),
+            Err(e) => build_ws_error_from_text(Some(request_id.to_string()), e),
         }
     } else {
         // 不再回退到 Kiro provider，直接返回错误
-        WsProtoMessage::Error(WsError::internal(
+        build_ws_gateway_error(
             Some(request_id.to_string()),
+            GatewayErrorCode::NoCredentials,
             format!(
                 "No available credentials for provider '{default_provider}'. Please add credentials in the Provider Pool."
             ),
-        ))
+        )
     }
 }
 
@@ -428,16 +488,17 @@ async fn handle_ws_anthropic_messages(
                 request_id: request_id.to_string(),
                 payload: response,
             }),
-            Err(e) => WsProtoMessage::Error(WsError::upstream(Some(request_id.to_string()), e)),
+            Err(e) => build_ws_error_from_text(Some(request_id.to_string()), e),
         }
     } else {
         // 不再回退到 Kiro provider，直接返回错误
-        WsProtoMessage::Error(WsError::internal(
+        build_ws_gateway_error(
             Some(request_id.to_string()),
+            GatewayErrorCode::NoCredentials,
             format!(
                 "No available credentials for provider '{default_provider}'. Please add credentials in the Provider Pool."
             ),
-        ))
+        )
     }
 }
 

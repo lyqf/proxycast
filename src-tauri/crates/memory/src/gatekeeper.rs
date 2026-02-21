@@ -279,7 +279,12 @@ mod tests {
             },
         ];
 
-        let keywords = vec!["记住".to_string(), "喜欢".to_string(), "prefer".to_string()];
+        let keywords = vec![
+            "记住".to_string(),
+            "喜欢".to_string(),
+            "prefer".to_string(),
+            "remember".to_string(),
+        ];
 
         let result = check_keywords(&messages, &keywords);
         assert!(result.should_proceed);
