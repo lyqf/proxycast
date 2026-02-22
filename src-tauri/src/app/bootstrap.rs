@@ -144,7 +144,10 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     // 使用 tokio runtime 来设置全局 store
     let rt = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
         // 如果没有 runtime，创建一个临时的
-        tokio::runtime::Runtime::new().unwrap().handle().clone()
+        tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime: 系统资源不足或配置错误")
+            .handle()
+            .clone()
     });
     rt.block_on(async {
         if let Err(e) = aster::session::set_global_session_store(session_store).await {

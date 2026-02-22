@@ -975,14 +975,22 @@ export function AgentChatPage({
 
       setInput("");
       setMentionedCharacters([]); // 清空引用的角色
-      await sendMessage(
-        text,
-        images || [],
-        webSearch,
-        thinking,
-        false,
-        sendExecutionStrategy,
-      );
+
+      try {
+        await sendMessage(
+          text,
+          images || [],
+          webSearch,
+          thinking,
+          false,
+          sendExecutionStrategy,
+        );
+      } catch (error) {
+        console.error("[AgentChat] 发送消息失败:", error);
+        toast.error(`发送失败: ${error instanceof Error ? error.message : String(error)}`);
+        // 恢复输入内容，让用户可以重试
+        setInput(sourceText);
+      }
     },
     [input, mentionedCharacters, projectId, sendMessage],
   );
