@@ -31,13 +31,11 @@ pub fn is_valid_bind_host(host: &str) -> bool {
         return true;
     }
 
-    if let Ok(address) = host.parse::<std::net::IpAddr>() {
-        if let std::net::IpAddr::V4(ipv4) = address {
-            let octets = ipv4.octets();
-            return octets[0] == 10
-                || (octets[0] == 172 && (octets[1] >= 16 && octets[1] <= 31))
-                || (octets[0] == 192 && octets[1] == 168);
-        }
+    if let Ok(std::net::IpAddr::V4(ipv4)) = host.parse::<std::net::IpAddr>() {
+        let octets = ipv4.octets();
+        return octets[0] == 10
+            || (octets[0] == 172 && (octets[1] >= 16 && octets[1] <= 31))
+            || (octets[0] == 192 && octets[1] == 168);
     }
 
     false
@@ -49,13 +47,11 @@ pub fn is_non_local_bind(host: &str) -> bool {
         return true;
     }
 
-    if let Ok(address) = host.parse::<std::net::IpAddr>() {
-        if let std::net::IpAddr::V4(ipv4) = address {
-            let octets = ipv4.octets();
-            return octets[0] == 10
-                || (octets[0] == 172 && (octets[1] >= 16 && octets[1] <= 31))
-                || (octets[0] == 192 && octets[1] == 168);
-        }
+    if let Ok(std::net::IpAddr::V4(ipv4)) = host.parse::<std::net::IpAddr>() {
+        let octets = ipv4.octets();
+        return octets[0] == 10
+            || (octets[0] == 172 && (octets[1] >= 16 && octets[1] <= 31))
+            || (octets[0] == 192 && octets[1] == 168);
     }
 
     false

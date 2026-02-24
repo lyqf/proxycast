@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -130,7 +130,7 @@ impl LogStore {
             .map(|p| p.to_string_lossy().to_string())
     }
 
-    fn rotate_log_file_if_needed(&self, path: &PathBuf) {
+    fn rotate_log_file_if_needed(&self, path: &Path) {
         let Ok(metadata) = fs::metadata(path) else {
             return;
         };
@@ -147,7 +147,7 @@ impl LogStore {
         self.prune_old_logs(path);
     }
 
-    fn prune_old_logs(&self, path: &PathBuf) {
+    fn prune_old_logs(&self, path: &Path) {
         let Some(dir) = path.parent() else { return };
         self.archive_old_logs(path);
         let Ok(entries) = fs::read_dir(dir) else {
@@ -177,7 +177,7 @@ impl LogStore {
         }
     }
 
-    fn archive_old_logs(&self, path: &PathBuf) {
+    fn archive_old_logs(&self, path: &Path) {
         let Some(dir) = path.parent() else { return };
         let Ok(entries) = fs::read_dir(dir) else {
             return;
