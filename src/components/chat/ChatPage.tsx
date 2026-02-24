@@ -4,7 +4,7 @@
  * @module components/chat/ChatPage
  */
 
-import React, { useState, useCallback, memo } from "react";
+import React, { useState, useCallback, useEffect, memo } from "react";
 import styled from "styled-components";
 import { MessageList, InputBar, ThemeSelector, EmptyState } from "./components";
 import { useChat } from "./hooks";
@@ -56,6 +56,25 @@ export const ChatPage: React.FC = memo(() => {
   } = useChat();
 
   const [currentTheme, setCurrentTheme] = useState<ThemeType>("general");
+  const [selectedText, setSelectedText] = useState("");
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const rawSelection = window.getSelection()?.toString() || "";
+      const normalized = rawSelection.trim().replace(/\s+/g, " ");
+      const clipped =
+        normalized.length > 500
+          ? `${normalized.slice(0, 500).trim()}…`
+          : normalized;
+
+      setSelectedText((prev) => (prev === clipped ? prev : clipped));
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, []);
 
   const hasMessages = messages.length > 0;
 
@@ -101,7 +120,11 @@ export const ChatPage: React.FC = memo(() => {
             onRetryMessage={handleRetryMessage}
           />
         ) : (
-          <EmptyState onSuggestionClick={handleSuggestionClick} />
+          <EmptyState
+            onSuggestionClick={handleSuggestionClick}
+            activeTheme={currentTheme}
+            selectedText={selectedText}
+          />
         )}
       </ChatArea>
 

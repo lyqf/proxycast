@@ -1940,9 +1940,12 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   );
 
   // 兼容 Native 接口：触发 AI 引导（仅生成助手消息，不注入用户气泡）
-  const triggerAIGuide = useCallback(async () => {
-    await sendMessage("", [], false, false, true);
-  }, [sendMessage]);
+  const triggerAIGuide = useCallback(
+    async (initialPrompt?: string) => {
+      await sendMessage(initialPrompt?.trim() || "", [], false, false, true);
+    },
+    [sendMessage],
+  );
 
   // 清空消息（兼容 useAgentChat 的可选参数）
   const clearMessages = useCallback(

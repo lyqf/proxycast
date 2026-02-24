@@ -176,6 +176,7 @@ interface NovelCanvasProps {
   useExternalToolbar?: boolean;
   chapterListCollapsed?: boolean;
   onChapterListCollapsedChange?: (collapsed: boolean) => void;
+  onSelectionTextChange?: (text: string) => void;
 }
 
 /**
@@ -228,6 +229,7 @@ export const NovelCanvas: React.FC<NovelCanvasProps> = memo(
     useExternalToolbar = false,
     chapterListCollapsed,
     onChapterListCollapsedChange,
+    onSelectionTextChange,
   }) => {
     const [internalChapterListCollapsed, setInternalChapterListCollapsed] =
       useState(false);
@@ -338,6 +340,10 @@ export const NovelCanvas: React.FC<NovelCanvasProps> = memo(
         }
       }
     }, [currentChapter, state, onStateChange]);
+
+    useEffect(() => {
+      onSelectionTextChange?.("");
+    }, [state.currentChapterId, onSelectionTextChange]);
 
     const totalWords = state.chapters.reduce((sum, c) => sum + c.wordCount, 0);
     const completedCount = state.chapters.filter(
@@ -454,6 +460,7 @@ export const NovelCanvas: React.FC<NovelCanvasProps> = memo(
                     onChange={handleUpdateChapter}
                     onSave={handleToggleStatus}
                     onCancel={() => {}}
+                    onSelectionTextChange={onSelectionTextChange}
                   />
                 </EditorContainer>
               )}

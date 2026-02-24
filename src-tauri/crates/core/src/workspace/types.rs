@@ -187,18 +187,6 @@ pub struct WorkspaceUpdate {
     pub tags: Option<Vec<String>>,
 }
 
-/// Workspace 创建请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceCreateRequest {
-    /// 显示名称
-    pub name: String,
-    /// 根目录路径
-    pub root_path: String,
-    /// Workspace 类型（可选，默认 persistent）
-    #[serde(default)]
-    pub workspace_type: WorkspaceType,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

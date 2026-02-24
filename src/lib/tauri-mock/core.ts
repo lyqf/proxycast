@@ -237,6 +237,32 @@ const defaultMocks: Record<string, any> = {
   migrate_legacy_api_key_credentials: () => ({ success: true }),
   delete_legacy_api_key_credential: () => ({ success: true }),
   get_local_kiro_credential_uuid: () => null,
+  create_video_generation_task: (args: any) => {
+    const request = args?.request ?? {};
+    return {
+      id: "mock-video-task-id",
+      projectId: request.projectId ?? "mock-project-id",
+      providerId: request.providerId ?? "doubao",
+      model: request.model ?? "seedance-1-5-pro-251215",
+      prompt: request.prompt ?? "mock",
+      requestPayload: JSON.stringify(request),
+      providerTaskId: "mock-provider-task-id",
+      status: "processing",
+      progress: 0,
+      resultUrl: null,
+      errorMessage: null,
+      metadataJson: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      finishedAt: null,
+    };
+  },
+  get_video_generation_task: () => null,
+  list_video_generation_tasks: () => [],
+  cancel_video_generation_task: () => null,
+  import_material_from_url: () => ({
+    id: "mock-material-id",
+  }),
 
   // OAuth 凭证相关
   add_kiro_oauth_credential: () => ({ success: true }),
@@ -614,7 +640,12 @@ const defaultMocks: Record<string, any> = {
     alert_count: 0,
     message: "当前无告警，未触发投递",
   }),
-  trigger_heartbeat_now: () => ({ task_count: 0, success_count: 0, failed_count: 0, timeout_count: 0 }),
+  trigger_heartbeat_now: () => ({
+    task_count: 0,
+    success_count: 0,
+    failed_count: 0,
+    timeout_count: 0,
+  }),
   get_task_templates: () => [],
   apply_task_template: () => ({ success: true }),
   generate_content_creator_tasks: () => 0,

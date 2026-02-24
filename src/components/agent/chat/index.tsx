@@ -80,6 +80,7 @@ import type { A2UIFormData } from "@/components/content-creator/a2ui/types";
 import { getFileToStepMap } from "./utils/workflowMapping";
 import { normalizeProjectId } from "./utils/topicProjectResolution";
 import { resolveTopicSwitchProject } from "./utils/topicProjectSwitch";
+import { getDefaultGuidePromptByTheme } from "./utils/defaultGuidePrompt";
 
 const SUPPORTED_ENTRY_THEMES: ThemeType[] = [
   "general",
@@ -280,6 +281,7 @@ export function AgentChatPage({
 }) {
   const [showSidebar, setShowSidebar] = useState(false);
   const [input, setInput] = useState("");
+  const [selectedText, setSelectedText] = useState("");
 
   // 内容创作相关状态
   const [activeTheme, setActiveTheme] = useState<string>(
@@ -998,6 +1000,7 @@ export function AgentChatPage({
   const handleClearMessages = useCallback(() => {
     clearMessages();
     setInput("");
+    setSelectedText("");
     // 重置布局模式
     setLayoutMode("chat");
     // 恢复侧边栏显示
@@ -1028,6 +1031,7 @@ export function AgentChatPage({
       showToast: false,
     });
     setInput("");
+    setSelectedText("");
     setLayoutMode("chat");
     setShowSidebar(true);
     setCanvasState(null);
@@ -1062,6 +1066,7 @@ export function AgentChatPage({
       showToast: false,
     });
     setInput("");
+    setSelectedText("");
     setLayoutMode("chat");
     setShowSidebar(true);
     setCanvasState(null);
@@ -1081,6 +1086,16 @@ export function AgentChatPage({
 
   // 当开始对话时自动折叠侧边栏
   const hasMessages = messages.length > 0;
+
+  const handleCanvasSelectionTextChange = useCallback((text: string) => {
+    const normalized = text.trim().replace(/\s+/g, " ");
+    const nextValue = normalized.length > 500 ? normalized.slice(0, 500) : normalized;
+    setSelectedText((previous) => (previous === nextValue ? previous : nextValue));
+  }, []);
+
+  useEffect(() => {
+    setSelectedText("");
+  }, [activeTheme, contentId]);
 
   useEffect(() => {
     if (!canvasState || canvasState.type !== "novel") {
@@ -1743,10 +1758,23 @@ export function AgentChatPage({
         return;
       }
 
+      const defaultGuidePrompt = getDefaultGuidePromptByTheme(activeTheme);
+      if (defaultGuidePrompt) {
+        console.log("[AgentChatPage] 自动预填主题引导词");
+        setInput((previous) => {
+          if (previous.trim()) {
+            return previous;
+          }
+          return defaultGuidePrompt;
+        });
+        return;
+      }
+
       console.log("[AgentChatPage] 自动触发 AI 创作引导");
       triggerAIGuideRef.current();
     }
   }, [
+    activeTheme,
     contentId,
     messages.length,
     project,
@@ -1880,6 +1908,13 @@ export function AgentChatPage({
               }
             }}
             showThemeTabs={false}
+            hasCanvasContent={
+              activeTheme === "general"
+                ? Boolean(generalCanvasState.content?.trim())
+                : !isCanvasStateEmpty(canvasState)
+            }
+            hasContentId={Boolean(contentId)}
+            selectedText={selectedText}
             onRecommendationClick={(shortLabel, fullPrompt) => {
               // 直接将推荐提示词放入输入框，不创建项目
               setInput(fullPrompt);
@@ -1985,6 +2020,7 @@ export function AgentChatPage({
           onStateChange={setCanvasState}
           onClose={handleCloseCanvas}
           isStreaming={isSending}
+          onSelectionTextChange={handleCanvasSelectionTextChange}
           novelControls={
             canvasState.type === "novel"
               ? {
@@ -2007,6 +2043,7 @@ export function AgentChatPage({
     mappedTheme,
     handleCloseCanvas,
     isSending,
+    handleCanvasSelectionTextChange,
     artifactViewMode,
     artifactPreviewSize,
     novelChapterListCollapsed,

@@ -1,0 +1,148 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  buildRecommendationPrompt,
+  getContextualRecommendations,
+} from "./contextualRecommendations";
+
+describe("getContextualRecommendations", () => {
+  it("社媒空白场景应返回起稿类推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "social-media",
+      input: "",
+      creationMode: "guided",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: true,
+      selectedText: "",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("选题");
+  });
+
+  it("社媒有正文时应优先返回改写类推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "social-media",
+      input: "",
+      creationMode: "hybrid",
+      entryTaskType: "rewrite",
+      platform: "wechat",
+      hasCanvasContent: true,
+      hasContentId: true,
+      selectedText: "",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("润色");
+  });
+
+  it("社媒有输入时应返回输入相关推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "social-media",
+      input: "春季敏感肌修护",
+      creationMode: "fast",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: false,
+      selectedText: "",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[1]).toContain("春季敏感肌修护");
+  });
+
+  it("非社媒主题应走主题兜底推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "planning",
+      input: "",
+      creationMode: "guided",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: false,
+      selectedText: "",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("计划");
+  });
+
+  it("通用主题应返回通用对话推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "general",
+      input: "",
+      creationMode: "guided",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: false,
+      selectedText: "",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("需求");
+  });
+
+  it("文档主题应返回办公文档推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "document",
+      input: "",
+      creationMode: "guided",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: false,
+      selectedText: "",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("公文");
+  });
+
+  it("社媒有选中文本时应优先返回选区改写推荐", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "social-media",
+      input: "",
+      creationMode: "guided",
+      entryTaskType: "rewrite",
+      platform: "wechat",
+      hasCanvasContent: true,
+      hasContentId: true,
+      selectedText: "这是一段待优化的原文内容。",
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("选中");
+  });
+
+  it("构建推荐提示词时应注入选中文本上下文", () => {
+    const prompt = buildRecommendationPrompt("请帮我改写内容。", "这是原文。");
+    expect(prompt).toContain("请帮我改写内容。");
+    expect(prompt).toContain("[参考选中内容]");
+    expect(prompt).toContain("这是原文。");
+  });
+
+  it("无选中文本时应保持原始提示词", () => {
+    const prompt = buildRecommendationPrompt("请帮我润色。", "");
+    expect(prompt).toBe("请帮我润色。");
+  });
+
+  it("选中文本过长时应截断注入", () => {
+    const longSelectedText = "a".repeat(380);
+    const prompt = buildRecommendationPrompt("请总结。", longSelectedText);
+    expect(prompt).toContain("[参考选中内容]");
+    expect(prompt).toContain("…");
+  });
+
+  it("关闭附带选区开关时应忽略选中文本", () => {
+    const prompt = buildRecommendationPrompt(
+      "请润色文稿。",
+      "这是一段选中的文稿内容。",
+      false,
+    );
+    expect(prompt).toBe("请润色文稿。");
+  });
+});

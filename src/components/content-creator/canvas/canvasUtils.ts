@@ -15,6 +15,8 @@ import { createInitialScriptState } from "./script";
 import type { ScriptCanvasState } from "./script/types";
 import { createInitialNovelState } from "./novel";
 import type { NovelCanvasState } from "./novel/types";
+import { createInitialVideoState } from "./video";
+import type { VideoCanvasState } from "./video/types";
 
 /**
  * 画布状态联合类型
@@ -24,12 +26,13 @@ export type CanvasStateUnion =
   | PosterCanvasState
   | MusicCanvasState
   | ScriptCanvasState
-  | NovelCanvasState;
+  | NovelCanvasState
+  | VideoCanvasState;
 
 /**
  * 画布类型
  */
-export type CanvasType = "document" | "poster" | "music" | "script" | "novel";
+export type CanvasType = "document" | "poster" | "music" | "script" | "novel" | "video";
 
 /**
  * 主题到画布类型的映射
@@ -48,7 +51,7 @@ const THEME_TO_CANVAS_TYPE: Record<ThemeType, CanvasType | null> = {
   knowledge: "document", // 知识探索支持文档画布
   planning: "document", // 计划规划支持文档画布
   document: "document",
-  video: "script",
+  video: "video",
   novel: "novel",
 };
 
@@ -86,6 +89,8 @@ export function createInitialCanvasState(
       return createInitialScriptState(content);
     case "novel":
       return createInitialNovelState(content);
+    case "video":
+      return createInitialVideoState(content);
     default:
       return null;
   }

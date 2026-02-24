@@ -266,6 +266,14 @@ const MAIN_MENU_ITEMS: SidebarNavItem[] = [
     params: { theme: "general", lockTheme: false },
     isActive: (currentPage) => currentPage === "agent",
   },
+  {
+    id: "video",
+    label: "视频",
+    icon: Video,
+    page: getThemeWorkspacePage("video"),
+    params: { workspaceViewMode: "workspace" },
+    isActive: (currentPage) => currentPage === getThemeWorkspacePage("video"),
+  },
   { id: "image-gen", label: "绘画", icon: Image, page: "image-gen" },
   { id: "batch", label: "批量任务", icon: Layers, page: "batch" },
   { id: "plugins", label: "插件中心", icon: Compass, page: "plugins" },
@@ -365,7 +373,12 @@ const FOOTER_MENU_ITEMS: SidebarNavItem[] = [
   },
 ];
 
-const DEFAULT_ENABLED_NAV_ITEMS = ["home-general", "image-gen", "plugins"];
+const DEFAULT_ENABLED_NAV_ITEMS = [
+  "home-general",
+  "video",
+  "image-gen",
+  "plugins",
+];
 
 function getIconByName(iconName: string): LucideIcon {
   const IconComponent = (
@@ -391,6 +404,14 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
   const [enabledNavItems, setEnabledNavItems] = useState<string[]>(
     DEFAULT_ENABLED_NAV_ITEMS,
   );
+  const [enabledThemes, setEnabledThemes] = useState<string[]>([
+    "general",
+    "social-media",
+    "poster",
+    "music",
+    "video",
+    "novel",
+  ]);
   const [sidebarPlugins, setSidebarPlugins] = useState<PluginUIInfo[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [_activeThemeKey, setActiveThemeKey] = useState<string>(
@@ -413,27 +434,42 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
         } else {
           setEnabledNavItems(DEFAULT_ENABLED_NAV_ITEMS);
         }
+
+        const savedThemes = config.content_creator?.enabled_themes;
+        if (savedThemes && savedThemes.length > 0) {
+          setEnabledThemes(savedThemes);
+        }
       } catch (error) {
-        console.error("加载导航配置失败:", error);
+        console.error("加载配置失败:", error);
       }
     };
 
     loadNavConfig();
 
-    const handleNavConfigChange = () => {
+    const handleConfigChange = () => {
       loadNavConfig();
     };
 
-    window.addEventListener("nav-config-changed", handleNavConfigChange);
+    window.addEventListener("nav-config-changed", handleConfigChange);
+    window.addEventListener("theme-config-changed", handleConfigChange);
 
     return () => {
-      window.removeEventListener("nav-config-changed", handleNavConfigChange);
+      window.removeEventListener("nav-config-changed", handleConfigChange);
+      window.removeEventListener("theme-config-changed", handleConfigChange);
     };
   }, []);
 
   const filteredMainMenuItems = useMemo(() => {
     return MAIN_MENU_ITEMS.filter((item) => enabledNavItems.includes(item.id));
   }, [enabledNavItems]);
+
+  const filteredThemeMenuItems = useMemo(() => {
+    return THEME_MENU_ITEMS.filter((item) => {
+      // 从 theme-xxx 提取出 xxx
+      const themeId = item.id.replace("theme-", "");
+      return enabledThemes.includes(themeId);
+    });
+  }, [enabledThemes]);
 
   useEffect(() => {
     const loadSidebarPlugins = async () => {
@@ -527,8 +563,10 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
         ? buildHomeAgentParams(item.params as AgentPageParams | undefined)
         : isThemeWorkspacePage(item.page)
           ? buildWorkspaceResetParams(
-              item.params as AgentPageParams | undefined,
-            )
+            item.params as AgentPageParams | undefined,
+            (item.params as AgentPageParams | undefined)?.workspaceViewMode ??
+              "project-management",
+          )
           : item.params;
 
     onNavigate(item.page, params);
@@ -569,7 +607,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
 
         <Section>
           <SectionTitle>创作主题</SectionTitle>
-          {THEME_MENU_ITEMS.map((item) => (
+          {filteredThemeMenuItems.map((item) => (
             <NavButton
               key={item.id}
               $active={isActive(item)}

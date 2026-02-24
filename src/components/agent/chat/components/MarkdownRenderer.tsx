@@ -407,7 +407,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
                 const childProps = child.props as any;
                 const className = childProps?.className || "";
                 const match = /language-(\w+)/.exec(className);
-                const language = match ? match[1] : "";
+                const language = match ? match[1] : "text";
+                const codeChildren = childProps?.children;
+                const codeContent = String(
+                  Array.isArray(codeChildren)
+                    ? codeChildren.join("")
+                    : codeChildren || "",
+                ).replace(/\n$/, "");
 
                 // 调试：输出检测到的语言
                 if (language) {
@@ -419,14 +425,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
 
                 // 如果是 a2ui 代码块，特殊处理
                 if (language === "a2ui") {
-                  // 获取代码内容 - children 可能是字符串或数组
-                  const codeChildren = childProps?.children;
-                  const codeContent = String(
-                    Array.isArray(codeChildren)
-                      ? codeChildren.join("")
-                      : codeChildren || "",
-                  ).replace(/\n$/, "");
-
                   console.log(
                     "[MarkdownRenderer] a2ui 代码块内容长度:",
                     codeContent.length,
@@ -457,28 +455,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
                       </A2UILoadingContainer>
                     );
                   }
-                }
-
-                // 其他代码块正常渲染
-                return <pre {...props}>{children}</pre>;
-              },
-              code({ inline, className, children, ...props }: any) {
-                const match = /language-(\w+)/.exec(className || "");
-                const codeContent = String(children).replace(/\n$/, "");
-                const language = match ? match[1] : "text";
-
-                // Inline code
-                if (inline) {
-                  return (
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  );
-                }
-
-                // a2ui 已在 pre 组件中处理，这里跳过
-                if (language === "a2ui") {
-                  return null;
                 }
 
                 // 如果启用了代码块折叠，显示占位符卡片
@@ -516,11 +492,27 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
                         background: "transparent",
                         fontSize: "13px",
                       }}
-                      {...props}
                     >
                       {codeContent}
                     </SyntaxHighlighter>
                   </CodeBlockContainer>
+                );
+              },
+              code({ inline, className, children, ...props }: any) {
+                // Inline code
+                if (inline) {
+                  return (
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  );
+                }
+
+                // 非 inline code 统一由 pre 组件处理，避免块级元素落入 <p>
+                return (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
                 );
               },
               // 普通图片渲染（非 base64）
@@ -537,15 +529,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
                 };
 
                 return (
-                  <ImageContainer>
-                    <GeneratedImage
-                      src={src}
-                      alt={alt || "Image"}
-                      onClick={handleImageClick}
-                      title="点击查看大图"
-                      {...props}
-                    />
-                  </ImageContainer>
+                  <GeneratedImage
+                    src={src}
+                    alt={alt || "Image"}
+                    onClick={handleImageClick}
+                    title="点击查看大图"
+                    {...props}
+                  />
                 );
               },
             }}

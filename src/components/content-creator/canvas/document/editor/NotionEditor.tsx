@@ -22,6 +22,7 @@ interface NotionEditorProps {
   onChange: (content: string) => void;
   onSave: () => void;
   onCancel: () => void;
+  onSelectionTextChange?: (text: string) => void;
 }
 
 const EMPTY_SLASH: SlashMenuState = {
@@ -32,7 +33,7 @@ const EMPTY_SLASH: SlashMenuState = {
 };
 
 export const NotionEditor: React.FC<NotionEditorProps> = memo(
-  ({ content, onChange, onSave, onCancel }) => {
+  ({ content, onChange, onSave, onCancel, onSelectionTextChange }) => {
     const [slashState, setSlashState] = useState<SlashMenuState>(EMPTY_SLASH);
     const keyDownRef = useRef<SlashMenuKeyHandler | null>(null);
 
@@ -82,6 +83,35 @@ export const NotionEditor: React.FC<NotionEditorProps> = memo(
         editor.commands.focus("end");
       }
     }, [editor]);
+
+    useEffect(() => {
+      if (!editor || !onSelectionTextChange) {
+        return;
+      }
+
+      const handleSelectionUpdate = () => {
+        const { from, to, empty } = editor.state.selection;
+        if (empty) {
+          onSelectionTextChange("");
+          return;
+        }
+
+        const selectedText = editor.state.doc.textBetween(from, to, "\n").trim();
+        onSelectionTextChange(selectedText);
+      };
+
+      const handleBlur = () => {
+        onSelectionTextChange("");
+      };
+
+      editor.on("selectionUpdate", handleSelectionUpdate);
+      editor.on("blur", handleBlur);
+
+      return () => {
+        editor.off("selectionUpdate", handleSelectionUpdate);
+        editor.off("blur", handleBlur);
+      };
+    }, [editor, onSelectionTextChange]);
 
     if (!editor) return null;
 

@@ -4,7 +4,7 @@
  * @module components/content-creator/canvas/document/DocumentCanvas
  */
 
-import React, { memo, useMemo, useCallback, useState } from "react";
+import React, { memo, useMemo, useCallback, useState, useEffect } from "react";
 import styled from "styled-components";
 import type { DocumentCanvasProps, ExportFormat, PlatformType } from "./types";
 import { DocumentToolbar } from "./DocumentToolbar";
@@ -58,7 +58,13 @@ const Toast = styled.div<{ $visible: boolean }>`
  * 文档画布主组件
  */
 export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
-  ({ state, onStateChange, onClose, isStreaming = false }) => {
+  ({
+    state,
+    onStateChange,
+    onClose,
+    isStreaming = false,
+    onSelectionTextChange,
+  }) => {
     const [editingContent, setEditingContent] = useState("");
     const [toastMessage, setToastMessage] = useState("");
     const [showToast, setShowToast] = useState(false);
@@ -69,6 +75,10 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
         state.versions.find((v) => v.id === state.currentVersionId) || null
       );
     }, [state.versions, state.currentVersionId]);
+
+    useEffect(() => {
+      onSelectionTextChange?.("");
+    }, [state.currentVersionId, state.isEditing, onSelectionTextChange]);
 
     // 显示提示
     const showMessage = useCallback((message: string) => {
@@ -201,12 +211,14 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
                 onChange={setEditingContent}
                 onSave={handleSave}
                 onCancel={handleCancel}
+                onSelectionTextChange={onSelectionTextChange}
               />
             ) : (
               <DocumentRenderer
                 content={state.content}
                 platform={state.platform}
                 isStreaming={isStreaming}
+                onSelectionTextChange={onSelectionTextChange}
               />
             )}
           </ContentArea>

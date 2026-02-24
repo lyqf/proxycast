@@ -18,3 +18,4 @@ pub mod providers;
 pub mod publish_config_dao;
 pub mod skills;
 pub mod template_dao;
+pub mod video_generation_task_dao;

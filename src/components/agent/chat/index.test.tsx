@@ -14,6 +14,9 @@ const {
   mockArtifactsAtom,
   mockSelectedArtifactAtom,
   mockSelectedArtifactIdAtom,
+  mockGenerateContentCreationPrompt,
+  mockIsContentCreationTheme,
+  mockEmptyState,
 } = vi.hoisted(() => ({
   mockUseAgentChatUnified: vi.fn(),
   mockGetProject: vi.fn(),
@@ -31,6 +34,11 @@ const {
   mockArtifactsAtom: { key: "artifacts" },
   mockSelectedArtifactAtom: { key: "selectedArtifact" },
   mockSelectedArtifactIdAtom: { key: "selectedArtifactId" },
+  mockGenerateContentCreationPrompt: vi.fn(() => "mock-system-prompt"),
+  mockIsContentCreationTheme: vi.fn(() => false),
+  mockEmptyState: vi.fn((props?: { input?: string }) => (
+    <div data-testid="empty-state">{props?.input || ""}</div>
+  )),
 }));
 
 vi.mock("sonner", () => ({
@@ -132,7 +140,7 @@ vi.mock("./components/Inputbar", () => ({
 }));
 
 vi.mock("./components/EmptyState", () => ({
-  EmptyState: () => <div data-testid="empty-state" />,
+  EmptyState: (props?: { input?: string }) => mockEmptyState(props),
 }));
 
 vi.mock("@/components/content-creator/core/StepGuide/StepProgress", () => ({
@@ -165,8 +173,8 @@ vi.mock("jotai", () => ({
 }));
 
 vi.mock("@/components/content-creator/utils/systemPrompt", () => ({
-  generateContentCreationPrompt: vi.fn(() => "mock-system-prompt"),
-  isContentCreationTheme: vi.fn(() => false),
+  generateContentCreationPrompt: mockGenerateContentCreationPrompt,
+  isContentCreationTheme: mockIsContentCreationTheme,
 }));
 
 vi.mock("@/components/content-creator/utils/projectPrompt", () => ({
@@ -215,6 +223,9 @@ interface MountedHarness {
 
 const mountedRoots: MountedHarness[] = [];
 const observedWorkspaceIds: string[] = [];
+let sharedSwitchTopicMock: ReturnType<typeof vi.fn>;
+let sharedSendMessageMock: ReturnType<typeof vi.fn>;
+let sharedTriggerAIGuideMock: ReturnType<typeof vi.fn>;
 
 function createProject(id: string, archived = false) {
   return {
@@ -301,8 +312,15 @@ beforeEach(() => {
   mockGetContent.mockResolvedValue(null);
   mockUpdateContent.mockResolvedValue(undefined);
   mockGetProjectMemory.mockResolvedValue(null);
+  mockGenerateContentCreationPrompt.mockReturnValue("mock-system-prompt");
+  mockIsContentCreationTheme.mockReturnValue(false);
+  mockEmptyState.mockImplementation((props?: { input?: string }) => (
+    <div data-testid="empty-state">{props?.input || ""}</div>
+  ));
 
-  const mockOriginalSwitchTopic = vi.fn(async () => undefined);
+  sharedSwitchTopicMock = vi.fn(async () => undefined);
+  sharedSendMessageMock = vi.fn(async () => undefined);
+  sharedTriggerAIGuideMock = vi.fn();
   mockUseAgentChatUnified.mockImplementation(
     ({ workspaceId }: { workspaceId: string }) => {
       observedWorkspaceIds.push(workspaceId);
@@ -315,13 +333,13 @@ beforeEach(() => {
         setExecutionStrategy: vi.fn(),
         messages: [],
         isSending: false,
-        sendMessage: vi.fn(async () => undefined),
+        sendMessage: sharedSendMessageMock,
         stopSending: vi.fn(async () => undefined),
         clearMessages: vi.fn(),
         deleteMessage: vi.fn(),
         editMessage: vi.fn(),
         handlePermissionResponse: vi.fn(),
-        triggerAIGuide: vi.fn(),
+        triggerAIGuide: sharedTriggerAIGuideMock,
         topics: [
           {
             id: "topic-a",
@@ -330,7 +348,7 @@ beforeEach(() => {
           },
         ],
         sessionId: "session-1",
-        switchTopic: mockOriginalSwitchTopic,
+        switchTopic: sharedSwitchTopicMock,
         deleteTopic: vi.fn(),
         renameTopic: vi.fn(),
       };
@@ -441,5 +459,65 @@ describe("AgentChatPage 话题切换项目恢复", () => {
     expect(observedWorkspaceIds[observedWorkspaceIds.length - 1]).toBe(
       "project-manual",
     );
+  });
+});
+
+describe("AgentChatPage 自动引导", () => {
+  it("社媒空文稿应预填引导词且不自动发送", async () => {
+    mockIsContentCreationTheme.mockReturnValue(true);
+
+    const container = renderPage({
+      projectId: "project-social",
+      contentId: "content-social",
+      theme: "social-media",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(sharedTriggerAIGuideMock).not.toHaveBeenCalled();
+    expect(sharedSendMessageMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("社媒内容创作教练");
+  });
+
+  it("非社媒空文稿应维持原始自动引导调用", async () => {
+    mockIsContentCreationTheme.mockReturnValue(true);
+
+    renderPage({
+      projectId: "project-document",
+      contentId: "content-document",
+      theme: "document",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(sharedTriggerAIGuideMock).toHaveBeenCalledTimes(1);
+    expect(sharedTriggerAIGuideMock).toHaveBeenCalledWith();
+  });
+
+  it("存在 initialUserPrompt 时应优先发送首条意图", async () => {
+    mockIsContentCreationTheme.mockReturnValue(true);
+    const onInitialUserPromptConsumed = vi.fn();
+    const initialUserPrompt = "请先帮我写一篇社媒文案提纲。";
+
+    renderPage({
+      projectId: "project-social-intent",
+      contentId: "content-social-intent",
+      theme: "social-media",
+      lockTheme: true,
+      initialUserPrompt,
+      onInitialUserPromptConsumed,
+    });
+    await flushEffects(12);
+
+    expect(sharedSendMessageMock).toHaveBeenCalledWith(
+      initialUserPrompt,
+      [],
+      false,
+      false,
+      false,
+      undefined,
+    );
+    expect(onInitialUserPromptConsumed).toHaveBeenCalledTimes(1);
+    expect(sharedTriggerAIGuideMock).not.toHaveBeenCalled();
   });
 });

@@ -1488,6 +1488,26 @@ describe("useAsterAgentChat 兼容接口", () => {
     }
   });
 
+  it("triggerAIGuide 传入引导词时应发送该引导词", async () => {
+    const harness = mountHook("ws-guide-social");
+    const prompt = "请先确认社媒平台和目标受众。";
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().triggerAIGuide(prompt);
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(1);
+      expect(value.messages[0]?.role).toBe("assistant");
+      expect(mockSendAsterMessageStream).toHaveBeenCalledTimes(1);
+      expect(mockSendAsterMessageStream.mock.calls[0]?.[0]).toBe(prompt);
+    } finally {
+      harness.unmount();
+    }
+  });
+
   it("renameTopic 应调用后端并刷新话题标题", async () => {
     const createdAt = Math.floor(Date.now() / 1000);
     mockListAsterSessions

@@ -5,7 +5,7 @@
  * @requirements 4.1, 4.4
  */
 
-import React, { memo, useState } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
 import {
   MessageSquare,
@@ -15,6 +15,12 @@ import {
   Lightbulb,
 } from "lucide-react";
 import { ProjectSelector } from "@/components/projects/ProjectSelector";
+import { getConfig } from "@/hooks/useTauri";
+import type { ThemeType } from "../types";
+import {
+  buildRecommendationPrompt,
+  getContextualRecommendations,
+} from "@/components/agent/chat/utils/contextualRecommendations";
 
 const Container = styled.div`
   flex: 1;
@@ -116,32 +122,34 @@ const ProjectSelectorWrapper = styled.div`
   max-width: 280px;
 `;
 
-const suggestions = [
-  {
-    icon: Code,
-    title: "代码问答",
-    desc: "解释代码、调试问题、优化建议",
-    prompt: "帮我解释一下这段代码的作用",
-  },
-  {
-    icon: Lightbulb,
-    title: "概念解释",
-    desc: "深入浅出地解释技术概念",
-    prompt: "用简单的话解释什么是 React Hooks",
-  },
-  {
-    icon: Languages,
-    title: "翻译润色",
-    desc: "翻译文本、润色表达",
-    prompt: "帮我把这段话翻译成英文",
-  },
-  {
-    icon: Sparkles,
-    title: "头脑风暴",
-    desc: "创意想法、方案建议",
-    prompt: "帮我想几个产品名字的创意",
-  },
-];
+const SelectionHint = styled.div`
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted) / 0.35);
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+`;
+
+const CHAT_THEME_TO_RECOMMENDATION_THEME: Record<ThemeType, string> = {
+  general: "general",
+  knowledge: "knowledge",
+  planning: "planning",
+  "social-media": "social-media",
+  poster: "poster",
+  document: "document",
+  paper: "knowledge",
+  novel: "novel",
+  script: "video",
+  music: "music",
+  video: "video",
+};
+
+const SUGGESTION_ICONS = [Code, Lightbulb, Languages, Sparkles];
 
 interface EmptyStateProps {
   /** 点击建议时的回调 */
@@ -150,6 +158,10 @@ interface EmptyStateProps {
   selectedProjectId?: string | null;
   /** 项目选择变化回调 */
   onProjectChange?: (projectId: string) => void;
+  /** 当前主题 */
+  activeTheme?: ThemeType;
+  /** 当前选中的文本（用于推荐上下文） */
+  selectedText?: string;
 }
 
 /**
@@ -158,10 +170,92 @@ interface EmptyStateProps {
  * 显示欢迎信息、项目选择器和快捷建议
  */
 export const EmptyState: React.FC<EmptyStateProps> = memo(
-  ({ onSuggestionClick, selectedProjectId, onProjectChange }) => {
+  ({
+    onSuggestionClick,
+    selectedProjectId,
+    onProjectChange,
+    activeTheme = "general",
+    selectedText = "",
+  }) => {
     const [localProjectId, setLocalProjectId] = useState<string | null>(
       selectedProjectId || null,
     );
+    const [appendSelectedTextToRecommendation, setAppendSelectedTextToRecommendation] =
+      useState(true);
+
+    useEffect(() => {
+      const loadConfigPreferences = async () => {
+        try {
+          const config = await getConfig();
+          setAppendSelectedTextToRecommendation(
+            config.chat_appearance?.append_selected_text_to_recommendation ??
+              true,
+          );
+        } catch (error) {
+          console.error("加载聊天外观配置失败:", error);
+        }
+      };
+
+      loadConfigPreferences();
+      window.addEventListener(
+        "chat-appearance-config-changed",
+        loadConfigPreferences,
+      );
+
+      return () => {
+        window.removeEventListener(
+          "chat-appearance-config-changed",
+          loadConfigPreferences,
+        );
+      };
+    }, []);
+
+    const recommendationTheme = CHAT_THEME_TO_RECOMMENDATION_THEME[activeTheme];
+    const recommendationSelectedText = appendSelectedTextToRecommendation
+      ? selectedText
+      : "";
+
+    const suggestions = useMemo(() => {
+      const recommendationTuples = getContextualRecommendations({
+        activeTheme: recommendationTheme,
+        input: "",
+        creationMode: "guided",
+        entryTaskType: "direct",
+        platform: "xiaohongshu",
+        hasCanvasContent: false,
+        hasContentId: false,
+        selectedText: recommendationSelectedText,
+      });
+
+      return recommendationTuples
+        .slice(0, 4)
+        .map(([title, prompt], index) => ({
+          icon: SUGGESTION_ICONS[index % SUGGESTION_ICONS.length],
+          title,
+          desc: prompt,
+          prompt: buildRecommendationPrompt(
+            prompt,
+            selectedText,
+            appendSelectedTextToRecommendation,
+          ),
+        }));
+    }, [
+      recommendationTheme,
+      recommendationSelectedText,
+      selectedText,
+      appendSelectedTextToRecommendation,
+    ]);
+
+    const selectedTextPreview = useMemo(() => {
+      const normalized = recommendationSelectedText.trim().replace(/\s+/g, " ");
+      if (!normalized) {
+        return "";
+      }
+
+      return normalized.length > 60
+        ? `${normalized.slice(0, 60).trim()}…`
+        : normalized;
+    }, [recommendationSelectedText]);
 
     const handleProjectChange = (projectId: string) => {
       setLocalProjectId(projectId);
@@ -186,6 +280,15 @@ export const EmptyState: React.FC<EmptyStateProps> = memo(
             placeholder="选择项目"
           />
         </ProjectSelectorWrapper>
+
+        {selectedTextPreview && (
+          <SelectionHint>
+            已检测到选中内容，点击推荐会自动附带上下文：
+            <span style={{ marginLeft: 4, color: "hsl(var(--foreground))" }}>
+              “{selectedTextPreview}”
+            </span>
+          </SelectionHint>
+        )}
 
         <SuggestionsGrid>
           {suggestions.map((item) => (

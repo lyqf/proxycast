@@ -58,6 +58,8 @@ export interface DocumentCanvasProps {
   onClose: () => void;
   /** 是否正在流式输出 */
   isStreaming?: boolean;
+  /** 选中文本变更回调 */
+  onSelectionTextChange?: (text: string) => void;
 }
 
 /**
@@ -94,6 +96,8 @@ export interface DocumentRendererProps {
   platform: PlatformType;
   /** 是否正在流式输出 */
   isStreaming?: boolean;
+  /** 选中文本变更回调 */
+  onSelectionTextChange?: (text: string) => void;
 }
 
 /**
@@ -118,6 +122,8 @@ export interface DocumentEditorProps {
   onSave: () => void;
   /** 取消回调 */
   onCancel: () => void;
+  /** 选中文本变更回调 */
+  onSelectionTextChange?: (text: string) => void;
 }
 
 /**

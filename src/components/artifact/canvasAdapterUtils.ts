@@ -17,6 +17,7 @@ import { createInitialPosterState } from "@/components/content-creator/canvas/po
 import { createInitialMusicState } from "@/components/content-creator/canvas/music";
 import { createInitialScriptState } from "@/components/content-creator/canvas/script";
 import { createInitialNovelState } from "@/components/content-creator/canvas/novel";
+import { createInitialVideoState } from "@/components/content-creator/canvas/video";
 import type { DocumentCanvasState } from "@/components/content-creator/canvas/document/types";
 import type { PosterCanvasState } from "@/components/content-creator/canvas/poster/types";
 import type { MusicCanvasState } from "@/components/content-creator/canvas/music/types";
@@ -54,6 +55,7 @@ export const ARTIFACT_TO_CANVAS_TYPE: Record<string, CanvasType> = {
   "canvas:music": "music",
   "canvas:script": "script",
   "canvas:novel": "novel",
+  "canvas:video": "video",
 };
 
 /**
@@ -65,6 +67,7 @@ export const CANVAS_TYPE_LABELS: Record<CanvasType, string> = {
   music: "音乐",
   script: "剧本",
   novel: "小说",
+  video: "视频",
 };
 
 /**
@@ -76,6 +79,7 @@ export const CANVAS_TYPE_ICONS: Record<CanvasType, string> = {
   music: "🎵",
   script: "🎬",
   novel: "📚",
+  video: "🎞️",
 };
 
 // ============================================================================
@@ -145,6 +149,8 @@ export function createCanvasStateFromArtifact(
       return createInitialScriptState(content);
     case "novel":
       return createInitialNovelState(content);
+    case "video":
+      return createInitialVideoState(content);
     default:
       return null;
   }

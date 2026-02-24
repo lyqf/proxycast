@@ -16,6 +16,8 @@ import { ScriptCanvas } from "./script";
 import type { ScriptCanvasState } from "./script/types";
 import { NovelCanvas } from "./novel";
 import type { NovelCanvasState } from "./novel/types";
+import { VideoCanvas } from "./video";
+import type { VideoCanvasState } from "./video/types";
 import { getCanvasTypeForTheme, type CanvasStateUnion } from "./canvasUtils";
 
 /**
@@ -41,6 +43,8 @@ interface CanvasFactoryProps {
     /** 章节栏折叠状态变更 */
     onChapterListCollapsedChange: (collapsed: boolean) => void;
   } | null;
+  /** 画布选中文本变更 */
+  onSelectionTextChange?: (text: string) => void;
 }
 
 /**
@@ -50,7 +54,15 @@ interface CanvasFactoryProps {
  * 优先使用 state.type 来决定渲染哪个画布，以支持 general 等主题
  */
 export const CanvasFactory: React.FC<CanvasFactoryProps> = memo(
-  ({ theme, state, onStateChange, onClose, isStreaming, novelControls }) => {
+  ({
+    theme,
+    state,
+    onStateChange,
+    onClose,
+    isStreaming,
+    novelControls,
+    onSelectionTextChange,
+  }) => {
     // 优先根据 state.type 渲染，这样 general 主题也能显示文档画布
     // 只有当 state.type 与 theme 对应的 canvasType 不匹配时才检查 theme
     const canvasType = useMemo(() => {
@@ -70,6 +82,7 @@ export const CanvasFactory: React.FC<CanvasFactoryProps> = memo(
           onStateChange={onStateChange as (s: DocumentCanvasState) => void}
           onClose={onClose}
           isStreaming={isStreaming}
+          onSelectionTextChange={onSelectionTextChange}
         />
       );
     }
@@ -116,6 +129,17 @@ export const CanvasFactory: React.FC<CanvasFactoryProps> = memo(
           onChapterListCollapsedChange={
             novelControls?.onChapterListCollapsedChange
           }
+          onSelectionTextChange={onSelectionTextChange}
+        />
+      );
+    }
+
+    if (canvasType === "video" && state.type === "video") {
+      return (
+        <VideoCanvas
+          state={state}
+          onStateChange={onStateChange as (s: VideoCanvasState) => void}
+          onClose={onClose}
         />
       );
     }

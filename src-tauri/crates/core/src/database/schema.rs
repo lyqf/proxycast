@@ -787,6 +787,45 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
 
     // ============================================================================
+    // 视频生成任务表 (VideoGenerationTask)
+    // 存储视频生成任务状态与结果
+    // ============================================================================
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS video_generation_tasks (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            request_payload TEXT,
+            provider_task_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            progress INTEGER,
+            result_url TEXT,
+            error_message TEXT,
+            metadata_json TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            finished_at INTEGER,
+            FOREIGN KEY (project_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_video_tasks_project_created ON video_generation_tasks(project_id, created_at DESC)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_video_tasks_status ON video_generation_tasks(status)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_video_tasks_provider_task ON video_generation_tasks(provider_task_id)",
+        [],
+    )?;
+
+    // ============================================================================
     // 排版模板表 (Template)
     // 存储项目级排版模板，用于控制 AI 输出内容的格式
     // _Requirements: 8.3_

@@ -78,6 +78,11 @@ import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 import { ProjectDetailPage } from "@/components/projects/ProjectDetailPage";
 import type { CreationMode } from "@/components/content-creator/types";
 import {
+  VideoCanvas,
+  createInitialVideoState,
+  type VideoCanvasState as StandaloneVideoCanvasState,
+} from "@/components/content-creator/canvas/video";
+import {
   buildCreationIntentMetadata,
   buildCreationIntentPrompt,
   createInitialCreationIntentValues,
@@ -206,16 +211,22 @@ export function WorkbenchPage({
   const [selectedCreationMode, setSelectedCreationMode] =
     useState<CreationMode>(DEFAULT_CREATION_MODE);
   const [creationIntentValues, setCreationIntentValues] =
-    useState<CreationIntentFormValues>(() => createInitialCreationIntentValues());
+    useState<CreationIntentFormValues>(() =>
+      createInitialCreationIntentValues(),
+    );
   const [creationIntentError, setCreationIntentError] = useState("");
-  const [pendingInitialPromptsByContentId, setPendingInitialPromptsByContentId] =
-    useState<Record<string, string>>({});
+  const [
+    pendingInitialPromptsByContentId,
+    setPendingInitialPromptsByContentId,
+  ] = useState<Record<string, string>>({});
   const [contentCreationModes, setContentCreationModes] = useState<
     Record<string, CreationMode>
   >({});
   const [resolvedProjectPath, setResolvedProjectPath] = useState("");
   const [pathChecking, setPathChecking] = useState(false);
   const [pathConflictMessage, setPathConflictMessage] = useState("");
+  const [videoCanvasState, setVideoCanvasState] =
+    useState<StandaloneVideoCanvasState>(() => createInitialVideoState());
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -260,8 +271,9 @@ export function WorkbenchPage({
   );
 
   const currentIntentLength = useMemo(
-    () => validateCreationIntent(creationIntentInput, MIN_CREATION_INTENT_LENGTH)
-      .length,
+    () =>
+      validateCreationIntent(creationIntentInput, MIN_CREATION_INTENT_LENGTH)
+        .length,
     [creationIntentInput],
   );
 
@@ -434,71 +446,65 @@ export function WorkbenchPage({
     setCreationIntentError("");
   }, []);
 
-  const handleCreateContent = useCallback(
-    async () => {
-      if (!selectedProjectId) {
-        return;
-      }
+  const handleCreateContent = useCallback(async () => {
+    if (!selectedProjectId) {
+      return;
+    }
 
-      const validation = validateCreationIntent(
-        creationIntentInput,
-        MIN_CREATION_INTENT_LENGTH,
-      );
-      if (!validation.valid) {
-        setCreationIntentError(validation.message || "请完善创作意图");
-        return;
-      }
-
-      const initialUserPrompt = buildCreationIntentPrompt(creationIntentInput);
-      const creationIntentMetadata = buildCreationIntentMetadata(
-        creationIntentInput,
-      );
-
-      setCreatingContent(true);
-      try {
-        const defaultType = getDefaultContentTypeForProject(
-          theme as ProjectType,
-        );
-        const created = await createContent({
-          project_id: selectedProjectId,
-          title: `新${getContentTypeLabel(defaultType)}`,
-          content_type: defaultType,
-          metadata: {
-            creationMode: selectedCreationMode,
-            creationIntent: creationIntentMetadata,
-          },
-        });
-
-        setContentCreationModes((previous) => ({
-          ...previous,
-          [created.id]: selectedCreationMode,
-        }));
-        setPendingInitialPromptsByContentId((previous) => ({
-          ...previous,
-          [created.id]: initialUserPrompt,
-        }));
-        setCreateContentDialogOpen(false);
-        resetCreateContentDialogState();
-        await loadContents(selectedProjectId);
-        handleEnterWorkspace(created.id, { showChatPanel: true });
-        toast.success("已创建新文稿");
-      } catch (error) {
-        console.error("创建文稿失败:", error);
-        toast.error("创建文稿失败");
-      } finally {
-        setCreatingContent(false);
-      }
-    },
-    [
+    const validation = validateCreationIntent(
       creationIntentInput,
-      handleEnterWorkspace,
-      loadContents,
-      resetCreateContentDialogState,
-      selectedCreationMode,
-      selectedProjectId,
-      theme,
-    ],
-  );
+      MIN_CREATION_INTENT_LENGTH,
+    );
+    if (!validation.valid) {
+      setCreationIntentError(validation.message || "请完善创作意图");
+      return;
+    }
+
+    const initialUserPrompt = buildCreationIntentPrompt(creationIntentInput);
+    const creationIntentMetadata =
+      buildCreationIntentMetadata(creationIntentInput);
+
+    setCreatingContent(true);
+    try {
+      const defaultType = getDefaultContentTypeForProject(theme as ProjectType);
+      const created = await createContent({
+        project_id: selectedProjectId,
+        title: `新${getContentTypeLabel(defaultType)}`,
+        content_type: defaultType,
+        metadata: {
+          creationMode: selectedCreationMode,
+          creationIntent: creationIntentMetadata,
+        },
+      });
+
+      setContentCreationModes((previous) => ({
+        ...previous,
+        [created.id]: selectedCreationMode,
+      }));
+      setPendingInitialPromptsByContentId((previous) => ({
+        ...previous,
+        [created.id]: initialUserPrompt,
+      }));
+      setCreateContentDialogOpen(false);
+      resetCreateContentDialogState();
+      await loadContents(selectedProjectId);
+      handleEnterWorkspace(created.id, { showChatPanel: true });
+      toast.success("已创建新文稿");
+    } catch (error) {
+      console.error("创建文稿失败:", error);
+      toast.error("创建文稿失败");
+    } finally {
+      setCreatingContent(false);
+    }
+  }, [
+    creationIntentInput,
+    handleEnterWorkspace,
+    loadContents,
+    resetCreateContentDialogState,
+    selectedCreationMode,
+    selectedProjectId,
+    theme,
+  ]);
 
   const consumePendingInitialPrompt = useCallback((contentId: string) => {
     setPendingInitialPromptsByContentId((previous) => {
@@ -722,6 +728,13 @@ export function WorkbenchPage({
       setShowWorkflowRail(false);
     }
   }, [workspaceMode]);
+
+  useEffect(() => {
+    if (theme !== "video") {
+      return;
+    }
+    setVideoCanvasState(createInitialVideoState());
+  }, [theme, resetAt]);
 
   useEffect(() => {
     if (!workflowProgress || workflowProgress.steps.length === 0) {
@@ -1071,6 +1084,15 @@ export function WorkbenchPage({
                 }}
               />
             )
+          ) : workspaceMode === "workspace" && theme === "video" ? (
+            <div className="flex-1 min-h-0">
+              <VideoCanvas
+                state={videoCanvasState}
+                onStateChange={setVideoCanvasState}
+                projectId={selectedProjectId}
+                onBackHome={handleBackHome}
+              />
+            </div>
           ) : !selectedProjectId || !selectedContentId ? (
             <div className="h-full rounded-lg border bg-card flex flex-col items-center justify-center gap-3 text-muted-foreground m-4">
               <Sparkles className="h-8 w-8 opacity-60" />
@@ -1128,33 +1150,35 @@ export function WorkbenchPage({
           )}
         </main>
 
-        {workspaceMode === "workspace" && activeRightDrawer === "tools" && (
-          <aside className="w-[260px] min-w-[260px] border-l bg-muted/10 p-4 flex flex-col gap-3">
-            <h3 className="text-sm font-semibold">主题工具</h3>
-            <Button
-              variant="outline"
-              className="justify-start"
-              onClick={() => {
-                void handleQuickSaveCurrent();
-              }}
-              disabled={!selectedContentId}
-            >
-              <FileText className="h-4 w-4 mr-2" />
-              快速保存
-            </Button>
-            <Button
-              variant="outline"
-              className="justify-start"
-              onClick={handleOpenProjectDetail}
-              disabled={!selectedProjectId}
-            >
-              <FolderOpen className="h-4 w-4 mr-2" />
-              项目详情
-            </Button>
-          </aside>
-        )}
+        {workspaceMode === "workspace" &&
+          theme !== "video" &&
+          activeRightDrawer === "tools" && (
+            <aside className="w-[260px] min-w-[260px] border-l bg-muted/10 p-4 flex flex-col gap-3">
+              <h3 className="text-sm font-semibold">主题工具</h3>
+              <Button
+                variant="outline"
+                className="justify-start"
+                onClick={() => {
+                  void handleQuickSaveCurrent();
+                }}
+                disabled={!selectedContentId}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                快速保存
+              </Button>
+              <Button
+                variant="outline"
+                className="justify-start"
+                onClick={handleOpenProjectDetail}
+                disabled={!selectedProjectId}
+              >
+                <FolderOpen className="h-4 w-4 mr-2" />
+                项目详情
+              </Button>
+            </aside>
+          )}
 
-        {workspaceMode === "workspace" && (
+        {workspaceMode === "workspace" && theme !== "video" && (
           <aside className="w-14 min-w-14 border-l bg-background/95 flex flex-col items-center py-3 gap-2">
             <TooltipProvider>
               <Tooltip>

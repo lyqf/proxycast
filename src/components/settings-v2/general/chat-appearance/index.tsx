@@ -1,397 +1,344 @@
 /**
- * 聊天外观设置组件
- *
- * 参考成熟产品的聊天外观实现
- * 功能包括：聊天气泡样式、字体大小、过渡模式等
+ * @file index.tsx
+ * @description 通用设置 - 聊天外观与模块定制
  */
 
 import { useState, useEffect } from "react";
-import { Type, Sparkles, MessageSquare, Monitor, Info } from "lucide-react";
+import styled from "styled-components";
+import { Palette } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
+import { Switch } from "@/components/ui/switch";
 
-type TransitionMode = "none" | "fadeIn" | "smooth";
-type BubbleStyle = "default" | "minimal" | "colorful";
+const ALL_CONTENT_THEMES = [
+  { id: "general", label: "通用" },
+  { id: "social-media", label: "社媒内容" },
+  { id: "poster", label: "图文海报" },
+  { id: "music", label: "歌词曲谱" },
+  { id: "video", label: "短视频" },
+  { id: "novel", label: "小说" },
+  { id: "knowledge", label: "知识探索" },
+  { id: "planning", label: "计划规划" },
+  { id: "document", label: "办公文档" },
+] as const;
 
-interface ChatAppearanceConfig {
-  fontSize?: number; // 12-18
-  transitionMode?: TransitionMode;
-  bubbleStyle?: BubbleStyle;
-  showAvatar?: boolean;
-  showTimestamp?: boolean;
-}
+const DEFAULT_ENABLED_THEMES = [
+  "general",
+  "social-media",
+  "poster",
+  "music",
+  "video",
+  "novel",
+];
 
-const DEFAULT_CHAT_APPEARANCE: ChatAppearanceConfig = {
-  fontSize: 14,
-  transitionMode: "smooth",
-  bubbleStyle: "default",
-  showAvatar: true,
-  showTimestamp: true,
-};
+const ALL_NAV_ITEMS = [
+  { id: "home-general", label: "首页" },
+  { id: "video", label: "视频" },
+  { id: "image-gen", label: "绘画" },
+  { id: "batch", label: "批量任务" },
+  { id: "plugins", label: "插件中心" },
+] as const;
 
-/**
- * 字体大小预览组件
- */
-function FontSizePreview({ fontSize }: { fontSize: number }) {
-  const sampleText = `这是示例文本
+const DEFAULT_ENABLED_NAV_ITEMS = [
+  "home-general",
+  "video",
+  "image-gen",
+  "plugins",
+];
 
-## 标题示例
-这是一段普通文本，展示当前的字体大小效果。
-
-- 列表项 1
-- 列表项 2
-
-**粗体文本** 和 *斜体文本*
+const Container = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 `;
 
-  return (
-    <div
-      className="p-4 rounded-lg border bg-muted/30 min-h-[120px] prose dark:prose-invert max-w-none"
-      style={{ fontSize: `${fontSize}px` }}
-    >
-      <div className="whitespace-pre-wrap">{sampleText}</div>
-    </div>
-  );
-}
+const Section = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`;
 
-/**
- * 过渡模式预览组件
- */
-function TransitionPreview({ mode }: { mode: TransitionMode }) {
-  const [messages, setMessages] = useState<string[]>([]);
+const SectionTitle = styled.h3`
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid hsl(var(--border));
+`;
 
-  useEffect(() => {
-    setMessages([]);
-    const timer = setTimeout(() => {
-      setMessages(["你好！"]);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [mode]);
+const SettingItem = styled.div`
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  gap: 16px;
+`;
 
-  return (
-    <div className="space-y-2 p-4 rounded-lg border bg-muted/30 min-h-[120px]">
-      {messages.map((msg, i) => (
-        <div
-          key={i}
-          className={cn(
-            "inline-block px-3 py-2 rounded-lg bg-primary text-primary-foreground",
-            mode === "fadeIn" && "animate-in fade-in duration-300",
-            mode === "smooth" && "transition-all duration-300",
-          )}
-        >
-          {msg}
-        </div>
-      ))}
-    </div>
-  );
-}
+const SettingHeader = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+`;
 
-/**
- * 气泡样式预览组件
- */
-function BubbleStylePreview({ style }: { style: BubbleStyle }) {
-  const bubbles = [
-    { text: "你好，有什么可以帮助你的吗？", align: "left" },
-    { text: "帮我写一段代码", align: "right" },
-  ];
+const SettingIcon = styled.div`
+  color: hsl(var(--muted-foreground));
+  padding-top: 2px;
+`;
 
-  const getBubbleClass = (align: string) => {
-    const baseClass = "max-w-[70%] px-3 py-2 rounded-lg";
-    if (style === "minimal") {
-      return cn(
-        baseClass,
-        align === "left"
-          ? "bg-muted text-foreground"
-          : "bg-primary/20 text-foreground",
-      );
-    } else if (style === "colorful") {
-      return cn(
-        baseClass,
-        align === "left"
-          ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
-          : "bg-gradient-to-br from-purple-500 to-purple-600 text-white",
-      );
+const SettingInfo = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+`;
+
+const SettingLabel = styled.div`
+  font-size: 14px;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+`;
+
+const SettingDescription = styled.div`
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+`;
+
+const TagsContainer = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: 36px;
+`;
+
+const ToggleRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-left: 36px;
+  gap: 12px;
+`;
+
+const ToggleInfo = styled.div`
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+`;
+
+const TagButton = styled.button<{ $active: boolean }>`
+  px: 12px;
+  py: 6px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+  ${({ $active }) =>
+    $active
+      ? `
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    border: none;
+  `
+      : `
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+    border: 1px solid transparent;
+    &:hover {
+      background: hsl(var(--muted)/0.8);
     }
-    // default
-    return cn(
-      baseClass,
-      align === "left"
-        ? "bg-muted text-foreground"
-        : "bg-primary text-primary-foreground",
-    );
-  };
-
-  return (
-    <div className="space-y-3 p-4 rounded-lg border bg-muted/30 min-h-[120px]">
-      {bubbles.map((bubble, i) => (
-        <div
-          key={i}
-          className={cn(
-            "flex",
-            bubble.align === "left" ? "justify-start" : "justify-end",
-          )}
-        >
-          <div className={getBubbleClass(bubble.align)}>{bubble.text}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
+  `}
+`;
 
 export function ChatAppearanceSettings() {
-  const [config, setConfig] = useState<Config | null>(null);
-  const [chatConfig, setChatConfig] = useState<ChatAppearanceConfig>(
-    DEFAULT_CHAT_APPEARANCE,
+  const [enabledThemes, setEnabledThemes] = useState<string[]>(
+    DEFAULT_ENABLED_THEMES,
   );
-  const [_loading, setLoading] = useState(true);
-  const [_saving, setSaving] = useState<Record<string, boolean>>({});
+  const [enabledNavItems, setEnabledNavItems] = useState<string[]>(
+    DEFAULT_ENABLED_NAV_ITEMS,
+  );
+  const [appendSelectedTextToRecommendation, setAppendSelectedTextToRecommendation] =
+    useState(true);
+  const [config, setConfig] = useState<Config | null>(null);
 
-  // 加载配置
   useEffect(() => {
     loadConfig();
   }, []);
 
   const loadConfig = async () => {
-    setLoading(true);
     try {
       const c = await getConfig();
       setConfig(c);
-      setChatConfig(c.chat_appearance || DEFAULT_CHAT_APPEARANCE);
+      setEnabledThemes(
+        c.content_creator?.enabled_themes || DEFAULT_ENABLED_THEMES,
+      );
+      setEnabledNavItems(
+        c.navigation?.enabled_items || DEFAULT_ENABLED_NAV_ITEMS,
+      );
+      setAppendSelectedTextToRecommendation(
+        c.chat_appearance?.append_selected_text_to_recommendation ?? true,
+      );
     } catch (e) {
-      console.error("加载聊天外观配置失败:", e);
-    } finally {
-      setLoading(false);
+      console.error("加载配置失败:", e);
     }
   };
 
-  // 保存配置
-  const saveChatConfig = async (
-    key: keyof ChatAppearanceConfig,
-    value: any,
-  ) => {
+  const handleThemeToggle = async (themeId: string) => {
     if (!config) return;
-    setSaving((prev) => ({ ...prev, [key]: true }));
+    const newThemes = enabledThemes.includes(themeId)
+      ? enabledThemes.filter((t) => t !== themeId)
+      : [...enabledThemes, themeId];
+
+    if (newThemes.length === 0) return;
+
+    setEnabledThemes(newThemes);
+    try {
+      const newConfig = {
+        ...config,
+        content_creator: { enabled_themes: newThemes },
+      };
+      await saveConfig(newConfig);
+      setConfig(newConfig);
+      window.dispatchEvent(new CustomEvent("theme-config-changed"));
+    } catch (err) {
+      console.error("保存主题设置失败:", err);
+      setEnabledThemes(enabledThemes);
+    }
+  };
+
+  const handleNavItemToggle = async (itemId: string) => {
+    if (!config) return;
+    const newItems = enabledNavItems.includes(itemId)
+      ? enabledNavItems.filter((i) => i !== itemId)
+      : [...enabledNavItems, itemId];
+
+    if (newItems.length === 0) return;
+
+    setEnabledNavItems(newItems);
+    try {
+      const newConfig = {
+        ...config,
+        navigation: { enabled_items: newItems },
+      };
+      await saveConfig(newConfig);
+      setConfig(newConfig);
+      window.dispatchEvent(new CustomEvent("nav-config-changed"));
+    } catch (err) {
+      console.error("保存导航设置失败:", err);
+      setEnabledNavItems(enabledNavItems);
+    }
+  };
+
+  const handleRecommendationSelectionToggle = async (checked: boolean) => {
+    if (!config) return;
+    const previousValue = appendSelectedTextToRecommendation;
+    setAppendSelectedTextToRecommendation(checked);
 
     try {
       const newConfig = {
-        ...chatConfig,
-        [key]: value,
-      };
-      const updatedFullConfig = {
         ...config,
-        chat_appearance: newConfig,
+        chat_appearance: {
+          ...(config.chat_appearance || {}),
+          append_selected_text_to_recommendation: checked,
+        },
       };
-      await saveConfig(updatedFullConfig);
-      setConfig(updatedFullConfig);
-      setChatConfig(newConfig);
-    } catch (e) {
-      console.error("保存聊天外观配置失败:", e);
-    } finally {
-      setSaving((prev) => ({ ...prev, [key]: false }));
+      await saveConfig(newConfig);
+      setConfig(newConfig);
+      window.dispatchEvent(new CustomEvent("chat-appearance-config-changed"));
+    } catch (err) {
+      console.error("保存推荐上下文设置失败:", err);
+      setAppendSelectedTextToRecommendation(previousValue);
     }
   };
 
-  const transitionModeOptions: {
-    value: TransitionMode;
-    label: string;
-    desc: string;
-  }[] = [
-    {
-      value: "none",
-      label: "无动画",
-      desc: "消息立即显示",
-    },
-    {
-      value: "fadeIn",
-      label: "淡入",
-      desc: "消息淡入显示",
-    },
-    {
-      value: "smooth",
-      label: "平滑",
-      desc: "平滑过渡效果",
-    },
-  ];
-
-  const bubbleStyleOptions: {
-    value: BubbleStyle;
-    label: string;
-    desc: string;
-  }[] = [
-    {
-      value: "default",
-      label: "默认",
-      desc: "经典聊天气泡样式",
-    },
-    {
-      value: "minimal",
-      label: "简约",
-      desc: "简约气泡风格",
-    },
-    {
-      value: "colorful",
-      label: "彩色",
-      desc: "渐变彩色气泡",
-    },
-  ];
-
   return (
-    <div className="space-y-4 max-w-2xl">
-      {/* 字体大小 */}
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Type className="h-4 w-4 text-muted-foreground" />
-            <div>
-              <h3 className="text-sm font-medium">字体大小</h3>
-              <p className="text-xs text-muted-foreground">
-                调整聊天消息的字体大小
-              </p>
-            </div>
-          </div>
-          <span className="text-sm font-medium text-primary">
-            {chatConfig.fontSize}px
-          </span>
-        </div>
+    <Container>
+      <Section>
+        <SectionTitle>工作区定制</SectionTitle>
 
-        <div className="mb-3">
-          <input
-            type="range"
-            min={12}
-            max={18}
-            step={1}
-            value={chatConfig.fontSize || 14}
-            onChange={(e) => {
-              const value = parseInt(e.target.value);
-              setChatConfig((prev) => ({ ...prev, fontSize: value }));
-            }}
-            onChangeCapture={(e) => {
-              saveChatConfig(
-                "fontSize",
-                parseInt((e.target as HTMLInputElement).value),
-              );
-            }}
-            className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-          />
-          <div className="flex justify-between mt-1 text-xs text-muted-foreground">
-            <span>小 (12px)</span>
-            <span>中 (14px)</span>
-            <span>大 (18px)</span>
-          </div>
-        </div>
+        <SettingItem>
+          <SettingHeader>
+            <SettingIcon>
+              <Palette size={20} />
+            </SettingIcon>
+            <SettingInfo>
+              <SettingLabel>创作模式卡片</SettingLabel>
+              <SettingDescription>选择您希望在创建新项目时可以使用的快捷内容创作模板，它们会在新对话页面展现。</SettingDescription>
+            </SettingInfo>
+          </SettingHeader>
 
-        <FontSizePreview fontSize={chatConfig.fontSize || 14} />
-      </div>
+          <TagsContainer>
+            {ALL_CONTENT_THEMES.map((t) => (
+              <TagButton
+                key={t.id}
+                $active={enabledThemes.includes(t.id)}
+                onClick={() => handleThemeToggle(t.id)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                  enabledThemes.includes(t.id)
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80",
+                )}
+              >
+                {t.label}
+              </TagButton>
+            ))}
+          </TagsContainer>
+        </SettingItem>
 
-      {/* 过渡模式 */}
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center gap-2 mb-3">
-          <Sparkles className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <h3 className="text-sm font-medium">消息过渡效果</h3>
-            <p className="text-xs text-muted-foreground">
-              选择消息显示的动画效果
-            </p>
-          </div>
-        </div>
+        <SettingItem>
+          <SettingHeader>
+            <SettingIcon>
+              <Palette size={20} />
+            </SettingIcon>
+            <SettingInfo>
+              <SettingLabel>左侧边栏导航</SettingLabel>
+              <SettingDescription>定制主视图左侧边栏启用的常驻导航图标入口，最少须保留一个。</SettingDescription>
+            </SettingInfo>
+          </SettingHeader>
 
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {transitionModeOptions.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => saveChatConfig("transitionMode", option.value)}
-              className={cn(
-                "px-3 py-2 rounded-lg text-xs font-medium transition-colors border",
-                chatConfig.transitionMode === option.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "hover:bg-muted",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+          <TagsContainer>
+            {ALL_NAV_ITEMS.map((item) => (
+              <TagButton
+                key={item.id}
+                $active={enabledNavItems.includes(item.id)}
+                onClick={() => handleNavItemToggle(item.id)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                  enabledNavItems.includes(item.id)
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80",
+                )}
+              >
+                {item.label}
+              </TagButton>
+            ))}
+          </TagsContainer>
+        </SettingItem>
 
-        <TransitionPreview mode={chatConfig.transitionMode || "smooth"} />
-      </div>
+        <SettingItem>
+          <SettingHeader>
+            <SettingIcon>
+              <Palette size={20} />
+            </SettingIcon>
+            <SettingInfo>
+              <SettingLabel>推荐自动附带选中内容</SettingLabel>
+              <SettingDescription>开启后，点击推荐提示词会自动追加当前编辑器选中文本作为上下文。</SettingDescription>
+            </SettingInfo>
+          </SettingHeader>
 
-      {/* 气泡样式 */}
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center gap-2 mb-3">
-          <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <h3 className="text-sm font-medium">聊天气泡样式</h3>
-            <p className="text-xs text-muted-foreground">
-              自定义聊天气泡的视觉风格
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {bubbleStyleOptions.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => saveChatConfig("bubbleStyle", option.value)}
-              className={cn(
-                "px-3 py-2 rounded-lg text-xs font-medium transition-colors border",
-                chatConfig.bubbleStyle === option.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "hover:bg-muted",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        <BubbleStylePreview style={chatConfig.bubbleStyle || "default"} />
-      </div>
-
-      {/* 显示选项 */}
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center gap-2 mb-3">
-          <Monitor className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <h3 className="text-sm font-medium">显示选项</h3>
-            <p className="text-xs text-muted-foreground">
-              控制聊天界面的元素显示
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <label className="flex items-center justify-between py-1.5 cursor-pointer">
-            <span className="text-sm">显示头像</span>
-            <input
-              type="checkbox"
-              checked={chatConfig.showAvatar ?? true}
-              onChange={(e) => saveChatConfig("showAvatar", e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300"
+          <ToggleRow>
+            <ToggleInfo>建议开启：更贴合当前段落；关闭可避免附加额外上下文。</ToggleInfo>
+            <Switch
+              checked={appendSelectedTextToRecommendation}
+              onCheckedChange={handleRecommendationSelectionToggle}
             />
-          </label>
+          </ToggleRow>
+        </SettingItem>
 
-          <label className="flex items-center justify-between py-1.5 cursor-pointer border-t">
-            <span className="text-sm">显示时间戳</span>
-            <input
-              type="checkbox"
-              checked={chatConfig.showTimestamp ?? true}
-              onChange={(e) =>
-                saveChatConfig("showTimestamp", e.target.checked)
-              }
-              className="w-4 h-4 rounded border-gray-300"
-            />
-          </label>
-        </div>
-      </div>
-
-      {/* 提示信息 */}
-      <div className="flex items-start gap-2 text-xs text-muted-foreground p-3 bg-muted/30 rounded-lg">
-        <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-        <p>
-          这些设置会应用到所有聊天对话。部分效果可能需要刷新对话窗口后才能看到。
-        </p>
-      </div>
-    </div>
+      </Section>
+    </Container>
   );
 }
 

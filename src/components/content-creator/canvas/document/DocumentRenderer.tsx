@@ -4,7 +4,7 @@
  * @module components/content-creator/canvas/document/DocumentRenderer
  */
 
-import React, { memo, useState, useEffect, useRef } from "react";
+import React, { memo, useState, useEffect, useRef, useCallback } from "react";
 import styled, { keyframes } from "styled-components";
 import type { DocumentRendererProps, PlatformType } from "./types";
 import {
@@ -95,11 +95,48 @@ const getRenderer = (platform: PlatformType, content: string) => {
  * 支持流式显示 - 按段落逐步显示内容
  */
 export const DocumentRenderer: React.FC<DocumentRendererProps> = memo(
-  ({ content, platform, isStreaming = false }) => {
+  ({ content, platform, isStreaming = false, onSelectionTextChange }) => {
     // 用于流式显示的状态
     const [displayContent, setDisplayContent] = useState(content);
     const prevContentRef = useRef(content);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    const notifySelection = useCallback(() => {
+      if (!onSelectionTextChange) {
+        return;
+      }
+
+      const container = containerRef.current;
+      const selection = window.getSelection();
+      if (!container || !selection) {
+        onSelectionTextChange("");
+        return;
+      }
+
+      const anchorNode = selection.anchorNode;
+      const focusNode = selection.focusNode;
+      const inContainer =
+        (!!anchorNode && container.contains(anchorNode)) ||
+        (!!focusNode && container.contains(focusNode));
+
+      if (!inContainer) {
+        onSelectionTextChange("");
+        return;
+      }
+
+      const selectedText = selection.toString().trim();
+      onSelectionTextChange(selectedText);
+    }, [onSelectionTextChange]);
+
+    useEffect(() => {
+      if (!onSelectionTextChange) {
+        return;
+      }
+
+      return () => {
+        onSelectionTextChange("");
+      };
+    }, [onSelectionTextChange]);
 
     // 流式显示效果：当内容更新时，平滑过渡
     useEffect(() => {
@@ -130,7 +167,11 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = memo(
 
     if (!displayContent || displayContent.trim() === "") {
       return (
-        <Container ref={containerRef}>
+        <Container
+          ref={containerRef}
+          onMouseUp={notifySelection}
+          onKeyUp={notifySelection}
+        >
           <EmptyState>
             <EmptyIcon>📄</EmptyIcon>
             <span>暂无内容</span>
@@ -141,7 +182,11 @@ export const DocumentRenderer: React.FC<DocumentRendererProps> = memo(
     }
 
     return (
-      <Container ref={containerRef}>
+      <Container
+        ref={containerRef}
+        onMouseUp={notifySelection}
+        onKeyUp={notifySelection}
+      >
         <StreamingContainer key={isStreaming ? "streaming" : "static"}>
           {getRenderer(platform, displayContent)}
           {isStreaming && <StreamingCursor />}

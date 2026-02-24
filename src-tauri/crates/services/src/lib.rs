@@ -92,3 +92,4 @@ pub mod api_key_provider_service;
 pub mod provider_pool_service;
 pub mod provider_type_mapping;
 pub mod token_cache_service;
+pub mod video_generation_service;

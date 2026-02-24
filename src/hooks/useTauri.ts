@@ -159,6 +159,8 @@ export interface ChatAppearanceConfig {
   showAvatar?: boolean;
   /** 显示时间戳 */
   showTimestamp?: boolean;
+  /** 推荐点击时自动附带当前选中文本上下文 */
+  append_selected_text_to_recommendation?: boolean;
 }
 
 /**

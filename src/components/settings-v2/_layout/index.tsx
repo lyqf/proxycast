@@ -13,8 +13,9 @@ import { SettingsTabs } from "@/types/settings";
 import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 import { Page, PageParams } from "@/types/page";
 
-// 外观设置（迁移自原 GeneralSettings）
-import { GeneralSettings } from "../../settings/GeneralSettings";
+// 外观设置
+import { AppearanceSettings } from '../general/appearance';
+import { ChatAppearanceSettings } from '../general/chat-appearance';
 // 网络代理
 import { ProxySettings } from "../../settings/ProxySettings";
 // 安全与性能
@@ -34,8 +35,6 @@ import { AboutSection } from "../../settings/AboutSection";
 import { ExtensionsSettings } from "../../settings/ExtensionsSettings";
 // 快捷键设置
 import { HotkeysSettings } from "../general/hotkeys";
-// 聊天外观设置
-import { ChatAppearanceSettings } from "../general/chat-appearance";
 // 记忆设置
 // 语音服务设置
 import { VoiceSettings } from "../agent/voice";
@@ -160,7 +159,7 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
       return (
         <>
           <SettingHeader title="外观" />
-          <GeneralSettings />
+          <AppearanceSettings />
         </>
       );
 

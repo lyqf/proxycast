@@ -1809,6 +1809,9 @@ pub struct ChatAppearanceConfig {
     /// 显示时间戳
     #[serde(default)]
     pub show_timestamp: Option<bool>,
+    /// 推荐点击时自动附带当前选中文本上下文
+    #[serde(default)]
+    pub append_selected_text_to_recommendation: Option<bool>,
 }
 
 /// 记忆管理配置

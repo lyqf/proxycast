@@ -1256,6 +1256,11 @@ pub fn run() {
             commands::material_cmd::get_material_content,
             commands::material_cmd::get_material_count,
             commands::material_cmd::get_materials_content,
+            // Video generation commands
+            commands::video_generation_cmd::create_video_generation_task,
+            commands::video_generation_cmd::get_video_generation_task,
+            commands::video_generation_cmd::list_video_generation_tasks,
+            commands::video_generation_cmd::cancel_video_generation_task,
             // Poster Material commands
             commands::poster_material_cmd::create_poster_metadata,
             commands::poster_material_cmd::get_poster_metadata,

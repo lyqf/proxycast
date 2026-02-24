@@ -391,6 +391,10 @@ pub fn convert_agent_event(event: AgentEvent) -> Vec<TauriAgentEvent> {
             tracing::debug!("History replaced");
             vec![]
         }
+        AgentEvent::ContextTrace { steps } => {
+            tracing::debug!("Context trace received, steps: {}", steps.len());
+            vec![]
+        }
     }
 }
 

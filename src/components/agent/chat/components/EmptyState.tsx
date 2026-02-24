@@ -38,11 +38,14 @@ import {
   composeEntryPrompt,
   createDefaultEntrySlotValues,
   formatEntryTaskPreview,
-  getEntryTaskRecommendations,
   getEntryTaskTemplate,
   SOCIAL_MEDIA_ENTRY_TASKS,
   validateEntryTaskSlots,
 } from "../utils/entryPromptComposer";
+import {
+  buildRecommendationPrompt,
+  getContextualRecommendations,
+} from "../utils/contextualRecommendations";
 import { ChatModelSelector } from "./ChatModelSelector";
 
 // Import Assets
@@ -378,6 +381,9 @@ interface EmptyStateProps {
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
   onManageProviders?: () => void;
+  hasCanvasContent?: boolean;
+  hasContentId?: boolean;
+  selectedText?: string;
 }
 
 const ENTRY_THEME_ID = "social-media";
@@ -430,134 +436,6 @@ const CREATION_THEMES = [
   "music",
   "novel",
 ];
-
-/**
- * 推荐内容配置
- * 格式: [简化标题, 完整 Prompt]
- * 简化标题用于显示，完整 Prompt 用于点击发送
- */
-const THEME_RECOMMENDATIONS: Record<string, [string, string][]> = {
-  "social-media": [
-    [
-      "爆款标题生成",
-      "帮我为'春季护肤routine'写10个小红书爆款标题，要求：数字开头、制造悬念、引发共鸣",
-    ],
-    [
-      "小红书探店文案",
-      "写一篇小红书探店文案：周末在杭州发现一家宝藏咖啡店，工业风装修+拉花拿铁，适合拍照出片",
-    ],
-    [
-      "公众号排版",
-      "帮我把这段话排版成公众号风格：每段不超过150字，加入小标题和emoji，重点内容加粗",
-    ],
-    [
-      "评论区回复",
-      "用户评论'这个产品真的好用吗？还是广告？'，帮我写一条真诚、有说服力的回复",
-    ],
-  ],
-  poster: [
-    [
-      "海报设计",
-      "设计一张夏日音乐节海报：主色调渐变蓝紫，中央是剪影吉他和声波元素，底部大标题'夏日音浪'",
-    ],
-    [
-      "插画生成",
-      "生成一幅温馨的卧室插画：暖色调，落地窗透进阳光，书桌上有绿植和笔记本，治愈系风格",
-    ],
-    [
-      "UI 界面",
-      "设计一个健身APP首页：深色模式，顶部显示今日步数，中间是环形进度条，底部四个功能入口",
-    ],
-    [
-      "Logo 设计",
-      "设计一家名为'绿野'的有机食品品牌Logo：简约绿色叶子轮廓，可单独使用，适合多种尺寸",
-    ],
-    [
-      "摄影修图",
-      "人像照片调色建议：肤色通透，背景偏暖，整体日系清新风格，降低对比度提升亮度",
-    ],
-  ],
-  knowledge: [
-    [
-      "解释量子计算",
-      "用通俗易懂的方式解释量子计算是什么，类比成生活中的例子，适合非理科背景的人理解",
-    ],
-    [
-      "总结这篇论文",
-      "[粘贴论文链接或内容后] 帮我总结这篇论文的核心观点、研究方法和主要结论，输出500字以内的摘要",
-    ],
-    [
-      "如何制定OKR",
-      "详细介绍OKR（目标与关键结果）制定方法，包括设定原则、常见误区和实际案例，适合团队管理者",
-    ],
-    [
-      "分析行业趋势",
-      "分析2024年AI行业发展趋势，从技术突破、商业化进程、监管政策三个维度展开",
-    ],
-  ],
-  planning: [
-    [
-      "日本旅行计划",
-      "帮我制定一个7天日本关西旅行计划：大阪进京都出，包含主要景点、美食推荐、交通路线和预算估算",
-    ],
-    [
-      "年度职业规划",
-      "制定一名前端开发工程师的2024年职业规划：技能提升、项目经验、人脉积累、求职目标四个维度",
-    ],
-    [
-      "婚礼流程表",
-      "制定一场户外草坪婚礼的流程表：上午10点开始，包含仪式、宴会、互动环节，标注每个环节的时间",
-    ],
-    [
-      "健身计划",
-      "为办公室上班族制定健身计划：每周3次，每次30分钟，无需器械，可在办公室或家中完成",
-    ],
-  ],
-  music: [
-    [
-      "流行情歌",
-      "创作一首关于'暗恋'的流行情歌：主歌描述图书馆偶遇，副歌表达不敢告白的纠结，温柔的R&B风格",
-    ],
-    [
-      "古风歌词",
-      "创作古风歌词：主题是'江湖离别'，意象包括酒、剑、残阳、孤舟，五言句式为主，押韵工整",
-    ],
-    [
-      "说唱歌词",
-      "创作一段励志说唱：主题是'逆风翻盘'，讲述从低谷到成功的经历，快节奏，押韵密集，副歌要炸",
-    ],
-    [
-      "儿歌创作",
-      "创作一首儿童安全教育儿歌：主题是'过马路要小心'，简单易记，欢快活泼，3-5岁儿童能跟着唱",
-    ],
-    [
-      "旋律学习",
-      "帮我分析《稻香》的旋律特点：调式、和弦进行、节奏型，以及为什么听起来很怀旧温暖",
-    ],
-  ],
-  novel: [
-    [
-      "玄幻小说",
-      "创作玄幻小说开篇：主角在深山古洞觉醒传承，获得上古剑诀，第一章包含世界观铺垫和悬念设置",
-    ],
-    [
-      "都市言情",
-      "创作都市言情小说开篇：职场新人与高冷上司因工作误会相识，第一章突出女主性格和两人的初次冲突",
-    ],
-    [
-      "悬疑推理",
-      "创作悬疑推理小说开篇：雨夜发生密室杀人案，侦探到达现场发现三条线索，第一章制造悬念和推理伏笔",
-    ],
-    [
-      "科幻未来",
-      "创作科幻小说开篇：2084年人类首次接触外星文明，主角作为语言学家被召唤，第一章描写接触场景和紧张氛围",
-    ],
-    [
-      "历史架空",
-      "创作历史架空小说开篇：三国时期，一个现代人穿越成普通士兵，如何利用现代知识在乱世中生存",
-    ],
-  ],
-};
 
 // 主题对应的图标
 const THEME_ICONS: Record<string, string> = {
@@ -625,36 +503,49 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   executionStrategy = "react",
   setExecutionStrategy,
   onManageProviders,
+  hasCanvasContent = false,
+  hasContentId = false,
+  selectedText = "",
 }) => {
   // 从配置中读取启用的主题
   const [enabledThemes, setEnabledThemes] = useState<string[]>(
     DEFAULT_ENABLED_THEMES,
   );
+  const [appendSelectedTextToRecommendation, setAppendSelectedTextToRecommendation] =
+    useState(true);
 
   // 加载配置
   useEffect(() => {
-    const loadEnabledThemes = async () => {
+    const loadConfigPreferences = async () => {
       try {
         const config = await getConfig();
         if (config.content_creator?.enabled_themes) {
           setEnabledThemes(config.content_creator.enabled_themes);
         }
+        setAppendSelectedTextToRecommendation(
+          config.chat_appearance?.append_selected_text_to_recommendation ?? true,
+        );
       } catch (e) {
         console.error("加载主题配置失败:", e);
       }
     };
-    loadEnabledThemes();
+    loadConfigPreferences();
 
-    // 监听主题配置变更事件
-    const handleThemeConfigChange = () => {
-      loadEnabledThemes();
+    // 监听配置变更事件
+    const handleConfigChange = () => {
+      loadConfigPreferences();
     };
-    window.addEventListener("theme-config-changed", handleThemeConfigChange);
+    window.addEventListener("theme-config-changed", handleConfigChange);
+    window.addEventListener(
+      "chat-appearance-config-changed",
+      handleConfigChange,
+    );
 
     return () => {
+      window.removeEventListener("theme-config-changed", handleConfigChange);
       window.removeEventListener(
-        "theme-config-changed",
-        handleThemeConfigChange,
+        "chat-appearance-config-changed",
+        handleConfigChange,
       );
     };
   }, []);
@@ -714,12 +605,44 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     [entryTaskType, entrySlotValues],
   );
 
+  const recommendationSelectedText = appendSelectedTextToRecommendation
+    ? selectedText
+    : "";
+
   const currentRecommendations = useMemo(() => {
-    if (isEntryTheme) {
-      return getEntryTaskRecommendations(entryTaskType);
+    return getContextualRecommendations({
+      activeTheme,
+      input,
+      creationMode,
+      entryTaskType,
+      platform,
+      hasCanvasContent,
+      hasContentId,
+      selectedText: recommendationSelectedText,
+    });
+  }, [
+    activeTheme,
+    input,
+    creationMode,
+    entryTaskType,
+    platform,
+    hasCanvasContent,
+    hasContentId,
+    recommendationSelectedText,
+  ]);
+
+  const selectedTextPreview = useMemo(() => {
+    const normalized = (recommendationSelectedText || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (!normalized) {
+      return "";
     }
-    return THEME_RECOMMENDATIONS[activeTheme] || [];
-  }, [activeTheme, entryTaskType, isEntryTheme]);
+
+    return normalized.length > 56
+      ? `${normalized.slice(0, 56).trim()}…`
+      : normalized;
+  }, [recommendationSelectedText]);
 
   const handleEntrySlotChange = (key: string, value: string) => {
     setEntrySlotValues((prev) => ({
@@ -1265,6 +1188,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         </InputCard>
 
         {/* Dynamic Inspiration/Tips based on Tab - Styled nicely */}
+        {selectedTextPreview && (
+          <div className="w-full max-w-[800px] text-xs text-muted-foreground bg-muted/30 border border-border/70 rounded-lg px-3 py-2">
+            已检测到选中内容，点击推荐会自动附带上下文：
+            <span className="ml-1 text-foreground">“{selectedTextPreview}”</span>
+          </div>
+        )}
         <div className="w-full max-w-[800px] flex flex-wrap gap-3 justify-center">
           {currentRecommendations.map(([shortLabel, fullPrompt]) => (
             <Badge
@@ -1273,10 +1202,15 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               className="px-4 py-2 text-xs font-normal cursor-pointer hover:bg-muted-foreground/10 transition-colors"
               title={fullPrompt}
               onClick={() => {
+                const promptWithSelection = buildRecommendationPrompt(
+                  fullPrompt,
+                  selectedText,
+                  appendSelectedTextToRecommendation,
+                );
                 if (onRecommendationClick) {
-                  onRecommendationClick(shortLabel, fullPrompt);
+                  onRecommendationClick(shortLabel, promptWithSelection);
                 } else {
-                  setInput(fullPrompt);
+                  setInput(promptWithSelection);
                 }
               }}
             >

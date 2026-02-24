@@ -130,6 +130,7 @@ impl SessionConfigBuilder {
             max_turns: self.max_turns,
             retry_config: None,
             system_prompt: self.system_prompt,
+            include_context_trace: None,
         }
     }
 }
