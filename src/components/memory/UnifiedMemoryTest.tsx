@@ -130,7 +130,7 @@ export default function UnifiedMemoryTest() {
           <li>创建记忆会自动生成 ID</li>
           <li>创建成功后，复制 ID 用于其他操作</li>
           <li>所有操作都会在控制台输出详细结果</li>
-          <li>删除是软删除，数据不会真正删除</li>
+          <li>删除是永久删除，数据会被真正移除</li>
         </ul>
       </div>
     </div>

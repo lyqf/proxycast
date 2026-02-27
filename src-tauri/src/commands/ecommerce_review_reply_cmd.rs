@@ -7,6 +7,7 @@ use tauri::State;
 
 use crate::agent::AsterAgentState;
 use crate::commands::skill_exec_cmd::{execute_skill, SkillExecutionResult};
+use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
 
 /// 电商差评回复请求
@@ -45,6 +46,7 @@ pub struct EcommerceReviewReplyRequest {
 pub async fn execute_ecommerce_review_reply(
     app_handle: tauri::AppHandle,
     db: State<'_, DbConnection>,
+    config_manager: State<'_, GlobalConfigManagerState>,
     aster_state: State<'_, AsterAgentState>,
     request: EcommerceReviewReplyRequest,
 ) -> Result<SkillExecutionResult, String> {
@@ -72,6 +74,7 @@ pub async fn execute_ecommerce_review_reply(
     execute_skill(
         app_handle,
         db,
+        config_manager,
         aster_state,
         "ecommerce-review-reply".to_string(),
         user_input,

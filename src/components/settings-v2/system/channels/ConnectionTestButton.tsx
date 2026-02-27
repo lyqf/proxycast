@@ -18,7 +18,7 @@ export interface ConnectionTestButtonProps {
 
 export function ConnectionTestButton({
   channelId,
-  channelName,
+  channelName: _channelName,
 }: ConnectionTestButtonProps) {
   const { t } = useTranslation();
   const [testing, setTesting] = useState(false);

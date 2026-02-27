@@ -2,6 +2,7 @@
 //!
 //! Provides unified memory CRUD operations and analysis pipeline.
 
+use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
 use chrono::{Local, TimeZone};
 use proxycast_memory::extractor::{self, ExtractionContext};
@@ -17,6 +18,7 @@ const DEFAULT_LIST_LIMIT: usize = 120;
 const MAX_LIST_LIMIT: usize = 1000;
 const MAX_SOURCE_MESSAGES: usize = 6000;
 const MAX_GENERATED_PER_REQUEST: usize = 200;
+const MAX_GENERATED_PER_REQUEST_CAP: usize = 2000;
 const MAX_GENERATED_PER_SESSION: usize = 40;
 const MIN_MESSAGE_LENGTH: usize = 18;
 const MAX_LLM_SESSIONS: usize = 20;
@@ -429,6 +431,7 @@ pub async fn unified_memory_stats(
 #[tauri::command]
 pub async fn unified_memory_analyze(
     db: State<'_, DbConnection>,
+    global_config: State<'_, GlobalConfigManagerState>,
     from_timestamp: Option<i64>,
     to_timestamp: Option<i64>,
 ) -> Result<MemoryAnalysisResult, String> {
@@ -442,6 +445,23 @@ pub async fn unified_memory_analyze(
             return Err("开始时间不能晚于结束时间".to_string());
         }
     }
+
+    let memory_config = global_config.config().memory;
+    if !memory_config.enabled {
+        info!("[Unified Memory] 记忆功能已关闭，跳过分析");
+        return Ok(MemoryAnalysisResult {
+            analyzed_sessions: 0,
+            analyzed_messages: 0,
+            generated_entries: 0,
+            deduplicated_entries: 0,
+        });
+    }
+
+    let max_generated_per_request = memory_config
+        .max_entries
+        .unwrap_or(MAX_GENERATED_PER_REQUEST as u32)
+        .clamp(1, MAX_GENERATED_PER_REQUEST_CAP as u32)
+        as usize;
 
     let candidates = {
         let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
@@ -470,7 +490,7 @@ pub async fn unified_memory_analyze(
     let llm_attempted = llm_api_key.is_some();
 
     if let Some(api_key) = llm_api_key {
-        match build_pending_from_llm(&db, &candidates, &api_key).await {
+        match build_pending_from_llm(&db, &candidates, &api_key, max_generated_per_request).await {
             Ok((mut llm_pending, llm_dedup)) => {
                 deduplicated_entries += llm_dedup;
                 pending_memories.append(&mut llm_pending);
@@ -482,13 +502,14 @@ pub async fn unified_memory_analyze(
     }
 
     if !llm_attempted || pending_memories.is_empty() {
-        let (mut fallback_pending, fallback_dedup) = build_pending_from_rules(&db, &candidates)?;
+        let (mut fallback_pending, fallback_dedup) =
+            build_pending_from_rules(&db, &candidates, max_generated_per_request)?;
         deduplicated_entries += fallback_dedup;
         pending_memories.append(&mut fallback_pending);
     }
 
-    if pending_memories.len() > MAX_GENERATED_PER_REQUEST {
-        pending_memories.truncate(MAX_GENERATED_PER_REQUEST);
+    if pending_memories.len() > max_generated_per_request {
+        pending_memories.truncate(max_generated_per_request);
     }
 
     let generated_entries = {
@@ -518,6 +539,7 @@ pub async fn unified_memory_analyze(
 fn build_pending_from_rules(
     db: &State<'_, DbConnection>,
     candidates: &[MemorySourceCandidate],
+    max_generated_per_request: usize,
 ) -> Result<(Vec<PendingMemory>, u32), String> {
     let mut pending_memories = Vec::new();
     let mut deduplicated_entries = 0u32;
@@ -572,7 +594,7 @@ fn build_pending_from_rules(
         pending_memories.push(pending);
         *counter += 1;
 
-        if pending_memories.len() >= MAX_GENERATED_PER_REQUEST {
+        if pending_memories.len() >= max_generated_per_request {
             break;
         }
     }
@@ -584,6 +606,7 @@ async fn build_pending_from_llm(
     db: &State<'_, DbConnection>,
     candidates: &[MemorySourceCandidate],
     api_key: &str,
+    max_generated_per_request: usize,
 ) -> Result<(Vec<PendingMemory>, u32), String> {
     let mut grouped: HashMap<String, Vec<MemorySourceCandidate>> = HashMap::new();
     for candidate in candidates.iter().cloned() {
@@ -687,12 +710,12 @@ async fn build_pending_from_llm(
             existing_mut.push(pending_to_memory(pending.clone()));
             pending_memories.push(pending);
 
-            if pending_memories.len() >= MAX_GENERATED_PER_REQUEST {
+            if pending_memories.len() >= max_generated_per_request {
                 break;
             }
         }
 
-        if pending_memories.len() >= MAX_GENERATED_PER_REQUEST {
+        if pending_memories.len() >= max_generated_per_request {
             break;
         }
     }

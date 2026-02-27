@@ -1820,6 +1820,131 @@ pub struct ChatAppearanceConfig {
 
 /// 记忆管理配置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MemoryProfileConfig {
+    /// 当前学习/工作状态（单选）
+    #[serde(default)]
+    pub current_status: Option<String>,
+    /// 擅长领域（多选）
+    #[serde(default)]
+    pub strengths: Vec<String>,
+    /// 偏好的解释风格（多选）
+    #[serde(default)]
+    pub explanation_style: Vec<String>,
+    /// 遇到难题时的偏好（多选）
+    #[serde(default)]
+    pub challenge_preference: Vec<String>,
+}
+
+/// 记忆来源配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemorySourcesConfig {
+    /// 组织级策略文件（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_policy_path: Option<String>,
+    /// 项目级记忆文件相对路径列表（会按目录层级向上查找）
+    #[serde(default)]
+    pub project_memory_paths: Vec<String>,
+    /// 项目规则目录相对路径列表（会按目录层级向上查找）
+    #[serde(default)]
+    pub project_rule_dirs: Vec<String>,
+    /// 用户级记忆文件（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_memory_path: Option<String>,
+    /// 项目本地私有记忆文件（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_local_memory_path: Option<String>,
+}
+
+impl Default for MemorySourcesConfig {
+    fn default() -> Self {
+        Self {
+            managed_policy_path: None,
+            project_memory_paths: vec!["AGENTS.md".to_string(), ".agents/AGENTS.md".to_string()],
+            project_rule_dirs: vec![".agents/rules".to_string()],
+            user_memory_path: Some("~/.proxycast/AGENTS.md".to_string()),
+            project_local_memory_path: Some("AGENTS.local.md".to_string()),
+        }
+    }
+}
+
+/// 自动记忆配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryAutoConfig {
+    /// 是否启用自动记忆
+    #[serde(default = "default_memory_auto_enabled")]
+    pub enabled: bool,
+    /// MEMORY 入口文件名
+    #[serde(default = "default_memory_auto_entrypoint")]
+    pub entrypoint: String,
+    /// 启动时加载 MEMORY 入口的最大行数
+    #[serde(default = "default_memory_auto_max_loaded_lines")]
+    pub max_loaded_lines: u32,
+    /// 自动记忆根目录（可选，默认 ~/.proxycast/projects/<project>/memory）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+}
+
+fn default_memory_auto_enabled() -> bool {
+    true
+}
+
+fn default_memory_auto_entrypoint() -> String {
+    "MEMORY.md".to_string()
+}
+
+fn default_memory_auto_max_loaded_lines() -> u32 {
+    200
+}
+
+impl Default for MemoryAutoConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_memory_auto_enabled(),
+            entrypoint: default_memory_auto_entrypoint(),
+            max_loaded_lines: default_memory_auto_max_loaded_lines(),
+            root_dir: None,
+        }
+    }
+}
+
+/// 记忆解析行为配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryResolveConfig {
+    /// 额外参与记忆解析的目录
+    #[serde(default)]
+    pub additional_dirs: Vec<String>,
+    /// 是否跟随 @import 引用
+    #[serde(default = "default_memory_follow_imports")]
+    pub follow_imports: bool,
+    /// 最大导入深度
+    #[serde(default = "default_memory_import_max_depth")]
+    pub import_max_depth: u8,
+    /// 是否从 additional_dirs 加载记忆文件
+    #[serde(default)]
+    pub load_additional_dirs_memory: bool,
+}
+
+fn default_memory_follow_imports() -> bool {
+    true
+}
+
+fn default_memory_import_max_depth() -> u8 {
+    5
+}
+
+impl Default for MemoryResolveConfig {
+    fn default() -> Self {
+        Self {
+            additional_dirs: Vec::new(),
+            follow_imports: default_memory_follow_imports(),
+            import_max_depth: default_memory_import_max_depth(),
+            load_additional_dirs_memory: false,
+        }
+    }
+}
+
+/// 记忆管理配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct MemoryConfig {
     /// 是否启用记忆功能
     #[serde(default)]
@@ -1833,6 +1958,18 @@ pub struct MemoryConfig {
     /// 自动清理过期记忆
     #[serde(default)]
     pub auto_cleanup: Option<bool>,
+    /// 记忆偏好画像
+    #[serde(default)]
+    pub profile: Option<MemoryProfileConfig>,
+    /// 记忆来源配置
+    #[serde(default)]
+    pub sources: MemorySourcesConfig,
+    /// 自动记忆配置
+    #[serde(default)]
+    pub auto: MemoryAutoConfig,
+    /// 记忆解析行为配置
+    #[serde(default)]
+    pub resolve: MemoryResolveConfig,
 }
 
 /// 语音服务配置

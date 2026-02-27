@@ -8,7 +8,12 @@
 //! - builder - 提示词构建器
 
 pub mod builder;
+pub mod instruction_discovery;
 pub mod templates;
 
 pub use builder::SystemPromptBuilder;
+pub use instruction_discovery::{
+    clear_instruction_cache, discover_instructions, discover_instructions_cached,
+    merge_instructions, InstructionLayer, InstructionSource,
+};
 pub use templates::*;

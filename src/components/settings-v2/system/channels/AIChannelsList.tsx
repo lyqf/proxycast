@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Pencil, Trash2, Power } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -57,14 +57,10 @@ export function AIChannelsList() {
   // 添加渠道
   const handleAdd = useCallback(
     async (config: AIChannelConfig) => {
-      try {
-        await aiChannelsApi.createChannel(config);
-        toast.success("AI 渠道已创建");
-        await loadChannels();
-        setShowAddModal(false);
-      } catch (e) {
-        throw e;
-      }
+      await aiChannelsApi.createChannel(config);
+      toast.success("AI 渠道已创建");
+      await loadChannels();
+      setShowAddModal(false);
     },
     [loadChannels],
   );
@@ -72,14 +68,10 @@ export function AIChannelsList() {
   // 更新渠道
   const handleUpdate = useCallback(
     async (id: string, config: AIChannelConfig) => {
-      try {
-        await aiChannelsApi.updateChannel(id, config);
-        toast.success("AI 渠道已更新");
-        await loadChannels();
-        setEditingChannel(null);
-      } catch (e) {
-        throw e;
-      }
+      await aiChannelsApi.updateChannel(id, config);
+      toast.success("AI 渠道已更新");
+      await loadChannels();
+      setEditingChannel(null);
     },
     [loadChannels],
   );

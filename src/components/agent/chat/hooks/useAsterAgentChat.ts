@@ -23,6 +23,7 @@ import {
   submitAsterElicitationResponse,
   parseStreamEvent,
   type StreamEvent,
+  type ContextTraceStep,
   type AsterSessionInfo,
   type AsterExecutionStrategy,
   type ToolResultImage,
@@ -571,12 +572,25 @@ const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
       toolCallMap.set(toolCall.id, toolCall);
     }
     const toolCalls = Array.from(toolCallMap.values());
+    const contextTrace = (() => {
+      const seen = new Set<string>();
+      const mergedSteps: ContextTraceStep[] = [];
+      for (const step of [...(previous.contextTrace || []), ...(current.contextTrace || [])]) {
+        const key = `${step.stage}::${step.detail}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          mergedSteps.push(step);
+        }
+      }
+      return mergedSteps;
+    })();
 
     merged[merged.length - 1] = {
       ...previous,
       content,
       contentParts: contentParts.length > 0 ? contentParts : undefined,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      contextTrace: contextTrace.length > 0 ? contextTrace : undefined,
       timestamp: current.timestamp,
       isThinking: false,
       thinkingContent: undefined,
@@ -1653,6 +1667,38 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               });
               break;
             }
+
+            case "context_trace":
+              if (!Array.isArray(data.steps) || data.steps.length === 0) {
+                break;
+              }
+
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id !== assistantMsgId) return msg;
+
+                  const seen = new Set(
+                    (msg.contextTrace || []).map(
+                      (step) => `${step.stage}::${step.detail}`,
+                    ),
+                  );
+                  const nextSteps = [...(msg.contextTrace || [])];
+
+                  for (const step of data.steps) {
+                    const key = `${step.stage}::${step.detail}`;
+                    if (!seen.has(key)) {
+                      seen.add(key);
+                      nextSteps.push(step);
+                    }
+                  }
+
+                  return {
+                    ...msg,
+                    contextTrace: nextSteps,
+                  };
+                }),
+              );
+              break;
 
             case "final_done":
               setMessages((prev) =>

@@ -31,7 +31,7 @@ const DEFAULT_TEST_MESSAGES = {
 
 export function SendTestMessageButton({
   channelId,
-  channelName,
+  channelName: _channelName,
   channelType,
 }: SendTestMessageButtonProps) {
   const { t } = useTranslation();

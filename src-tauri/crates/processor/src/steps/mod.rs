@@ -6,6 +6,7 @@ mod auth;
 mod injection;
 mod plugin;
 mod provider;
+pub mod registry;
 mod routing;
 mod telemetry;
 mod traits;

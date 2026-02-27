@@ -1,4 +1,5 @@
 import type { ToolCallState, TokenUsage } from "@/lib/api/agent";
+import type { ContextTraceStep } from "@/lib/api/agent";
 import { safeInvoke } from "@/lib/dev-bridge";
 
 export interface MessageImage {
@@ -99,6 +100,8 @@ export interface Message {
    * 否则回退到 content + toolCalls 渲染方式
    */
   contentParts?: ContentPart[];
+  /** 上下文准备轨迹（可选） */
+  contextTrace?: ContextTraceStep[];
 }
 
 export interface ChatSession {

@@ -225,7 +225,7 @@ export default function UnifiedMemoryPage() {
         <ul style={{ margin: 0, paddingLeft: "20px", fontSize: "14px", color: "#333" }}>
           <li>点击"刷新记忆列表"加载所有记忆</li>
           <li>点击"创建新记忆"添加测试数据</li>
-          <li>点击"删除"按钮软删除记忆（数据不会真正删除）</li>
+          <li>点击"删除"按钮会永久删除记忆（数据不可恢复）</li>
           <li>所有操作会在控制台输出详细日志</li>
         </ul>
       </div>

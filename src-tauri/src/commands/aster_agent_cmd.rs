@@ -15,6 +15,7 @@ use crate::database::DbConnection;
 use crate::mcp::{McpManagerState, McpServerConfig};
 use crate::services::execution_tracker_service::{ExecutionTracker, RunFinalizeOptions, RunSource};
 use crate::services::heartbeat_service::HeartbeatServiceState;
+use crate::services::memory_profile_prompt_service::merge_system_prompt_with_memory_profile;
 use crate::workspace::WorkspaceManager;
 use aster::agents::extension::{Envs, ExtensionConfig};
 use aster::agents::{Agent, AgentEvent};
@@ -1433,16 +1434,17 @@ pub async fn aster_agent_chat_stream(
         {
             let session_dir = session.working_dir.unwrap_or_default();
             if !session_dir.is_empty() && session_dir != workspace_root {
-                tracing::warn!(
-                    "[AsterAgent] workspace mismatch: session_id={}, workspace_id={}, session_dir={}, workspace_root={}",
-                    session_id,
-                    workspace_id,
+                tracing::info!(
+                    "[AsterAgent] workspace 变更，自动更新 session working_dir: {} -> {}",
                     session_dir,
                     workspace_root
                 );
-                return Err(format!(
-                    "workspace_mismatch|会话工作目录与 workspace 不匹配: session={session_dir}, workspace={workspace_root}"
-                ));
+                db_conn
+                    .execute(
+                        "UPDATE agent_sessions SET working_dir = ?1 WHERE id = ?2",
+                        rusqlite::params![&workspace_root, session_id],
+                    )
+                    .map_err(|e| format!("更新 session working_dir 失败: {e}"))?;
             }
         }
     }
@@ -1520,7 +1522,10 @@ pub async fn aster_agent_chat_stream(
             }
         };
 
-        (resolved_prompt, persisted)
+        let merged_prompt =
+            merge_system_prompt_with_memory_profile(resolved_prompt, &config_manager.config());
+
+        (merged_prompt, persisted)
     };
 
     let requested_strategy = request.execution_strategy.unwrap_or(persisted_strategy);
@@ -1641,11 +1646,15 @@ pub async fn aster_agent_chat_stream(
     let guard = agent_arc.read().await;
     let agent = guard.as_ref().ok_or("Agent not initialized")?;
 
+    let include_context_trace = config_manager.config().memory.enabled;
+
     let build_session_config = || {
         let mut session_config_builder = SessionConfigBuilder::new(session_id);
         if let Some(prompt) = system_prompt.clone() {
             session_config_builder = session_config_builder.system_prompt(prompt);
         }
+        session_config_builder =
+            session_config_builder.include_context_trace(include_context_trace);
         session_config_builder.build()
     };
 
@@ -1921,7 +1930,9 @@ pub async fn aster_agent_submit_elicitation_response(
             request.user_data,
         ));
 
-    let session_config = SessionConfigBuilder::new(&session_id).build();
+    let session_config = SessionConfigBuilder::new(&session_id)
+        .include_context_trace(true)
+        .build();
 
     let agent_arc = state.get_agent_arc();
     let guard = agent_arc.read().await;

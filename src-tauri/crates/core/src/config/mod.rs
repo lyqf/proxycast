@@ -21,12 +21,14 @@ pub use import::{ImportOptions, ImportService, ValidationResult};
 pub use path_utils::{collapse_tilde, contains_tilde, expand_tilde};
 pub use types::{
     generate_secure_api_key, AmpConfig, AmpModelMapping, ApiKeyEntry, AsrCredentialEntry,
-    AsrProviderType, AssistantConfig, AssistantProfile, BaiduConfig, ChatAppearanceConfig, Config,
+    AsrProviderType, AssistantConfig, AssistantProfile, BaiduConfig, ChannelsConfig,
+    ChatAppearanceConfig, Config,
     ContentCreatorConfig, ConversationSettings, CredentialEntry, CredentialPoolConfig,
     CustomProviderConfig, DeliveryConfig, EndpointProvidersConfig, ExperimentalFeatures,
     GeminiApiKeyEntry, HeartbeatExecutionMode, HeartbeatSecurityConfig, HeartbeatSettings,
     HintRouteSettingsEntry, HintRouterSettings, ImageGenConfig, InjectionRuleConfig,
-    InjectionSettings, LoggingConfig, MemoryConfig, ModelInfo, ModelsConfig, NativeAgentConfig,
+    InjectionSettings, LoggingConfig, MemoryAutoConfig, MemoryConfig, MemoryProfileConfig,
+    MemoryResolveConfig, MemorySourcesConfig, ModelInfo, ModelsConfig, NativeAgentConfig,
     NavigationConfig, OpenAIAsrConfig, PairingSettings, ProviderConfig, ProviderModelsConfig,
     ProvidersConfig, QuotaExceededConfig, RateLimitSettings, RemoteManagementConfig, RetrySettings,
     RoutingConfig, ScreenshotChatConfig, ServerConfig, TaskSchedule, TlsConfig, UpdateCheckConfig,

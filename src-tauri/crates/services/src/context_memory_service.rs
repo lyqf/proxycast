@@ -3,8 +3,9 @@
 //! 基于文件系统的持久化记忆系统，解决 AI Agent 的上下文丢失、目标漂移、错误重复问题
 //! 核心理念：Context Window = RAM, Filesystem = Disk
 
+use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -79,6 +80,8 @@ pub struct ContextMemoryConfig {
     pub max_entries_per_session: usize,
     /// 自动归档天数
     pub auto_archive_days: u32,
+    /// 是否启用自动清理
+    pub auto_cleanup_enabled: bool,
     /// 启用错误跟踪
     pub enable_error_tracking: bool,
     /// 最大错误重试次数
@@ -92,6 +95,7 @@ impl Default for ContextMemoryConfig {
             memory_dir: home_dir.join(".proxycast").join("memory"),
             max_entries_per_session: 100,
             auto_archive_days: 30,
+            auto_cleanup_enabled: true,
             enable_error_tracking: true,
             max_error_retries: 3,
         }
@@ -195,6 +199,9 @@ impl ContextMemoryService {
         session_id: &str,
         file_type: MemoryFileType,
     ) -> Result<(), String> {
+        let session_dir = self.get_session_memory_dir(session_id);
+        fs::create_dir_all(&session_dir).map_err(|e| format!("创建会话目录失败: {e}"))?;
+
         let file_path = self.get_memory_file_path(session_id, file_type);
 
         let cache = self.memory_cache.lock().map_err(|e| e.to_string())?;
@@ -349,40 +356,42 @@ impl ContextMemoryService {
             return Ok(());
         }
 
-        let mut error_cache = self.error_cache.lock().map_err(|e| e.to_string())?;
-        let errors = error_cache
-            .entry(session_id.to_string())
-            .or_insert_with(Vec::new);
-
-        // 查找现有错误
-        if let Some(existing_error) = errors
-            .iter_mut()
-            .find(|e| e.error_description == error_description)
         {
-            existing_error
-                .attempted_solutions
-                .push(attempted_solution.to_string());
-            existing_error.failure_count += 1;
-            existing_error.last_failure_at = chrono::Utc::now().timestamp_millis();
+            let mut error_cache = self.error_cache.lock().map_err(|e| e.to_string())?;
+            let errors = error_cache
+                .entry(session_id.to_string())
+                .or_insert_with(Vec::new);
 
-            warn!(
-                "重复错误记录 (第{}次): {} (会话: {})",
-                existing_error.failure_count, error_description, session_id
-            );
-        } else {
-            let error_entry = ErrorEntry {
-                id: uuid::Uuid::new_v4().to_string(),
-                session_id: session_id.to_string(),
-                error_description: error_description.to_string(),
-                attempted_solutions: vec![attempted_solution.to_string()],
-                failure_count: 1,
-                last_failure_at: chrono::Utc::now().timestamp_millis(),
-                resolved: false,
-                resolution: None,
-            };
+            // 查找现有错误
+            if let Some(existing_error) = errors
+                .iter_mut()
+                .find(|e| e.error_description == error_description)
+            {
+                existing_error
+                    .attempted_solutions
+                    .push(attempted_solution.to_string());
+                existing_error.failure_count += 1;
+                existing_error.last_failure_at = chrono::Utc::now().timestamp_millis();
 
-            errors.push(error_entry);
-            info!("记录新错误: {} (会话: {})", error_description, session_id);
+                warn!(
+                    "重复错误记录 (第{}次): {} (会话: {})",
+                    existing_error.failure_count, error_description, session_id
+                );
+            } else {
+                let error_entry = ErrorEntry {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: session_id.to_string(),
+                    error_description: error_description.to_string(),
+                    attempted_solutions: vec![attempted_solution.to_string()],
+                    failure_count: 1,
+                    last_failure_at: chrono::Utc::now().timestamp_millis(),
+                    resolved: false,
+                    resolution: None,
+                };
+
+                errors.push(error_entry);
+                info!("记录新错误: {} (会话: {})", error_description, session_id);
+            }
         }
 
         // 保存到文件
@@ -516,6 +525,34 @@ impl ContextMemoryService {
 
     /// 加载会话记忆
     fn load_session_memories(&self, session_id: &str) -> Result<(), String> {
+        let mut loaded_entries = Vec::new();
+
+        for file_type in [
+            MemoryFileType::TaskPlan,
+            MemoryFileType::Findings,
+            MemoryFileType::Progress,
+        ] {
+            let file_path = self.get_memory_file_path(session_id, file_type);
+            if !file_path.exists() {
+                continue;
+            }
+
+            match fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    let mut parsed = self.parse_markdown_entries(session_id, file_type, &content);
+                    loaded_entries.append(&mut parsed);
+                }
+                Err(err) => {
+                    warn!("读取记忆文件失败: {} - {}", file_path.display(), err);
+                }
+            }
+        }
+
+        if !loaded_entries.is_empty() {
+            let mut memory_cache = self.memory_cache.lock().map_err(|e| e.to_string())?;
+            memory_cache.insert(session_id.to_string(), loaded_entries);
+        }
+
         // 加载错误日志
         let error_file = self.get_memory_file_path(session_id, MemoryFileType::ErrorLog);
         if error_file.exists() {
@@ -531,20 +568,215 @@ impl ContextMemoryService {
         Ok(())
     }
 
+    fn parse_markdown_entries(
+        &self,
+        session_id: &str,
+        file_type: MemoryFileType,
+        content: &str,
+    ) -> Vec<MemoryEntry> {
+        let mut entries = Vec::new();
+        let mut current_title: Option<String> = None;
+        let mut section_lines: Vec<String> = Vec::new();
+        let mut index = 0usize;
+
+        for line in content.lines() {
+            if let Some(title) = line.strip_prefix("## ") {
+                if let Some(previous_title) = current_title.take() {
+                    if let Some(entry) = self.build_memory_entry(
+                        session_id,
+                        file_type,
+                        index,
+                        &previous_title,
+                        &section_lines,
+                    ) {
+                        entries.push(entry);
+                        index += 1;
+                    }
+                }
+
+                current_title = Some(title.trim().to_string());
+                section_lines.clear();
+                continue;
+            }
+
+            if current_title.is_some() {
+                section_lines.push(line.to_string());
+            }
+        }
+
+        if let Some(previous_title) = current_title {
+            if let Some(entry) = self.build_memory_entry(
+                session_id,
+                file_type,
+                index,
+                &previous_title,
+                &section_lines,
+            ) {
+                entries.push(entry);
+            }
+        }
+
+        entries
+    }
+
+    fn build_memory_entry(
+        &self,
+        session_id: &str,
+        file_type: MemoryFileType,
+        index: usize,
+        title: &str,
+        lines: &[String],
+    ) -> Option<MemoryEntry> {
+        let title = title.trim();
+        if title.is_empty() {
+            return None;
+        }
+
+        let file_type_key = match file_type {
+            MemoryFileType::TaskPlan => "task_plan",
+            MemoryFileType::Findings => "findings",
+            MemoryFileType::Progress => "progress",
+            MemoryFileType::ErrorLog => "error_log",
+        };
+
+        let (priority, tags, parsed_updated_at) = self.parse_entry_metadata(lines);
+        let now = chrono::Utc::now().timestamp_millis();
+        let updated_at = if parsed_updated_at > 0 {
+            parsed_updated_at
+        } else {
+            now
+        };
+
+        let content = lines
+            .iter()
+            .map(|line| line.trim_end())
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty()
+                    && !trimmed.starts_with("**优先级**:")
+                    && trimmed != "---"
+                    && trimmed != "----"
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+
+        Some(MemoryEntry {
+            id: format!("{session_id}:{file_type_key}:{index}"),
+            session_id: session_id.to_string(),
+            file_type,
+            title: title.to_string(),
+            content: if content.is_empty() {
+                "暂无内容".to_string()
+            } else {
+                content
+            },
+            tags,
+            priority,
+            created_at: updated_at,
+            updated_at,
+            archived: false,
+        })
+    }
+
+    fn parse_entry_metadata(&self, lines: &[String]) -> (u8, Vec<String>, i64) {
+        for line in lines {
+            let line = line.trim();
+            if !line.starts_with("**优先级**:") {
+                continue;
+            }
+
+            let priority = line
+                .split("**优先级**:")
+                .nth(1)
+                .and_then(|part| part.split('|').next())
+                .and_then(|part| part.trim().parse::<u8>().ok())
+                .map(|value| value.clamp(1, 5))
+                .unwrap_or(3);
+
+            let tags = line
+                .split("**标签**:")
+                .nth(1)
+                .and_then(|part| part.split("| **更新时间**").next())
+                .map(|part| {
+                    part.split(',')
+                        .map(|tag| tag.trim().to_string())
+                        .filter(|tag| !tag.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            let updated_at = line
+                .split("**更新时间**:")
+                .nth(1)
+                .map(str::trim)
+                .and_then(Self::parse_datetime_or_timestamp_to_millis)
+                .unwrap_or(0);
+
+            return (priority, tags, updated_at);
+        }
+
+        (3, Vec::new(), 0)
+    }
+
+    fn parse_datetime_or_timestamp_to_millis(value: &str) -> Option<i64> {
+        if let Ok(v) = value.parse::<i64>() {
+            if v > 1_000_000_000_000 {
+                return Some(v);
+            }
+            return Some(v * 1000);
+        }
+
+        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .and_then(|naive| {
+                chrono::Local
+                    .from_local_datetime(&naive)
+                    .single()
+                    .map(|dt| dt.timestamp_millis())
+            })
+    }
+
     /// 清理过期记忆
     pub fn cleanup_expired_memories(&self) -> Result<(), String> {
+        if !self.config.auto_cleanup_enabled {
+            debug!("自动清理已关闭，跳过过期记忆清理");
+            return Ok(());
+        }
+
+        self.cleanup_expired_memories_with_retention_days(self.config.auto_archive_days)
+    }
+
+    /// 按保留天数清理过期记忆
+    pub fn cleanup_expired_memories_with_retention_days(
+        &self,
+        retention_days: u32,
+    ) -> Result<(), String> {
         let cutoff_time = chrono::Utc::now().timestamp_millis()
-            - (self.config.auto_archive_days as i64 * 24 * 60 * 60 * 1000);
+            - (retention_days.max(1) as i64 * 24 * 60 * 60 * 1000);
 
         let mut memory_cache = self.memory_cache.lock().map_err(|e| e.to_string())?;
         let mut archived_count = 0;
+        let mut dirty_files: HashMap<String, HashSet<MemoryFileType>> = HashMap::new();
 
-        for entries in memory_cache.values_mut() {
+        for (session_id, entries) in memory_cache.iter_mut() {
             for entry in entries.iter_mut() {
                 if entry.updated_at < cutoff_time && !entry.archived {
                     entry.archived = true;
                     archived_count += 1;
+                    dirty_files
+                        .entry(session_id.clone())
+                        .or_default()
+                        .insert(entry.file_type);
                 }
+            }
+        }
+        drop(memory_cache);
+
+        for (session_id, file_types) in dirty_files {
+            for file_type in file_types {
+                self.save_memory_to_file(&session_id, file_type)?;
             }
         }
 
@@ -613,6 +845,7 @@ mod tests {
             memory_dir: temp_dir.path().to_path_buf(),
             max_entries_per_session: 10,
             auto_archive_days: 1,
+            auto_cleanup_enabled: true,
             enable_error_tracking: true,
             max_error_retries: 3,
         };
@@ -747,5 +980,70 @@ mod tests {
             stats.memory_by_type.get(&MemoryFileType::TaskPlan),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn test_reload_markdown_memories_into_cache() {
+        let (config, _temp_dir) = create_test_config();
+        let session_id = "reload-session";
+
+        let first_service = ContextMemoryService::new(config.clone()).unwrap();
+        let entry = MemoryEntry {
+            id: "reload-entry".to_string(),
+            session_id: session_id.to_string(),
+            file_type: MemoryFileType::TaskPlan,
+            title: "重启恢复测试".to_string(),
+            content: "验证 markdown 能否在启动时恢复到缓存".to_string(),
+            tags: vec!["reload".to_string()],
+            priority: 4,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            archived: false,
+        };
+        first_service.save_memory_entry(&entry).unwrap();
+        drop(first_service);
+
+        let second_service = ContextMemoryService::new(config).unwrap();
+        let memories = second_service
+            .get_session_memories(session_id, Some(MemoryFileType::TaskPlan))
+            .unwrap();
+
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].title, "重启恢复测试");
+    }
+
+    #[test]
+    fn test_cleanup_persists_to_markdown_file() {
+        let (config, _temp_dir) = create_test_config();
+        let service = ContextMemoryService::new(config.clone()).unwrap();
+        let session_id = "cleanup-session";
+
+        let old_timestamp = chrono::Utc::now().timestamp_millis() - 3 * 24 * 60 * 60 * 1000;
+        let entry = MemoryEntry {
+            id: "cleanup-entry".to_string(),
+            session_id: session_id.to_string(),
+            file_type: MemoryFileType::TaskPlan,
+            title: "应被归档的条目".to_string(),
+            content: "过期内容".to_string(),
+            tags: vec!["cleanup".to_string()],
+            priority: 2,
+            created_at: old_timestamp,
+            updated_at: old_timestamp,
+            archived: false,
+        };
+        service.save_memory_entry(&entry).unwrap();
+
+        service
+            .cleanup_expired_memories_with_retention_days(1)
+            .unwrap();
+
+        let memories = service
+            .get_session_memories(session_id, Some(MemoryFileType::TaskPlan))
+            .unwrap();
+        assert!(memories.is_empty());
+
+        let task_plan_file = config.memory_dir.join(session_id).join("task_plan.md");
+        let content = std::fs::read_to_string(task_plan_file).unwrap();
+        assert!(!content.contains("应被归档的条目"));
     }
 }

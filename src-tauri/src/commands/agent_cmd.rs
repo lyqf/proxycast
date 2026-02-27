@@ -4,8 +4,10 @@
 //! 内部使用 Aster Agent 实现
 
 use crate::agent::{AgentMessage, AgentSession, AsterAgentState};
+use crate::config::GlobalConfigManagerState;
 use crate::database::dao::agent::AgentDao;
 use crate::database::DbConnection;
+use crate::services::memory_profile_prompt_service::merge_system_prompt_with_memory_profile;
 use crate::workspace::WorkspaceManager;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -165,6 +167,7 @@ pub struct SkillInfo {
 pub async fn agent_create_session(
     agent_state: State<'_, AsterAgentState>,
     db: State<'_, DbConnection>,
+    config_manager: State<'_, GlobalConfigManagerState>,
     provider_type: String,
     model: Option<String>,
     system_prompt: Option<String>,
@@ -206,8 +209,10 @@ pub async fn agent_create_session(
         .configure_provider_from_pool(&db, &provider_type, &model_name, &session_id)
         .await?;
 
-    // 构建包含 Skills 的 System Prompt
-    let final_system_prompt = build_system_prompt_with_skills(system_prompt, skills.as_ref());
+    // 构建包含 Skills 的 System Prompt，并附加记忆画像偏好
+    let base_system_prompt = build_system_prompt_with_skills(system_prompt, skills.as_ref());
+    let final_system_prompt =
+        merge_system_prompt_with_memory_profile(base_system_prompt, &config_manager.config());
 
     // 保存会话到数据库
     let now = chrono::Utc::now().to_rfc3339();

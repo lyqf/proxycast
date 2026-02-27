@@ -15,8 +15,10 @@
 
 use crate::agent::aster_state::SessionConfigBuilder;
 use crate::agent::{AsterAgentState, TauriAgentEvent};
+use crate::config::GlobalConfigManagerState;
 use crate::database::dao::chat::{ChatDao, ChatMessage, ChatMode, ChatSession};
 use crate::database::DbConnection;
+use crate::services::memory_profile_prompt_service::merge_system_prompt_with_memory_profile;
 use aster::conversation::message::Message;
 use futures::StreamExt;
 use proxycast_agent::event_converter::convert_agent_event;
@@ -104,17 +106,23 @@ impl From<ChatSession> for SessionResponse {
 pub async fn chat_create_session(
     db: State<'_, DbConnection>,
     agent_state: State<'_, AsterAgentState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
     request: CreateSessionRequest,
 ) -> Result<SessionResponse, String> {
     let now = chrono::Utc::now().to_rfc3339();
     let session_id = uuid::Uuid::new_v4().to_string();
+
+    let merged_system_prompt = merge_system_prompt_with_memory_profile(
+        request.system_prompt.clone(),
+        &config_manager.config(),
+    );
 
     // 创建会话
     let session = ChatSession {
         id: session_id.clone(),
         mode: request.mode,
         title: request.title,
-        system_prompt: request.system_prompt.clone(),
+        system_prompt: merged_system_prompt,
         model: request.model.clone(),
         provider_type: request.provider_type.clone(),
         credential_uuid: None,
@@ -290,6 +298,7 @@ pub async fn chat_send_message(
     app: AppHandle,
     db: State<'_, DbConnection>,
     agent_state: State<'_, AsterAgentState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
     request: SendMessageRequest,
 ) -> Result<(), String> {
     let start_time = std::time::Instant::now();
@@ -338,6 +347,11 @@ pub async fn chat_send_message(
     tracing::debug!("[UnifiedChat] 数据库查询耗时: {:?}", db_elapsed);
 
     // 根据模式处理
+    let merged_system_prompt = merge_system_prompt_with_memory_profile(
+        session.system_prompt.clone(),
+        &config_manager.config(),
+    );
+
     let result = match session.mode {
         ChatMode::Agent | ChatMode::Creator => {
             // 使用 Aster Agent 处理
@@ -348,7 +362,8 @@ pub async fn chat_send_message(
                 &request.session_id,
                 &request.message,
                 &request.event_name,
-                session.system_prompt.as_deref(),
+                merged_system_prompt.as_deref(),
+                config_manager.config().memory.enabled,
             )
             .await
         }
@@ -361,7 +376,8 @@ pub async fn chat_send_message(
                 &request.session_id,
                 &request.message,
                 &request.event_name,
-                session.system_prompt.as_deref(),
+                merged_system_prompt.as_deref(),
+                config_manager.config().memory.enabled,
             )
             .await
         }
@@ -386,6 +402,7 @@ async fn send_message_with_aster(
     message: &str,
     event_name: &str,
     system_prompt: Option<&str>,
+    include_context_trace: bool,
 ) -> Result<(), String> {
     let start_time = std::time::Instant::now();
 
@@ -419,7 +436,9 @@ async fn send_message_with_aster(
     };
 
     let user_message = Message::user().with_text(&final_message);
-    let session_config = SessionConfigBuilder::new(session_id).build();
+    let session_config = SessionConfigBuilder::new(session_id)
+        .include_context_trace(include_context_trace)
+        .build();
 
     // 获取 Agent 引用
     let agent_arc = agent_state.get_agent_arc();

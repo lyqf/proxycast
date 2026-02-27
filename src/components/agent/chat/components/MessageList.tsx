@@ -273,6 +273,28 @@ export const MessageList: React.FC<MessageListProps> = ({
                   <TokenUsageDisplay usage={msg.usage} />
                 )}
 
+                {msg.role === "assistant" &&
+                  !msg.isThinking &&
+                  msg.contextTrace &&
+                  msg.contextTrace.length > 0 && (
+                    <details className="mt-3 rounded border border-border/60 bg-muted/20">
+                      <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground hover:text-foreground">
+                        上下文轨迹 ({msg.contextTrace.length})
+                      </summary>
+                      <div className="border-t border-border/60 px-3 py-2 space-y-1.5">
+                        {msg.contextTrace.map((step, index) => (
+                          <div key={`${step.stage}-${index}`} className="text-xs">
+                            <span className="font-medium text-foreground/90">
+                              {step.stage}
+                            </span>
+                            <span className="text-muted-foreground">: </span>
+                            <span className="text-muted-foreground">{step.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
                 {editingId !== msg.id && (
                   <MessageActions className="message-actions">
                     <Button

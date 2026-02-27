@@ -8,11 +8,14 @@ pub mod aster_state;
 pub mod aster_state_support;
 pub mod credential_bridge;
 pub mod event_converter;
+pub mod hooks;
 pub mod lsp_bridge;
 pub mod mcp_bridge;
 pub mod prompt;
 pub mod session_store;
+pub mod shell_security;
 pub mod subagent_scheduler;
+pub mod tool_permissions;
 pub mod tools;
 
 pub use ask_bridge::{create_ask_callback, extract_response as extract_ask_response};
@@ -31,7 +34,10 @@ pub use prompt::SystemPromptBuilder;
 pub use session_store::{
     create_session_sync, get_session_sync, list_sessions_sync, SessionDetail, SessionInfo,
 };
+pub use shell_security::ShellSecurityChecker;
 pub use subagent_scheduler::{
     ProxyCastScheduler, ProxyCastSubAgentExecutor, SchedulerEventEmitter, SubAgentProgressEvent,
+    SubAgentRole,
 };
+pub use tool_permissions::{DynamicPermissionCheck, PermissionBehavior};
 pub use tools::{BrowserAction, BrowserTool, BrowserToolError, BrowserToolResult};

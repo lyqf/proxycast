@@ -45,7 +45,9 @@ impl AsterAgentWrapper {
         let cancel_token = state.create_cancel_token(&session_id).await;
 
         let user_message = Message::user().with_text(&message);
-        let session_config = SessionConfigBuilder::new(&session_id).build();
+        let session_config = SessionConfigBuilder::new(&session_id)
+            .include_context_trace(true)
+            .build();
 
         let agent_arc = state.get_agent_arc();
         let guard = agent_arc.read().await;

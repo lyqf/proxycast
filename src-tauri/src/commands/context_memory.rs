@@ -1,5 +1,6 @@
 //! 上下文记忆管理相关的 Tauri 命令
 
+use crate::config::GlobalConfigManagerState;
 use proxycast_services::context_memory_service::{
     ContextMemoryService, MemoryEntry, MemoryFileType, MemoryStats,
 };
@@ -159,9 +160,20 @@ pub async fn get_memory_stats(
 #[tauri::command]
 pub async fn cleanup_expired_memories(
     memory_service: State<'_, ContextMemoryServiceState>,
+    global_config: State<'_, GlobalConfigManagerState>,
 ) -> Result<(), String> {
     debug!("清理过期记忆");
-    memory_service.0.cleanup_expired_memories()?;
+    let memory_config = global_config.config().memory;
+    if matches!(memory_config.auto_cleanup, Some(false)) {
+        info!("自动清理已关闭，跳过过期记忆清理");
+        return Ok(());
+    }
+
+    let retention_days = memory_config.retention_days.unwrap_or(30).clamp(1, 3650);
+
+    memory_service
+        .0
+        .cleanup_expired_memories_with_retention_days(retention_days)?;
     info!("过期记忆清理完成");
     Ok(())
 }

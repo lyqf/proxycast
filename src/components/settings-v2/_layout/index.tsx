@@ -16,6 +16,7 @@ import { CanvasBreadcrumbHeader } from "@/components/content-creator/canvas/shar
 // 外观设置
 import { AppearanceSettings } from '../general/appearance';
 import { ChatAppearanceSettings } from '../general/chat-appearance';
+import { MemorySettings } from "../general/memory";
 // 网络代理
 import { ProxySettings } from "../system/proxy";
 // 安全与性能
@@ -23,8 +24,6 @@ import { SecurityPerformanceSettings } from "../system/security-performance";
 // 心跳引擎
 import { HeartbeatSettings } from "../system/heartbeat";
 import { ExecutionTrackerSettings } from "../system/execution-tracker";
-// 外部工具
-import { ExternalToolsSettings } from "../system/external-tools";
 // 实验功能
 import { ExperimentalSettings } from "../system/experimental";
 // 开发者
@@ -155,6 +154,14 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
         </>
       );
 
+    case SettingsTabs.Memory:
+      return (
+        <>
+          <SettingHeader title="记忆" />
+          <MemorySettings />
+        </>
+      );
+
     // 智能体组
     case SettingsTabs.Providers:
       return (
@@ -249,14 +256,6 @@ function renderSettingsContent(tab: SettingsTabs): ReactNode {
         <>
           <SettingHeader title="执行轨迹" />
           <ExecutionTrackerSettings />
-        </>
-      );
-
-    case SettingsTabs.ExternalTools:
-      return (
-        <>
-          <SettingHeader title="外部工具" />
-          <ExternalToolsSettings />
         </>
       );
 

@@ -647,6 +647,62 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
       harness.unmount();
     }
   });
+
+  it("收到 context_trace 事件后应写入当前 assistant 消息", async () => {
+    const workspaceId = "ws-context-trace";
+    seedSession(workspaceId, "session-context-trace");
+    const harness = mountHook(workspaceId);
+
+    let streamHandler:
+      | ((event: { payload: unknown }) => void)
+      | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("检查轨迹", [], false, false, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "context_trace",
+            steps: [
+              {
+                stage: "memory_injection",
+                detail: "query_len=8,injected=2",
+              },
+              {
+                stage: "memory_injection",
+                detail: "query_len=8,injected=2",
+              },
+            ],
+          },
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage?.contextTrace).toBeDefined();
+      expect(assistantMessage?.contextTrace?.length).toBe(1);
+      expect(assistantMessage?.contextTrace?.[0]?.stage).toBe(
+        "memory_injection",
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
 });
 
 describe("useAsterAgentChat 偏好持久化", () => {

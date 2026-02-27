@@ -104,7 +104,8 @@ pub fn init_service_states() -> ServiceStates {
     let orchestrator_state = OrchestratorState::new();
 
     // Initialize ContextMemoryService
-    let context_memory_config = ContextMemoryConfig::default();
+    let app_config = proxycast_core::config::load_config().unwrap_or_default();
+    let context_memory_config = build_context_memory_config(&app_config);
     let context_memory_service = ContextMemoryService::new(context_memory_config)
         .expect("Failed to initialize ContextMemoryService");
     let context_memory_service_state = ContextMemoryServiceState(Arc::new(context_memory_service));
@@ -127,6 +128,25 @@ pub fn init_service_states() -> ServiceStates {
         context_memory_service: context_memory_service_state,
         tool_hooks_service: tool_hooks_service_state,
     }
+}
+
+fn build_context_memory_config(config: &Config) -> ContextMemoryConfig {
+    let mut context_config = ContextMemoryConfig::default();
+    let memory_config = &config.memory;
+
+    if let Some(max_entries) = memory_config.max_entries {
+        context_config.max_entries_per_session = max_entries.clamp(1, 20_000) as usize;
+    }
+
+    if let Some(retention_days) = memory_config.retention_days {
+        context_config.auto_archive_days = retention_days.clamp(1, 3650);
+    }
+
+    if let Some(auto_cleanup) = memory_config.auto_cleanup {
+        context_config.auto_cleanup_enabled = auto_cleanup;
+    }
+
+    context_config
 }
 
 /// 初始化插件安装器

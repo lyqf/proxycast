@@ -166,6 +166,64 @@ export interface ChatAppearanceConfig {
 /**
  * 记忆管理系统配置
  */
+export interface MemoryProfileConfig {
+  /** 当前学习/工作状态（单选） */
+  current_status?: string;
+  /** 擅长领域（多选） */
+  strengths?: string[];
+  /** 偏好的解释风格（多选） */
+  explanation_style?: string[];
+  /** 遇到难题时的偏好（多选） */
+  challenge_preference?: string[];
+}
+
+/**
+ * 记忆来源配置
+ */
+export interface MemorySourcesConfig {
+  /** 组织级策略文件路径 */
+  managed_policy_path?: string | null;
+  /** 项目记忆文件（按目录层级向上发现） */
+  project_memory_paths?: string[];
+  /** 项目规则目录（按目录层级向上发现） */
+  project_rule_dirs?: string[];
+  /** 用户级记忆文件路径 */
+  user_memory_path?: string | null;
+  /** 项目本地记忆文件路径 */
+  project_local_memory_path?: string | null;
+}
+
+/**
+ * 自动记忆配置
+ */
+export interface MemoryAutoConfig {
+  /** 是否启用自动记忆 */
+  enabled?: boolean;
+  /** 入口文件名 */
+  entrypoint?: string;
+  /** 启动时加载入口的最大行数 */
+  max_loaded_lines?: number;
+  /** 自动记忆根目录 */
+  root_dir?: string | null;
+}
+
+/**
+ * 记忆解析行为配置
+ */
+export interface MemoryResolveConfig {
+  /** 额外目录（例如外部 workspace） */
+  additional_dirs?: string[];
+  /** 是否跟随 @import */
+  follow_imports?: boolean;
+  /** 最大导入深度 */
+  import_max_depth?: number;
+  /** 是否加载额外目录中的记忆来源 */
+  load_additional_dirs_memory?: boolean;
+}
+
+/**
+ * 记忆管理系统配置
+ */
 export interface MemoryConfig {
   /** 是否启用记忆功能 */
   enabled: boolean;
@@ -175,6 +233,14 @@ export interface MemoryConfig {
   retention_days?: number;
   /** 自动清理过期记忆 */
   auto_cleanup?: boolean;
+  /** 记忆偏好画像 */
+  profile?: MemoryProfileConfig;
+  /** 记忆来源配置 */
+  sources?: MemorySourcesConfig;
+  /** 自动记忆配置 */
+  auto?: MemoryAutoConfig;
+  /** 记忆解析行为配置 */
+  resolve?: MemoryResolveConfig;
 }
 
 /**
@@ -861,6 +927,48 @@ export interface MemoryAnalysisResult {
   deduplicated_entries: number;
 }
 
+export interface EffectiveMemorySource {
+  kind: string;
+  path: string;
+  exists: boolean;
+  loaded: boolean;
+  line_count: number;
+  import_count: number;
+  warnings: string[];
+  preview?: string | null;
+}
+
+export interface EffectiveMemorySourcesResponse {
+  working_dir: string;
+  total_sources: number;
+  loaded_sources: number;
+  follow_imports: boolean;
+  import_max_depth: number;
+  sources: EffectiveMemorySource[];
+}
+
+export interface AutoMemoryIndexItem {
+  title: string;
+  relative_path: string;
+  exists: boolean;
+  summary?: string | null;
+}
+
+export interface AutoMemoryIndexResponse {
+  enabled: boolean;
+  root_dir: string;
+  entrypoint: string;
+  max_loaded_lines: number;
+  entry_exists: boolean;
+  total_lines: number;
+  preview_lines: string[];
+  items: AutoMemoryIndexItem[];
+}
+
+export interface MemoryAutoToggleResponse {
+  enabled: boolean;
+}
+
 /**
  * 获取记忆统计信息
  */
@@ -895,6 +1003,48 @@ export async function requestMemoryAnalysis(
  */
 export async function cleanupMemory(): Promise<CleanupMemoryResult> {
   return safeInvoke("cleanup_conversation_memory");
+}
+
+/**
+ * 获取记忆来源解析结果
+ */
+export async function getMemoryEffectiveSources(
+  workingDir?: string,
+  activeRelativePath?: string,
+): Promise<EffectiveMemorySourcesResponse> {
+  return safeInvoke("memory_get_effective_sources", {
+    workingDir,
+    activeRelativePath,
+  });
+}
+
+/**
+ * 获取自动记忆入口索引
+ */
+export async function getMemoryAutoIndex(
+  workingDir?: string,
+): Promise<AutoMemoryIndexResponse> {
+  return safeInvoke("memory_get_auto_index", { workingDir });
+}
+
+/**
+ * 切换自动记忆开关
+ */
+export async function toggleMemoryAuto(
+  enabled: boolean,
+): Promise<MemoryAutoToggleResponse> {
+  return safeInvoke("memory_toggle_auto", { enabled });
+}
+
+/**
+ * 写入自动记忆笔记
+ */
+export async function updateMemoryAutoNote(
+  note: string,
+  topic?: string,
+  workingDir?: string,
+): Promise<AutoMemoryIndexResponse> {
+  return safeInvoke("memory_update_auto_note", { note, topic, workingDir });
 }
 
 // ============ 语音测试 API ============

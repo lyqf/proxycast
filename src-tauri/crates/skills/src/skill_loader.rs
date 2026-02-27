@@ -6,6 +6,17 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// Skill 自动触发条件配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillTriggerConfig {
+    /// 触发条件描述列表（自然语言）
+    #[serde(default)]
+    pub trigger: Vec<String>,
+    /// 不触发条件描述列表
+    #[serde(default)]
+    pub do_not_trigger: Vec<String>,
+}
+
 /// Workflow 步骤定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStep {
@@ -61,6 +72,8 @@ pub struct LoadedSkillDefinition {
     pub allowed_tools: Option<Vec<String>>,
     pub argument_hint: Option<String>,
     pub when_to_use: Option<String>,
+    /// 结构化的自动触发条件配置
+    pub when_to_use_config: Option<SkillTriggerConfig>,
     pub model: Option<String>,
     pub provider: Option<String>,
     pub disable_model_invocation: bool,
@@ -204,6 +217,12 @@ pub fn load_skill_from_file(
         execution_mode
     };
 
+    // 尝试将 when_to_use 解析为 JSON 格式的 SkillTriggerConfig
+    let when_to_use_config = frontmatter
+        .when_to_use
+        .as_deref()
+        .and_then(|v| serde_json::from_str::<SkillTriggerConfig>(v).ok());
+
     Ok(LoadedSkillDefinition {
         skill_name: skill_name.to_string(),
         display_name,
@@ -212,6 +231,7 @@ pub fn load_skill_from_file(
         allowed_tools,
         argument_hint: frontmatter.argument_hint,
         when_to_use: frontmatter.when_to_use,
+        when_to_use_config,
         model: frontmatter.model,
         provider: frontmatter.provider,
         disable_model_invocation,

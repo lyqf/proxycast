@@ -2,9 +2,10 @@
 //!
 //! 组装完整的模块化系统提示词
 
+use super::instruction_discovery::{discover_instructions, merge_instructions};
 use super::templates::*;
 use chrono::Utc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// System Prompt 构建选项
 #[derive(Debug, Clone, Default)]
@@ -46,6 +47,10 @@ impl SystemPromptOptions {
 /// System Prompt 构建器
 pub struct SystemPromptBuilder {
     options: SystemPromptOptions,
+    /// 启用指令发现的工作目录
+    instruction_discovery_dir: Option<PathBuf>,
+    /// Skill 描述（注入到 system prompt）
+    skill_prompt: Option<String>,
 }
 
 impl Default for SystemPromptBuilder {
@@ -59,12 +64,18 @@ impl SystemPromptBuilder {
     pub fn new() -> Self {
         Self {
             options: SystemPromptOptions::default_all(),
+            instruction_discovery_dir: None,
+            skill_prompt: None,
         }
     }
 
     /// 使用自定义选项创建构建器
     pub fn with_options(options: SystemPromptOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            instruction_discovery_dir: None,
+            skill_prompt: None,
+        }
     }
 
     /// 设置工作目录
@@ -76,6 +87,20 @@ impl SystemPromptBuilder {
     /// 添加自定义指令
     pub fn custom_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.options.custom_instructions = Some(instructions.into());
+        self
+    }
+
+    /// 启用层级化指令发现（从 AGENT.md 文件加载）
+    pub fn with_instruction_discovery(mut self, working_dir: impl AsRef<Path>) -> Self {
+        self.instruction_discovery_dir = Some(working_dir.as_ref().to_path_buf());
+        self
+    }
+
+    /// 设置 Skills 描述文本（注入到 system prompt）
+    pub fn with_skill_prompt(mut self, skill_prompt: String) -> Self {
+        if !skill_prompt.is_empty() {
+            self.skill_prompt = Some(skill_prompt);
+        }
         self
     }
 
@@ -122,7 +147,23 @@ impl SystemPromptBuilder {
             prompt.push_str(&env_info);
         }
 
-        // 添加自定义指令
+        // 添加层级化指令（优先级低于 custom_instructions）
+        if let Some(ref dir) = self.instruction_discovery_dir {
+            let layers = discover_instructions(dir);
+            let merged = merge_instructions(&layers);
+            if !merged.is_empty() {
+                prompt.push_str("\n\n# 项目指令\n\n");
+                prompt.push_str(&merged);
+            }
+        }
+
+        // Skill 描述
+        if let Some(ref skill_prompt) = self.skill_prompt {
+            prompt.push_str("\n\n");
+            prompt.push_str(skill_prompt);
+        }
+
+        // 添加自定义指令（最高优先级）
         if let Some(ref custom) = self.options.custom_instructions {
             prompt.push_str("\n\n# 附加指令\n\n");
             prompt.push_str(custom);
@@ -154,6 +195,8 @@ impl SystemPromptBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_build_default_prompt() {
@@ -175,5 +218,44 @@ mod tests {
     fn test_build_with_working_dir() {
         let prompt = SystemPromptBuilder::new().working_dir("/tmp/test").build();
         assert!(prompt.contains("/tmp/test"));
+    }
+
+    #[test]
+    fn test_build_with_instruction_discovery() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join(".git")).unwrap();
+        fs::write(
+            tmp.path().join("AGENT.md"),
+            "# 测试项目指令\n使用 Rust 编写",
+        )
+        .unwrap();
+
+        let prompt = SystemPromptBuilder::new()
+            .with_instruction_discovery(tmp.path())
+            .build();
+        assert!(prompt.contains("测试项目指令"));
+        assert!(prompt.contains("使用 Rust 编写"));
+    }
+
+    #[test]
+    fn test_instruction_discovery_before_custom() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join(".git")).unwrap();
+        fs::write(tmp.path().join("AGENT.md"), "DISCOVERED").unwrap();
+
+        let prompt = SystemPromptBuilder::new()
+            .with_instruction_discovery(tmp.path())
+            .custom_instructions("CUSTOM")
+            .build();
+
+        let disc_pos = prompt.find("DISCOVERED").unwrap();
+        let custom_pos = prompt.find("CUSTOM").unwrap();
+        assert!(disc_pos < custom_pos, "发现的指令应在自定义指令之前");
+    }
+
+    #[test]
+    fn test_no_instruction_discovery_by_default() {
+        let prompt = SystemPromptBuilder::new().build();
+        assert!(!prompt.contains("项目指令"));
     }
 }

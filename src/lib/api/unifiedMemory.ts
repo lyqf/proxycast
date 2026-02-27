@@ -84,7 +84,7 @@ export interface UnifiedMemory {
   /** 更新时间（毫秒时间戳） */
   updated_at: number;
 
-  /** 是否已归档（软删除） */
+  /** 是否已归档 */
   archived: boolean;
 }
 
@@ -367,10 +367,12 @@ export async function semanticSearch(
   console.log('[语义搜索] Query:', query, 'Category:', category, 'MinSimilarity:', minSimilarity);
 
   const result = await invoke<UnifiedMemory[]>("unified_memory_semantic_search", {
-    query,
-    category: category?.toString(),
-    min_similarity: minSimilarity,
-    limit,
+    options: {
+      query,
+      category,
+      min_similarity: minSimilarity,
+      limit,
+    },
   });
 
   console.log('[语义搜索] Results:', result);
@@ -397,11 +399,13 @@ export async function hybridSearch(
   console.log('[混合搜索] Query:', query, 'Category:', category, 'SemanticWeight:', semanticWeight, 'MinSimilarity:', minSimilarity);
 
   const result = await invoke<UnifiedMemory[]>("unified_memory_hybrid_search", {
-    query,
-    category: category?.toString(),
-    semantic_weight: semanticWeight,
-    min_similarity: minSimilarity,
-    limit,
+    options: {
+      query,
+      category,
+      semantic_weight: semanticWeight,
+      min_similarity: minSimilarity,
+      limit,
+    },
   });
 
   console.log('[混合搜索] Results:', result);

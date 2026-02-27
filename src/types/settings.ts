@@ -26,6 +26,7 @@ export enum SettingsTabs {
   Appearance = "appearance",
   ChatAppearance = "chat-appearance",
   Hotkeys = "hotkeys",
+  Memory = "memory",
 
   // 智能体
   Providers = "providers",
@@ -42,7 +43,7 @@ export enum SettingsTabs {
   SecurityPerformance = "security-performance",
   Heartbeat = "heartbeat",
   ExecutionTracker = "execution-tracker",
-  ExternalTools = "external-tools",
+
   Experimental = "experimental",
   Developer = "developer",
   About = "about",
@@ -75,6 +76,7 @@ export const SETTINGS_GROUPS: Record<SettingsGroupKey, SettingsTabs[]> = {
     SettingsTabs.Appearance,
     SettingsTabs.ChatAppearance,
     SettingsTabs.Hotkeys,
+    SettingsTabs.Memory,
   ],
   [SettingsGroupKey.Agent]: [
     SettingsTabs.Providers,
@@ -91,7 +93,7 @@ export const SETTINGS_GROUPS: Record<SettingsGroupKey, SettingsTabs[]> = {
     SettingsTabs.SecurityPerformance,
     SettingsTabs.Heartbeat,
     SettingsTabs.ExecutionTracker,
-    SettingsTabs.ExternalTools,
+
     SettingsTabs.Experimental,
     SettingsTabs.Developer,
     SettingsTabs.About,

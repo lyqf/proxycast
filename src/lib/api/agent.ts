@@ -57,6 +57,7 @@ export type StreamEvent =
   | StreamEventToolStart
   | StreamEventToolEnd
   | StreamEventActionRequired
+  | StreamEventContextTrace
   | StreamEventDone
   | StreamEventFinalDone
   | StreamEventWarning
@@ -134,6 +135,16 @@ export interface StreamEventActionRequired {
   }>;
   /** 请求的数据结构（elicitation 时） */
   requested_schema?: Record<string, unknown>;
+}
+
+export interface ContextTraceStep {
+  stage: string;
+  detail: string;
+}
+
+export interface StreamEventContextTrace {
+  type: "context_trace";
+  steps: ContextTraceStep[];
 }
 
 /**
@@ -297,6 +308,13 @@ export function parseStreamEvent(data: unknown): StreamEvent | null {
       return {
         type: "done",
         usage: event.usage as TokenUsage | undefined,
+      };
+    case "context_trace":
+      return {
+        type: "context_trace",
+        steps: Array.isArray(event.steps)
+          ? (event.steps as ContextTraceStep[])
+          : [],
       };
     case "final_done":
       return {

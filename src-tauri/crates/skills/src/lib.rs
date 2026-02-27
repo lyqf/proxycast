@@ -7,6 +7,7 @@ mod execution_callback;
 mod llm_provider;
 mod proxycast_llm_provider;
 mod skill_loader;
+mod skill_matcher;
 
 // 电商 Skill 模块
 pub mod ecommerce_review_reply;
@@ -20,5 +21,6 @@ pub use proxycast_llm_provider::ProxyCastLlmProvider;
 pub use skill_loader::{
     find_skill_by_name, get_proxycast_skills_dir, load_skill_from_file, load_skills_from_directory,
     parse_allowed_tools, parse_boolean, parse_skill_frontmatter, parse_workflow_steps,
-    LoadedSkillDefinition, SkillFrontmatter, WorkflowStep,
+    LoadedSkillDefinition, SkillFrontmatter, SkillTriggerConfig, WorkflowStep,
 };
+pub use skill_matcher::{SkillMatch, SkillMatcher};

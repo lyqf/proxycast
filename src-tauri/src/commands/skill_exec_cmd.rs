@@ -29,8 +29,10 @@ use crate::commands::skill_error::{
     SKILL_ERR_EXECUTE_FAILED, SKILL_ERR_PROVIDER_UNAVAILABLE, SKILL_ERR_SESSION_INIT_FAILED,
     SKILL_ERR_STREAM_FAILED,
 };
+use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
 use crate::services::execution_tracker_service::{ExecutionTracker, RunFinishDecision, RunSource};
+use crate::services::memory_profile_prompt_service::build_memory_profile_prompt;
 use crate::skills::TauriExecutionCallback;
 use proxycast_agent::event_converter::convert_agent_event;
 use proxycast_skills::{
@@ -154,6 +156,7 @@ pub struct SkillExecutionResult {
 pub async fn execute_skill(
     app_handle: tauri::AppHandle,
     db: State<'_, DbConnection>,
+    config_manager: State<'_, GlobalConfigManagerState>,
     aster_state: State<'_, AsterAgentState>,
     skill_name: String,
     user_input: String,
@@ -165,6 +168,7 @@ pub async fn execute_skill(
     // 生成执行 ID，并优先复用前端会话 ID（提升 /skill 与主会话上下文一致性）
     let execution_id = execution_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let session_id = session_id.unwrap_or_else(|| format!("skill-exec-{}", Uuid::new_v4()));
+    let memory_profile_prompt = build_memory_profile_prompt(&config_manager.config());
     let tracker = ExecutionTracker::new(db.inner().clone());
 
     tracker
@@ -293,6 +297,7 @@ pub async fn execute_skill(
                 &execution_id,
                 &session_id,
                 &callback,
+                memory_profile_prompt.as_deref(),
             )
             .await
         } else {
@@ -305,6 +310,7 @@ pub async fn execute_skill(
                 &execution_id,
                 &session_id,
                 &callback,
+                memory_profile_prompt.as_deref(),
             )
             .await
         }
@@ -352,13 +358,20 @@ async fn execute_skill_prompt(
     execution_id: &str,
     session_id: &str,
     callback: &TauriExecutionCallback,
+    memory_profile_prompt: Option<&str>,
 ) -> Result<SkillExecutionResult, String> {
     // 发送步骤开始事件
     callback.on_step_start("main", &skill.display_name, 1, 1);
 
     // 构建 SessionConfig
+    let mut combined_prompt = skill.markdown_content.clone();
+    if let Some(memory_prompt) = memory_profile_prompt {
+        combined_prompt = format!("{combined_prompt}\n\n{memory_prompt}");
+    }
+
     let session_config = SessionConfigBuilder::new(session_id)
-        .system_prompt(&skill.markdown_content)
+        .system_prompt(combined_prompt)
+        .include_context_trace(true)
         .build();
 
     let user_message = Message::user().with_text(user_input);
@@ -469,6 +482,7 @@ async fn execute_skill_workflow(
     execution_id: &str,
     session_id: &str,
     callback: &TauriExecutionCallback,
+    memory_profile_prompt: Option<&str>,
 ) -> Result<SkillExecutionResult, String> {
     let steps = &skill.workflow_steps;
     let total_steps = steps.len();
@@ -503,9 +517,16 @@ async fn execute_skill_workflow(
             skill.markdown_content, step.name, step_num, total_steps, step.prompt
         );
 
+        let step_prompt_with_memory = if let Some(memory_prompt) = memory_profile_prompt {
+            format!("{step_system_prompt}\n\n{memory_prompt}")
+        } else {
+            step_system_prompt
+        };
+
         let step_session_id = format!("{}-step-{}", session_id, step.id);
         let session_config = SessionConfigBuilder::new(&step_session_id)
-            .system_prompt(&step_system_prompt)
+            .system_prompt(step_prompt_with_memory)
+            .include_context_trace(true)
             .build();
 
         // 用户消息 = 原始输入 + 前序步骤的累积上下文

@@ -1,0 +1,242 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  mockGetConfig,
+  mockSaveConfig,
+  mockGetMemoryOverview,
+  mockGetMemoryEffectiveSources,
+  mockGetMemoryAutoIndex,
+  mockToggleMemoryAuto,
+  mockUpdateMemoryAutoNote,
+  mockGetUnifiedMemoryStats,
+  mockGetProjectMemory,
+} = vi.hoisted(() => ({
+  mockGetConfig: vi.fn(),
+  mockSaveConfig: vi.fn(),
+  mockGetMemoryOverview: vi.fn(),
+  mockGetMemoryEffectiveSources: vi.fn(),
+  mockGetMemoryAutoIndex: vi.fn(),
+  mockToggleMemoryAuto: vi.fn(),
+  mockUpdateMemoryAutoNote: vi.fn(),
+  mockGetUnifiedMemoryStats: vi.fn(),
+  mockGetProjectMemory: vi.fn(),
+}));
+
+vi.mock("@/hooks/useTauri", () => ({
+  getConfig: mockGetConfig,
+  saveConfig: mockSaveConfig,
+  getMemoryOverview: mockGetMemoryOverview,
+  getMemoryEffectiveSources: mockGetMemoryEffectiveSources,
+  getMemoryAutoIndex: mockGetMemoryAutoIndex,
+  toggleMemoryAuto: mockToggleMemoryAuto,
+  updateMemoryAutoNote: mockUpdateMemoryAutoNote,
+}));
+
+vi.mock("@/lib/api/unifiedMemory", () => ({
+  getUnifiedMemoryStats: mockGetUnifiedMemoryStats,
+}));
+
+vi.mock("@/lib/api/memory", () => ({
+  getProjectMemory: mockGetProjectMemory,
+}));
+
+vi.mock("@/lib/resourceProjectSelection", () => ({
+  getStoredResourceProjectId: vi.fn(() => null),
+  onResourceProjectChange: vi.fn(() => () => {}),
+}));
+
+vi.mock("@/components/memory/memoryLayerMetrics", () => ({
+  buildLayerMetrics: vi.fn(() => ({
+    cards: [
+      {
+        key: "unified",
+        title: "第一层",
+        value: 1,
+        unit: "条",
+        available: true,
+        description: "ok",
+      },
+      {
+        key: "context",
+        title: "第二层",
+        value: 0,
+        unit: "条",
+        available: false,
+        description: "wait",
+      },
+      {
+        key: "project",
+        title: "第三层",
+        value: 0,
+        unit: "/4 维",
+        available: false,
+        description: "wait",
+      },
+    ],
+    readyLayers: 1,
+    totalLayers: 3,
+  })),
+}));
+
+import { MemorySettings } from ".";
+
+interface Mounted {
+  container: HTMLDivElement;
+  root: Root;
+}
+
+const mounted: Mounted[] = [];
+
+function renderComponent(): HTMLDivElement {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(<MemorySettings />);
+  });
+  mounted.push({ container, root });
+  return container;
+}
+
+function findButton(container: HTMLElement, text: string): HTMLButtonElement {
+  const buttons = Array.from(container.querySelectorAll("button"));
+  const matched = buttons.find((button) => button.textContent?.includes(text));
+  if (!matched) {
+    throw new Error(`未找到按钮: ${text}`);
+  }
+  return matched as HTMLButtonElement;
+}
+
+async function flushEffects() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+beforeEach(() => {
+  (
+    globalThis as typeof globalThis & {
+      IS_REACT_ACT_ENVIRONMENT?: boolean;
+    }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+
+  vi.clearAllMocks();
+
+  mockGetConfig.mockResolvedValue({
+    memory: {
+      enabled: true,
+      max_entries: 1000,
+      retention_days: 30,
+      auto_cleanup: true,
+      profile: {
+        strengths: [],
+        explanation_style: [],
+        challenge_preference: [],
+      },
+      auto: {
+        enabled: true,
+        entrypoint: "MEMORY.md",
+        max_loaded_lines: 200,
+      },
+      resolve: {
+        additional_dirs: [],
+        follow_imports: true,
+        import_max_depth: 5,
+        load_additional_dirs_memory: false,
+      },
+      sources: {
+        project_memory_paths: ["AGENTS.md"],
+        project_rule_dirs: [".agents/rules"],
+        user_memory_path: "~/.proxycast/AGENTS.md",
+      },
+    },
+  });
+
+  mockGetUnifiedMemoryStats.mockResolvedValue({ total_entries: 1 });
+  mockGetMemoryOverview.mockResolvedValue({
+    stats: { total_entries: 0, storage_used: 0, memory_count: 0 },
+    categories: [],
+    entries: [],
+  });
+  mockGetProjectMemory.mockResolvedValue(null);
+  mockGetMemoryEffectiveSources.mockResolvedValue({
+    working_dir: "/tmp",
+    total_sources: 2,
+    loaded_sources: 1,
+    follow_imports: true,
+    import_max_depth: 5,
+    sources: [],
+  });
+  mockGetMemoryAutoIndex.mockResolvedValue({
+    enabled: true,
+    root_dir: "/tmp/memory",
+    entrypoint: "MEMORY.md",
+    max_loaded_lines: 200,
+    entry_exists: false,
+    total_lines: 0,
+    preview_lines: [],
+    items: [],
+  });
+  mockToggleMemoryAuto.mockResolvedValue({ enabled: false });
+  mockUpdateMemoryAutoNote.mockResolvedValue({
+    enabled: true,
+    root_dir: "/tmp/memory",
+    entrypoint: "MEMORY.md",
+    max_loaded_lines: 200,
+    entry_exists: true,
+    total_lines: 1,
+    preview_lines: ["- test"],
+    items: [],
+  });
+});
+
+afterEach(() => {
+  while (mounted.length > 0) {
+    const target = mounted.pop();
+    if (!target) break;
+    act(() => {
+      target.root.unmount();
+    });
+    target.container.remove();
+  }
+  vi.clearAllTimers();
+});
+
+describe("MemorySettings", () => {
+  it("初始化时应加载来源与自动记忆索引", async () => {
+    renderComponent();
+    await flushEffects();
+    await flushEffects();
+
+    expect(mockGetMemoryEffectiveSources).toHaveBeenCalledTimes(1);
+    expect(mockGetMemoryAutoIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("点击立即关闭应调用 toggleMemoryAuto", async () => {
+    const container = renderComponent();
+    await flushEffects();
+    await flushEffects();
+
+    await act(async () => {
+      findButton(container, "立即关闭").click();
+    });
+
+    expect(mockToggleMemoryAuto).toHaveBeenCalledWith(false);
+  });
+
+  it("未填写内容时写入自动记忆应阻止调用", async () => {
+    const container = renderComponent();
+    await flushEffects();
+    await flushEffects();
+
+    await act(async () => {
+      findButton(container, "写入自动记忆").click();
+    });
+    await flushEffects();
+
+    expect(mockUpdateMemoryAutoNote).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("请先输入要保存的自动记忆内容");
+  });
+});

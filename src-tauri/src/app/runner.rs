@@ -1341,6 +1341,10 @@ pub fn run() {
             commands::memory_management_cmd::get_conversation_memory_overview,
             commands::memory_management_cmd::request_conversation_memory_analysis,
             commands::memory_management_cmd::cleanup_conversation_memory,
+            commands::memory_management_cmd::memory_get_effective_sources,
+            commands::memory_management_cmd::memory_get_auto_index,
+            commands::memory_management_cmd::memory_toggle_auto,
+            commands::memory_management_cmd::memory_update_auto_note,
             // Unified Memory commands
             commands::unified_memory_cmd::unified_memory_list,
             commands::unified_memory_cmd::unified_memory_get,

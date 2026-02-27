@@ -25,7 +25,7 @@ import {
   ShieldCheck,
   HeartPulse,
   Activity,
-  Wrench,
+
   FlaskConical,
   Code,
   Info,
@@ -100,6 +100,11 @@ export function useSettingsCategory(): CategoryGroup[] {
           key: SettingsTabs.Hotkeys,
           label: t("settings.tab.hotkeys", "快捷键"),
           icon: Keyboard,
+        },
+        {
+          key: SettingsTabs.Memory,
+          label: t("settings.tab.memory", "记忆"),
+          icon: Brain,
         },
       ],
     });
@@ -176,11 +181,6 @@ export function useSettingsCategory(): CategoryGroup[] {
           key: SettingsTabs.ExecutionTracker,
           label: t("settings.tab.executionTracker", "执行轨迹"),
           icon: Activity,
-        },
-        {
-          key: SettingsTabs.ExternalTools,
-          label: t("settings.tab.externalTools", "外部工具"),
-          icon: Wrench,
         },
         {
           key: SettingsTabs.Experimental,

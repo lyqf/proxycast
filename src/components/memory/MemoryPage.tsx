@@ -25,6 +25,7 @@ import {
   MessagesSquare,
   RefreshCw,
   Search,
+  Settings2,
   Signature,
   Trash2,
   type LucideIcon,
@@ -32,13 +33,23 @@ import {
 import { cn } from "@/lib/utils";
 import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 import type { Page, PageParams } from "@/types/page";
+import { SettingsTabs } from "@/types/settings";
 import { CanvasBreadcrumbHeader } from "@/components/content-creator/canvas/shared/CanvasBreadcrumbHeader";
 import {
   getConfig,
+  getMemoryOverview as getContextMemoryOverview,
   saveConfig,
   type Config,
   type MemoryConfig as TauriMemoryConfig,
 } from "@/hooks/useTauri";
+import {
+  createCharacter,
+  createOutlineNode,
+  getProjectMemory,
+  type ProjectMemory,
+  updateStyleGuide,
+  updateWorldBuilding,
+} from "@/lib/api/memory";
 import {
   analyzeUnifiedMemories,
   deleteUnifiedMemory,
@@ -49,6 +60,11 @@ import {
   type UnifiedMemoryAnalysisResult,
   type UnifiedMemoryStatsResponse,
 } from "@/lib/api/unifiedMemory";
+import {
+  getStoredResourceProjectId,
+  onResourceProjectChange,
+} from "@/lib/resourceProjectSelection";
+import { buildLayerMetrics } from "./memoryLayerMetrics";
 type CategoryType = MemoryCategory;
 type CategoryFilter = "all" | CategoryType;
 type MemorySection = "home" | CategoryType;
@@ -83,6 +99,10 @@ interface MemoryOverviewResponse {
   stats: MemoryStatsResponse;
   categories: MemoryCategoryStat[];
   entries: MemoryEntryPreview[];
+}
+
+interface ContextLayerStats {
+  total_entries: number;
 }
 
 const CATEGORY_META: Record<
@@ -580,10 +600,18 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
   );
 
   const [overview, setOverview] = useState<MemoryOverviewResponse | null>(null);
+  const [contextLayerStats, setContextLayerStats] =
+    useState<ContextLayerStats | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(() =>
+    getStoredResourceProjectId({ includeLegacy: true }),
+  );
+  const [projectMemory, setProjectMemory] = useState<ProjectMemory | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [initializingProjectMemory, setInitializingProjectMemory] =
+    useState(false);
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null);
 
   const [activeSection, setActiveSection] = useState<MemorySection>("home");
@@ -641,6 +669,16 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
 
   const entries = useMemo(() => overview?.entries ?? [], [overview]);
   const hasMemoryData = stats.total_entries > 0;
+  const layerMetrics = useMemo(
+    () =>
+      buildLayerMetrics({
+        unifiedTotalEntries: stats.total_entries,
+        contextTotalEntries: contextLayerStats?.total_entries ?? 0,
+        projectId,
+        projectMemory,
+      }),
+    [contextLayerStats?.total_entries, projectId, projectMemory, stats.total_entries],
+  );
 
   const activeCategoryFilter: CategoryFilter =
     activeSection === "home" ? "all" : activeSection;
@@ -694,7 +732,8 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
   }, []);
 
   const loadOverview = useCallback(async () => {
-    const [statsResult, memories] = await Promise.all([
+    const [statsResult, memories, contextOverviewResult, projectMemoryResult] =
+      await Promise.all([
       getUnifiedMemoryStats(),
       listUnifiedMemories({
         archived: false,
@@ -702,6 +741,16 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
         order: "desc",
         limit: 1000,
       }),
+      getContextMemoryOverview(200).catch((error) => {
+        console.warn("加载上下文记忆总览失败:", error);
+        return null;
+      }),
+      projectId
+        ? getProjectMemory(projectId).catch((error) => {
+            console.warn("加载项目记忆失败:", error);
+            return null;
+          })
+        : Promise.resolve(null),
     ]);
 
     const normalizedStats: MemoryOverviewResponse = {
@@ -715,7 +764,13 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
     };
 
     setOverview(normalizedStats);
-  }, []);
+    setContextLayerStats(
+      contextOverviewResult
+        ? { total_entries: contextOverviewResult.stats.total_entries }
+        : null,
+    );
+    setProjectMemory(projectMemoryResult);
+  }, [projectId]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -732,6 +787,12 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    return onResourceProjectChange((detail) => {
+      setProjectId(detail.projectId);
+    });
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -781,6 +842,90 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
       setRefreshing(false);
     }
   }, [loadOverview, showMessage]);
+
+  const handleBootstrapProjectMemory = useCallback(async () => {
+    if (!projectId) {
+      showMessage("error", "请先在资源页或项目页选择一个项目");
+      return;
+    }
+
+    if (initializingProjectMemory) {
+      return;
+    }
+
+    const hasCharacters = (projectMemory?.characters.length ?? 0) > 0;
+    const hasWorldBuilding = !!projectMemory?.world_building?.description?.trim();
+    const hasStyleGuide = !!projectMemory?.style_guide?.style?.trim();
+    const hasOutline = (projectMemory?.outline.length ?? 0) > 0;
+
+    if (hasCharacters && hasWorldBuilding && hasStyleGuide && hasOutline) {
+      showMessage("success", "第三层项目记忆已完善");
+      return;
+    }
+
+    setInitializingProjectMemory(true);
+    try {
+      const tasks: Promise<unknown>[] = [];
+
+      if (!hasCharacters) {
+        tasks.push(
+          createCharacter({
+            project_id: projectId,
+            name: "默认主角",
+            description: "待补充角色设定",
+            is_main: true,
+          }),
+        );
+      }
+
+      if (!hasWorldBuilding) {
+        tasks.push(
+          updateWorldBuilding(projectId, {
+            description: "待补充世界观背景与规则",
+          }),
+        );
+      }
+
+      if (!hasStyleGuide) {
+        tasks.push(
+          updateStyleGuide(projectId, {
+            style: "待补充写作风格与语气",
+          }),
+        );
+      }
+
+      if (!hasOutline) {
+        tasks.push(
+          createOutlineNode({
+            project_id: projectId,
+            title: "第一章",
+            content: "待补充章节内容",
+          }),
+        );
+      }
+
+      if (tasks.length > 0) {
+        await Promise.all(tasks);
+      }
+
+      await loadOverview();
+      showMessage("success", "已初始化第三层项目记忆，请按需继续完善");
+    } catch (error) {
+      console.error("初始化项目记忆失败:", error);
+      showMessage("error", "初始化项目记忆失败，请稍后重试");
+    } finally {
+      setInitializingProjectMemory(false);
+    }
+  }, [
+    initializingProjectMemory,
+    loadOverview,
+    projectId,
+    projectMemory?.characters.length,
+    projectMemory?.outline.length,
+    projectMemory?.style_guide?.style,
+    projectMemory?.world_building?.description,
+    showMessage,
+  ]);
 
   const handleAnalyze = useCallback(async () => {
     if (
@@ -989,6 +1134,16 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
 
               <div className="flex items-center gap-2">
                 <button
+                  onClick={() =>
+                    onNavigate?.("settings", { tab: SettingsTabs.Memory })
+                  }
+                  className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm hover:bg-muted"
+                >
+                  <Settings2 className="h-3.5 w-3.5" />
+                  记忆设置
+                </button>
+
+                <button
                   onClick={handleRefresh}
                   disabled={refreshing || analyzing || loading}
                   className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60"
@@ -1052,6 +1207,83 @@ export function MemoryPage({ onNavigate }: MemoryPageProps) {
                         {stats.memory_count}
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border p-4 bg-card">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="text-sm font-medium">三层记忆可用性</div>
+                    <div className="text-xs text-muted-foreground">
+                      已可用 {layerMetrics.readyLayers}/{layerMetrics.totalLayers} 层
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {layerMetrics.cards.map((card) => (
+                      <div
+                        key={card.key}
+                        className="rounded-lg border bg-background/60 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            {card.title}
+                          </div>
+                          <span
+                            className={cn(
+                              "text-[10px] px-2 py-0.5 rounded-full border",
+                              card.available
+                                ? "text-green-700 border-green-200 bg-green-50 dark:text-green-400 dark:border-green-800 dark:bg-green-900/20"
+                                : "text-muted-foreground border-muted",
+                            )}
+                          >
+                            {card.available ? "已生效" : "待完善"}
+                          </span>
+                        </div>
+                        <div className="text-xl font-semibold text-primary mt-1">
+                          {card.value}
+                          <span className="text-sm text-muted-foreground ml-1">
+                            {card.unit}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                          {card.description}
+                        </div>
+                        {card.key === "project" && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {!projectId ? (
+                              <button
+                                onClick={() => onNavigate?.("projects")}
+                                className="rounded border px-2 py-1 text-[11px] hover:bg-muted"
+                              >
+                                去选择项目
+                              </button>
+                            ) : (
+                              <>
+                                {!card.available && (
+                                  <button
+                                    onClick={handleBootstrapProjectMemory}
+                                    disabled={initializingProjectMemory}
+                                    className="rounded border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-60"
+                                  >
+                                    {initializingProjectMemory
+                                      ? "初始化中..."
+                                      : "一键初始化"}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() =>
+                                    onNavigate?.("project-detail", { projectId })
+                                  }
+                                  className="rounded border px-2 py-1 text-[11px] hover:bg-muted"
+                                >
+                                  前往项目记忆
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
 

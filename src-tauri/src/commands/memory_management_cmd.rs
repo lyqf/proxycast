@@ -3,7 +3,14 @@
 //! 提供对话记忆的统计和管理功能
 
 use crate::commands::context_memory::ContextMemoryServiceState;
+use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
+use crate::services::auto_memory_service::{
+    get_auto_memory_index, update_auto_memory_note, AutoMemoryIndexResponse,
+};
+use crate::services::memory_source_resolver_service::{
+    resolve_effective_sources, EffectiveMemorySourcesResponse,
+};
 use chrono::{Local, NaiveDateTime, TimeZone};
 use proxycast_services::context_memory_service::{MemoryEntry, MemoryFileType};
 use rusqlite::{params, Connection};
@@ -77,6 +84,12 @@ pub struct MemoryOverviewResponse {
     pub entries: Vec<MemoryEntryPreview>,
 }
 
+/// 自动记忆开关响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryAutoToggleResponse {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 struct ErrorEntryRecord {
     #[serde(default)]
@@ -110,6 +123,7 @@ const CATEGORY_ORDER: [&str; 5] = [
 
 const MAX_SOURCE_MESSAGES: usize = 6000;
 const MAX_GENERATED_PER_REQUEST: usize = 200;
+const MAX_GENERATED_PER_REQUEST_CAP: usize = 2000;
 const MAX_GENERATED_PER_SESSION: usize = 40;
 const MIN_MESSAGE_LENGTH: usize = 18;
 
@@ -145,6 +159,7 @@ pub async fn get_conversation_memory_overview(
 pub async fn request_conversation_memory_analysis(
     memory_service: State<'_, ContextMemoryServiceState>,
     db: State<'_, DbConnection>,
+    global_config: State<'_, GlobalConfigManagerState>,
     from_timestamp: Option<i64>,
     to_timestamp: Option<i64>,
 ) -> Result<MemoryAnalysisResult, String> {
@@ -158,6 +173,23 @@ pub async fn request_conversation_memory_analysis(
             return Err("开始时间不能大于结束时间".to_string());
         }
     }
+
+    let memory_config = global_config.config().memory;
+    if !memory_config.enabled {
+        info!("[记忆管理] 记忆功能已关闭，跳过分析");
+        return Ok(MemoryAnalysisResult {
+            analyzed_sessions: 0,
+            analyzed_messages: 0,
+            generated_entries: 0,
+            deduplicated_entries: 0,
+        });
+    }
+
+    let max_generated_per_request = memory_config
+        .max_entries
+        .unwrap_or(MAX_GENERATED_PER_REQUEST as u32)
+        .clamp(1, MAX_GENERATED_PER_REQUEST_CAP as u32)
+        as usize;
 
     let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
     let candidates = load_memory_candidates(&conn, from_timestamp, to_timestamp)?;
@@ -218,7 +250,7 @@ pub async fn request_conversation_memory_analysis(
         generated_entries += 1;
         *counter += 1;
 
-        if generated_entries as usize >= MAX_GENERATED_PER_REQUEST {
+        if generated_entries as usize >= max_generated_per_request {
             break;
         }
     }
@@ -237,14 +269,28 @@ pub async fn request_conversation_memory_analysis(
 #[tauri::command]
 pub async fn cleanup_conversation_memory(
     memory_service: State<'_, ContextMemoryServiceState>,
+    global_config: State<'_, GlobalConfigManagerState>,
 ) -> Result<CleanupMemoryResult, String> {
     info!("[记忆管理] 开始清理过期记忆");
+
+    let memory_config = global_config.config().memory;
+    if matches!(memory_config.auto_cleanup, Some(false)) {
+        info!("[记忆管理] 自动清理已关闭，跳过清理");
+        return Ok(CleanupMemoryResult {
+            cleaned_entries: 0,
+            freed_space: 0,
+        });
+    }
+
+    let retention_days = memory_config.retention_days.unwrap_or(30).clamp(1, 3650);
 
     let memory_dir = resolve_memory_dir();
     let before = collect_memory_overview(&memory_dir)?;
 
     // 使用 ContextMemoryService 的清理功能
-    memory_service.0.cleanup_expired_memories()?;
+    memory_service
+        .0
+        .cleanup_expired_memories_with_retention_days(retention_days)?;
 
     let after = collect_memory_overview(&memory_dir)?;
 
@@ -263,10 +309,91 @@ pub async fn cleanup_conversation_memory(
     })
 }
 
+/// 获取当前会话可见的有效记忆来源（含 AGENTS、规则、自动记忆）
+#[tauri::command]
+pub async fn memory_get_effective_sources(
+    global_config: State<'_, GlobalConfigManagerState>,
+    working_dir: Option<String>,
+    active_relative_path: Option<String>,
+) -> Result<EffectiveMemorySourcesResponse, String> {
+    let config = global_config.config();
+    let resolved_working_dir = resolve_working_dir(working_dir)?;
+    let resolution = resolve_effective_sources(
+        &config,
+        &resolved_working_dir,
+        active_relative_path.as_deref(),
+    );
+    Ok(resolution.response)
+}
+
+/// 获取自动记忆入口索引
+#[tauri::command]
+pub async fn memory_get_auto_index(
+    global_config: State<'_, GlobalConfigManagerState>,
+    working_dir: Option<String>,
+) -> Result<AutoMemoryIndexResponse, String> {
+    let config = global_config.config();
+    let resolved_working_dir = resolve_working_dir(working_dir)?;
+    get_auto_memory_index(&config.memory, &resolved_working_dir)
+}
+
+/// 切换自动记忆开关（写入全局配置）
+#[tauri::command]
+pub async fn memory_toggle_auto(
+    global_config: State<'_, GlobalConfigManagerState>,
+    enabled: bool,
+) -> Result<MemoryAutoToggleResponse, String> {
+    let mut config = global_config.config();
+    config.memory.auto.enabled = enabled;
+
+    global_config
+        .save_config(&config)
+        .await
+        .map_err(|e| format!("保存自动记忆开关失败: {e}"))?;
+
+    Ok(MemoryAutoToggleResponse {
+        enabled: config.memory.auto.enabled,
+    })
+}
+
+/// 更新自动记忆笔记（写入 MEMORY.md 或 topic 文件）
+#[tauri::command]
+pub async fn memory_update_auto_note(
+    global_config: State<'_, GlobalConfigManagerState>,
+    working_dir: Option<String>,
+    note: String,
+    topic: Option<String>,
+) -> Result<AutoMemoryIndexResponse, String> {
+    let config = global_config.config();
+    let resolved_working_dir = resolve_working_dir(working_dir)?;
+    update_auto_memory_note(
+        &config.memory,
+        &resolved_working_dir,
+        &note,
+        topic.as_deref(),
+    )
+}
+
 fn resolve_memory_dir() -> PathBuf {
     dirs::home_dir()
         .map(|p| p.join(".proxycast").join("memory"))
         .unwrap_or_else(|| PathBuf::from(".proxycast/memory"))
+}
+
+fn resolve_working_dir(working_dir: Option<String>) -> Result<PathBuf, String> {
+    if let Some(path) = working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        let candidate = PathBuf::from(path);
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|e| format!("working_dir 无效: {path} ({e})"))?;
+        return Ok(canonical);
+    }
+
+    std::env::current_dir().map_err(|e| format!("获取当前工作目录失败: {e}"))
 }
 
 fn collect_memory_overview(memory_dir: &Path) -> Result<MemoryOverviewResponse, String> {

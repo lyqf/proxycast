@@ -280,6 +280,7 @@ pub struct GeneratedPersona {
 pub async fn generate_persona(
     agent_state: State<'_, crate::agent::AsterAgentState>,
     db: State<'_, DbConnection>,
+    config_manager: State<'_, crate::config::GlobalConfigManagerState>,
     prompt: String,
 ) -> Result<GeneratedPersona, String> {
     use aster::conversation::message::Message;
@@ -354,7 +355,17 @@ pub async fn generate_persona(
     let cancel_token = agent_state.create_cancel_token(&session_id).await;
 
     let user_message = Message::user().with_text(&user_prompt);
-    let session_config = crate::agent::aster_state::SessionConfigBuilder::new(&session_id).build();
+    let mut session_config_builder =
+        crate::agent::aster_state::SessionConfigBuilder::new(&session_id)
+            .include_context_trace(true);
+    if let Some(memory_prompt) =
+        crate::services::memory_profile_prompt_service::build_memory_profile_prompt(
+            &config_manager.config(),
+        )
+    {
+        session_config_builder = session_config_builder.system_prompt(memory_prompt);
+    }
+    let session_config = session_config_builder.build();
 
     // 获取 Agent 引用
     let agent_arc = agent_state.get_agent_arc();

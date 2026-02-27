@@ -1,45 +1,39 @@
-## ProxyCast v0.72.0
+## ProxyCast v0.73.0
 
-发布日期：2026-02-26
+发布日期：2026-02-27
 
 ### ✨ 新功能
 
-#### 渠道管理重构
-- 重写渠道设置页面：移除旧的「AI 模型提供商」和「消息通知渠道」双 tab 布局，改为 Telegram / Discord / 飞书 三个 Bot 渠道 tab，每个 tab 内联表单配置
-- 新增后端 ChannelsConfig 类型：在 Rust 配置层新增 `ChannelsConfig`、`TelegramBotConfig`、`DiscordBotConfig`、`FeishuBotConfig` 结构体，支持 YAML 序列化/反序列化
-- Telegram Bot 配置：支持 Enable 开关、Bot Token（密码输入+显示切换）、允许的用户 ID 列表、默认模型选择
-- Discord Bot 配置：支持 Enable 开关、Bot Token、允许的服务器 ID 列表、默认模型选择
-- 飞书 Bot 配置：支持 Enable 开关、App ID、App Secret、Verification Token（可选）、Encrypt Key（可选）、默认模型选择
-- 默认模型选择器：复用现有 Provider Pool 数据，下拉列出所有已配置 Provider 的模型
-- 脏状态检测：修改表单后底部固定栏显示「未保存的更改」提示，支持保存和取消操作
+#### 记忆管理系统
+- 新增多层记忆架构：支持组织策略、项目记忆、用户记忆、项目本地记忆四层配置
+- 新增记忆画像（MemoryProfile）：可配置学习状态、擅长领域、解释风格、难题偏好
+- 新增记忆设置页面（settings-v2/general/memory），支持记忆来源、自动记忆、画像等配置
+- 新增记忆层级指标统计（memoryLayerMetrics），量化各层记忆贡献
+- 新增 memory profile prompt 服务，将记忆画像自动合并到系统提示词
 
-#### Agent Chat 改进
-- ChatSidebar 精简（减少约 300 行冗余代码）
-- CharacterMention 角色提及组件功能增强
-- Inputbar 新增 SkillBadge 组件和相关 hooks
-- 新增 Agent Chat 集成测试
+#### Agent 增强
+- Agent 支持上下文准备轨迹（ContextTrace）事件，前端可展示上下文注入过程
+- 新增 instruction discovery 模块，自动发现项目级指令文件
+- 新增 shell security 和 tool permissions 模块
+- 新增 hooks 模块，支持 Agent 生命周期钩子
+- SessionConfigBuilder 支持 include_context_trace 配置
 
-#### 内容创作增强
-- 新增 `content-creator/canvas/shared/` 共享组件目录
-- Document、Music、Novel、Poster、Script、Video 画布均有功能增强
-- 视频工作区 PromptInput、VideoCanvas、VideoWorkspace 组件优化
+#### 技能与处理器
+- 新增 skill matcher 模块，优化技能匹配逻辑
+- 新增 processor steps registry，统一步骤注册管理
+
+#### 渠道管理
+- 新增 ChannelsConfig 配置类型与渠道管理 UI 组件
+
+### 🐛 修复
+- 修复 workspace_mismatch 错误：会话切换 workspace 时自动更新 working_dir，不再阻断用户操作
+- 修复前端 lint 错误：清理未使用的导入和不必要的 try/catch 包装
+- 修复 Config 测试中缺少 channels 字段导致编译失败的问题
 
 ### 🔧 优化与重构
-
-#### 设置页面迁移
-- 删除旧版 `src/components/settings/` 下 13 个组件（AboutSection、ConnectionsSettings、DeveloperSettings、ExperimentalSettings、ExtensionsSettings、ExternalToolsSettings、GeneralSettings、LanguageSelector、ProxySettings、SettingsPage、UpdateNotification 等）
-- settings-v2 布局和导航结构优化
-
-#### 其他改进
-- 通用聊天 ChatPanel 和 CompactModelSelector 组件优化
-- 图像生成 ImageGenPage 功能增强
-- input-kit ModelSelector 组件改进
-- Smart Input ChatInput 和 SmartInputWindow 优化
-- 终端 AI TerminalAIInput 和 TerminalAIPanel 改进
-- 工具页面、工作台、记忆管理、插件系统、资源管理页面更新
-- 外观设置页优化
+- 优化 unified memory API 和前端调用
+- 移除废弃的 external-tools 设置页面
 
 ### 📦 技术细节
-- 62 个文件变更，+1551 行，-3217 行（净减少 1666 行代码）
-- Rust 后端新增渠道配置类型，前端 TypeScript 类型同步更新
-- 旧版设置页面完全迁移至 settings-v2 架构
+- 54 个文件变更，+2279 行，-410 行
+- 新增 10 个文件，涵盖记忆管理、Agent 安全、技能匹配等模块

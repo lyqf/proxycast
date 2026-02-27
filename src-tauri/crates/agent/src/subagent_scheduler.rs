@@ -15,6 +15,7 @@ use aster::agents::subagent_scheduler::{
 };
 use aster::conversation::message::Message;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -23,6 +24,110 @@ use proxycast_core::database::DbConnection;
 
 /// 调度器事件发射器
 pub type SchedulerEventEmitter = Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
+
+// ---------------------------------------------------------------------------
+// SubAgentRole
+// ---------------------------------------------------------------------------
+
+/// SubAgent 角色，决定可用的工具集
+///
+/// 遵循最小权限原则：默认 Explorer（只读），需要写入时显式升级。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubAgentRole {
+    /// 只读探索：Read, Grep, Glob, LSP 查询
+    Explorer,
+    /// 规划分析：Read + 输出计划文档
+    Planner,
+    /// 全能执行：所有工具（不限制）
+    Executor,
+}
+
+impl SubAgentRole {
+    /// 返回该角色允许使用的工具名称列表
+    ///
+    /// 空列表表示不限制（Executor 角色）
+    pub fn allowed_tools(&self) -> Vec<&'static str> {
+        match self {
+            Self::Explorer => vec!["read_file", "grep", "glob", "list_directory", "lsp_query"],
+            Self::Planner => vec!["read_file", "grep", "glob", "list_directory", "write_file"],
+            Self::Executor => vec![], // 空表示不限制
+        }
+    }
+
+    /// 返回该角色的最大对话轮次
+    pub fn max_turns(&self) -> usize {
+        match self {
+            Self::Explorer => 15,
+            Self::Planner => 10,
+            Self::Executor => 30,
+        }
+    }
+
+    /// 返回该角色的结果最大长度（字符数）
+    /// 0 表示不限制
+    pub fn max_result_length(&self) -> usize {
+        match self {
+            Self::Explorer => 2000,
+            Self::Planner => 4000,
+            Self::Executor => 0, // 不限制
+        }
+    }
+
+    /// 该角色是否允许使用指定工具
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        let allowed = self.allowed_tools();
+        allowed.is_empty() || allowed.contains(&tool_name)
+    }
+
+    /// 将角色的工具限制应用到 SubAgentTask 上
+    ///
+    /// 如果任务已经设置了 allowed_tools，取交集；否则直接设置。
+    /// Executor 角色不做任何修改。
+    pub fn apply_to_task(&self, mut task: SubAgentTask) -> SubAgentTask {
+        let role_tools = self.allowed_tools();
+        if role_tools.is_empty() {
+            // Executor: 不限制
+            return task;
+        }
+
+        let role_set: std::collections::HashSet<&str> = role_tools.into_iter().collect();
+
+        if let Some(ref existing) = task.allowed_tools {
+            // 取交集：任务自身限制 ∩ 角色限制
+            let filtered: Vec<String> = existing
+                .iter()
+                .filter(|t| role_set.contains(t.as_str()))
+                .cloned()
+                .collect();
+            task.allowed_tools = Some(filtered);
+        } else {
+            task.allowed_tools = Some(role_set.into_iter().map(String::from).collect());
+        }
+
+        task
+    }
+}
+
+impl Default for SubAgentRole {
+    fn default() -> Self {
+        Self::Explorer // 默认最小权限
+    }
+}
+
+impl std::fmt::Display for SubAgentRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Explorer => write!(f, "explorer"),
+            Self::Planner => write!(f, "planner"),
+            Self::Executor => write!(f, "executor"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ProxyCastSubAgentExecutor
+// ---------------------------------------------------------------------------
 
 /// ProxyCast SubAgent 执行器
 ///
@@ -37,6 +142,8 @@ pub struct ProxyCastSubAgentExecutor {
     default_model: String,
     /// 默认 Provider 类型
     default_provider: String,
+    /// SubAgent 角色
+    role: SubAgentRole,
 }
 
 impl ProxyCastSubAgentExecutor {
@@ -47,6 +154,7 @@ impl ProxyCastSubAgentExecutor {
             db,
             default_model: "claude-sonnet-4-20250514".to_string(),
             default_provider: "anthropic".to_string(),
+            role: SubAgentRole::default(),
         }
     }
 
@@ -60,6 +168,17 @@ impl ProxyCastSubAgentExecutor {
     pub fn with_default_provider(mut self, provider: impl Into<String>) -> Self {
         self.default_provider = provider.into();
         self
+    }
+
+    /// 设置 SubAgent 角色
+    pub fn with_role(mut self, role: SubAgentRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// 获取当前角色
+    pub fn role(&self) -> SubAgentRole {
+        self.role
     }
 
     /// 从凭证池选择凭证
@@ -96,7 +215,7 @@ impl SubAgentExecutor for ProxyCastSubAgentExecutor {
         context: &AgentContext,
     ) -> SchedulerResult<SubAgentResult> {
         let start_time = Utc::now();
-        info!("执行 SubAgent 任务: {}", task.id);
+        info!("执行 SubAgent 任务: {} (角色: {})", task.id, self.role);
 
         let provider_config = self.select_credential(task).await?;
         debug!("使用凭证: {}", provider_config.credential_uuid);
@@ -114,6 +233,16 @@ impl SubAgentExecutor for ProxyCastSubAgentExecutor {
             .map_err(|e| SchedulerError::ProviderError(e.to_string()))?;
 
         let response = response_msg.as_concat_text();
+
+        // 按角色限制结果长度
+        let max_len = self.role.max_result_length();
+        let response = if max_len > 0 && response.chars().count() > max_len {
+            let original_len = response.len();
+            let truncated: String = response.chars().take(max_len).collect();
+            format!("{}\n\n[结果已截断，原始 {} 字符]", truncated, original_len)
+        } else {
+            response
+        };
 
         let end_time = Utc::now();
         let duration = (end_time - start_time).to_std().unwrap_or(Duration::ZERO);
@@ -146,12 +275,18 @@ impl SubAgentExecutor for ProxyCastSubAgentExecutor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ProxyCastScheduler
+// ---------------------------------------------------------------------------
+
 /// ProxyCast SubAgent 调度器
 pub struct ProxyCastScheduler {
     /// 内部调度器
     scheduler: Arc<RwLock<Option<SubAgentScheduler<ProxyCastSubAgentExecutor>>>>,
     /// 数据库连接
     db: DbConnection,
+    /// 默认角色
+    default_role: SubAgentRole,
 }
 
 impl ProxyCastScheduler {
@@ -160,7 +295,14 @@ impl ProxyCastScheduler {
         Self {
             scheduler: Arc::new(RwLock::new(None)),
             db,
+            default_role: SubAgentRole::default(),
         }
+    }
+
+    /// 设置默认角色
+    pub fn with_default_role(mut self, role: SubAgentRole) -> Self {
+        self.default_role = role;
+        self
     }
 
     /// 初始化调度器（不附带事件回调）
@@ -174,7 +316,7 @@ impl ProxyCastScheduler {
         config: Option<SchedulerConfig>,
         event_emitter: Option<SchedulerEventEmitter>,
     ) {
-        let executor = ProxyCastSubAgentExecutor::new(self.db.clone());
+        let executor = ProxyCastSubAgentExecutor::new(self.db.clone()).with_role(self.default_role);
         let config = config.unwrap_or_default();
 
         let scheduler = if let Some(emitter) = event_emitter {
@@ -189,19 +331,40 @@ impl ProxyCastScheduler {
         };
 
         *self.scheduler.write().await = Some(scheduler);
-        info!("ProxyCast SubAgent 调度器初始化完成");
+        info!(
+            "ProxyCast SubAgent 调度器初始化完成 (默认角色: {})",
+            self.default_role
+        );
     }
 
     /// 执行任务
+    ///
+    /// 根据调度器的默认角色自动对每个任务应用工具限制。
     pub async fn execute(
         &self,
         tasks: Vec<SubAgentTask>,
         parent_context: Option<&AgentContext>,
     ) -> SchedulerResult<SchedulerExecutionResult> {
+        self.execute_with_role(tasks, parent_context, self.default_role)
+            .await
+    }
+
+    /// 使用指定角色执行任务
+    ///
+    /// 角色的工具限制会应用到每个任务上（与任务自身的 allowed_tools 取交集）。
+    pub async fn execute_with_role(
+        &self,
+        tasks: Vec<SubAgentTask>,
+        parent_context: Option<&AgentContext>,
+        role: SubAgentRole,
+    ) -> SchedulerResult<SchedulerExecutionResult> {
         let scheduler = self.scheduler.read().await;
         let scheduler = scheduler
             .as_ref()
             .ok_or_else(|| SchedulerError::ContextError("调度器未初始化".to_string()))?;
+
+        // 应用角色工具限制
+        let tasks: Vec<SubAgentTask> = tasks.into_iter().map(|t| role.apply_to_task(t)).collect();
 
         scheduler.execute(tasks, parent_context).await
     }
@@ -213,6 +376,10 @@ impl ProxyCastScheduler {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SubAgentProgressEvent
+// ---------------------------------------------------------------------------
 
 /// Tauri 事件：SubAgent 进度
 #[derive(Debug, Clone, serde::Serialize)]
@@ -230,6 +397,8 @@ pub struct SubAgentProgressEvent {
     pub percentage: f64,
     /// 当前任务
     pub current_tasks: Vec<String>,
+    /// SubAgent 角色
+    pub role: Option<String>,
 }
 
 impl From<SchedulerProgress> for SubAgentProgressEvent {
@@ -241,6 +410,143 @@ impl From<SchedulerProgress> for SubAgentProgressEvent {
             running: progress.running,
             percentage: progress.percentage,
             current_tasks: progress.current_tasks,
+            role: None,
         }
+    }
+}
+
+impl SubAgentProgressEvent {
+    /// 附加角色信息
+    pub fn with_role(mut self, role: SubAgentRole) -> Self {
+        self.role = Some(role.to_string());
+        self
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_role_default_is_explorer() {
+        assert_eq!(SubAgentRole::default(), SubAgentRole::Explorer);
+    }
+
+    #[test]
+    fn test_explorer_allowed_tools() {
+        let role = SubAgentRole::Explorer;
+        let tools = role.allowed_tools();
+        assert!(tools.contains(&"read_file"));
+        assert!(tools.contains(&"grep"));
+        assert!(tools.contains(&"glob"));
+        assert!(tools.contains(&"list_directory"));
+        assert!(tools.contains(&"lsp_query"));
+        assert!(!tools.contains(&"write_file"));
+    }
+
+    #[test]
+    fn test_planner_allowed_tools() {
+        let role = SubAgentRole::Planner;
+        let tools = role.allowed_tools();
+        assert!(tools.contains(&"read_file"));
+        assert!(tools.contains(&"write_file"));
+        assert!(!tools.contains(&"lsp_query"));
+    }
+
+    #[test]
+    fn test_executor_no_restriction() {
+        let role = SubAgentRole::Executor;
+        assert!(role.allowed_tools().is_empty());
+        assert!(role.is_tool_allowed("anything"));
+    }
+
+    #[test]
+    fn test_is_tool_allowed() {
+        let explorer = SubAgentRole::Explorer;
+        assert!(explorer.is_tool_allowed("read_file"));
+        assert!(!explorer.is_tool_allowed("write_file"));
+        assert!(!explorer.is_tool_allowed("execute_command"));
+    }
+
+    #[test]
+    fn test_apply_to_task_explorer() {
+        let role = SubAgentRole::Explorer;
+        let task = SubAgentTask::new("t1", "explore", "test prompt");
+        let task = role.apply_to_task(task);
+
+        let allowed = task.allowed_tools.unwrap();
+        assert!(allowed.contains(&"read_file".to_string()));
+        assert!(!allowed.contains(&"write_file".to_string()));
+    }
+
+    #[test]
+    fn test_apply_to_task_executor_no_change() {
+        let role = SubAgentRole::Executor;
+        let task = SubAgentTask::new("t1", "code", "test prompt");
+        let task = role.apply_to_task(task);
+
+        assert!(task.allowed_tools.is_none());
+    }
+
+    #[test]
+    fn test_apply_to_task_intersection() {
+        let role = SubAgentRole::Explorer;
+        // 任务自身只允许 read_file 和 write_file
+        let task = SubAgentTask::new("t1", "explore", "test")
+            .with_allowed_tools(vec!["read_file", "write_file"]);
+        let task = role.apply_to_task(task);
+
+        // Explorer 不允许 write_file，交集只剩 read_file
+        let allowed = task.allowed_tools.unwrap();
+        assert_eq!(allowed, vec!["read_file".to_string()]);
+    }
+
+    #[test]
+    fn test_role_display() {
+        assert_eq!(SubAgentRole::Explorer.to_string(), "explorer");
+        assert_eq!(SubAgentRole::Planner.to_string(), "planner");
+        assert_eq!(SubAgentRole::Executor.to_string(), "executor");
+    }
+
+    #[test]
+    fn test_role_serde_roundtrip() {
+        let role = SubAgentRole::Planner;
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, "\"planner\"");
+        let deserialized: SubAgentRole = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, role);
+    }
+
+    #[test]
+    fn test_role_max_turns() {
+        assert_eq!(SubAgentRole::Explorer.max_turns(), 15);
+        assert_eq!(SubAgentRole::Planner.max_turns(), 10);
+        assert_eq!(SubAgentRole::Executor.max_turns(), 30);
+    }
+
+    #[test]
+    fn test_role_max_result_length() {
+        assert_eq!(SubAgentRole::Explorer.max_result_length(), 2000);
+        assert_eq!(SubAgentRole::Planner.max_result_length(), 4000);
+        assert_eq!(SubAgentRole::Executor.max_result_length(), 0);
+    }
+
+    #[test]
+    fn test_progress_event_with_role() {
+        let event = SubAgentProgressEvent {
+            total: 3,
+            completed: 1,
+            failed: 0,
+            running: 1,
+            percentage: 33.3,
+            current_tasks: vec!["task-1".to_string()],
+            role: None,
+        };
+        let event = event.with_role(SubAgentRole::Explorer);
+        assert_eq!(event.role, Some("explorer".to_string()));
     }
 }

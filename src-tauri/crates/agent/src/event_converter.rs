@@ -264,6 +264,10 @@ pub enum TauriAgentEvent {
     #[serde(rename = "model_change")]
     ModelChange { model: String, mode: String },
 
+    /// 上下文准备轨迹
+    #[serde(rename = "context_trace")]
+    ContextTrace { steps: Vec<TauriContextTraceStep> },
+
     /// 完成（单次响应完成）
     #[serde(rename = "done")]
     Done {
@@ -321,6 +325,13 @@ pub struct TauriToolResult {
 pub struct TauriTokenUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+}
+
+/// 上下文准备轨迹步骤
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TauriContextTraceStep {
+    pub stage: String,
+    pub detail: String,
 }
 
 /// 简化的消息结构
@@ -391,10 +402,15 @@ pub fn convert_agent_event(event: AgentEvent) -> Vec<TauriAgentEvent> {
             tracing::debug!("History replaced");
             vec![]
         }
-        AgentEvent::ContextTrace { steps } => {
-            tracing::debug!("Context trace received, steps: {}", steps.len());
-            vec![]
-        }
+        AgentEvent::ContextTrace { steps } => vec![TauriAgentEvent::ContextTrace {
+            steps: steps
+                .into_iter()
+                .map(|step| TauriContextTraceStep {
+                    stage: step.stage,
+                    detail: step.detail,
+                })
+                .collect(),
+        }],
     }
 }
 
@@ -684,6 +700,27 @@ mod tests {
                 assert_eq!(mode, "chat");
             }
             _ => panic!("Expected ModelChange event"),
+        }
+    }
+
+    #[test]
+    fn test_convert_context_trace() {
+        let event = AgentEvent::ContextTrace {
+            steps: vec![aster::context::ContextTraceStep {
+                stage: "memory_injection".to_string(),
+                detail: "query_len=10,injected=2".to_string(),
+            }],
+        };
+
+        let events = convert_agent_event(event);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            TauriAgentEvent::ContextTrace { steps } => {
+                assert_eq!(steps.len(), 1);
+                assert_eq!(steps[0].stage, "memory_injection");
+                assert_eq!(steps[0].detail, "query_len=10,injected=2");
+            }
+            _ => panic!("Expected ContextTrace event"),
         }
     }
 

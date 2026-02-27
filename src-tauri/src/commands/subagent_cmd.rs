@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use aster::agents::context::AgentContext;
 use aster::agents::subagent_scheduler::{SchedulerConfig, SchedulerExecutionResult, SubAgentTask};
 
-use crate::agent::subagent_scheduler::ProxyCastScheduler;
+use crate::agent::subagent_scheduler::{ProxyCastScheduler, SubAgentRole};
 use crate::database::DbConnection;
 
 /// SubAgent 调度器状态
@@ -59,6 +59,7 @@ pub async fn execute_subagent_tasks(
     state: State<'_, SubAgentSchedulerState>,
     tasks: Vec<SubAgentTask>,
     config: Option<SchedulerConfig>,
+    role: Option<SubAgentRole>,
 ) -> Result<SchedulerExecutionResult, String> {
     // 确保调度器已初始化
     let scheduler_guard = state.scheduler.read().await;
@@ -79,11 +80,17 @@ pub async fn execute_subagent_tasks(
     // 创建父上下文
     let parent_context = AgentContext::new();
 
-    // 执行任务
-    scheduler
-        .execute(tasks, Some(&parent_context))
-        .await
-        .map_err(|e| e.to_string())
+    // 根据是否指定角色选择执行方式
+    match role {
+        Some(role) => scheduler
+            .execute_with_role(tasks, Some(&parent_context), role)
+            .await
+            .map_err(|e| e.to_string()),
+        None => scheduler
+            .execute(tasks, Some(&parent_context))
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// 取消 SubAgent 任务

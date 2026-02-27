@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter};
 use crate::database::DbConnection;
 
 pub use proxycast_agent::subagent_scheduler::{
-    ProxyCastSubAgentExecutor, SchedulerEventEmitter, SubAgentProgressEvent,
+    ProxyCastSubAgentExecutor, SchedulerEventEmitter, SubAgentProgressEvent, SubAgentRole,
 };
 
 /// ProxyCast SubAgent 调度器（Tauri 桥接）
@@ -40,6 +40,12 @@ impl ProxyCastScheduler {
         self
     }
 
+    /// 设置默认角色
+    pub fn with_default_role(mut self, role: SubAgentRole) -> Self {
+        self.inner = self.inner.with_default_role(role);
+        self
+    }
+
     /// 初始化调度器
     pub async fn init(&self, config: Option<SchedulerConfig>) {
         let event_emitter = self.app_handle.clone().map(|handle| {
@@ -62,6 +68,18 @@ impl ProxyCastScheduler {
         parent_context: Option<&AgentContext>,
     ) -> SchedulerResult<SchedulerExecutionResult> {
         self.inner.execute(tasks, parent_context).await
+    }
+
+    /// 使用指定角色执行任务
+    pub async fn execute_with_role(
+        &self,
+        tasks: Vec<SubAgentTask>,
+        parent_context: Option<&AgentContext>,
+        role: SubAgentRole,
+    ) -> SchedulerResult<SchedulerExecutionResult> {
+        self.inner
+            .execute_with_role(tasks, parent_context, role)
+            .await
     }
 
     /// 取消执行

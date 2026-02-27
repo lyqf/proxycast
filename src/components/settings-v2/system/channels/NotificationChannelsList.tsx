@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Pencil, Trash2, Send } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -57,14 +57,10 @@ export function NotificationChannelsList() {
   // 添加渠道
   const handleAdd = useCallback(
     async (config: NotificationChannelConfig) => {
-      try {
-        await notificationChannelsApi.createChannel(config);
-        toast.success("通知渠道已创建");
-        await loadChannels();
-        setShowAddModal(false);
-      } catch (e) {
-        throw e;
-      }
+      await notificationChannelsApi.createChannel(config);
+      toast.success("通知渠道已创建");
+      await loadChannels();
+      setShowAddModal(false);
     },
     [loadChannels],
   );
@@ -72,14 +68,10 @@ export function NotificationChannelsList() {
   // 更新渠道
   const handleUpdate = useCallback(
     async (id: string, config: NotificationChannelConfig) => {
-      try {
-        await notificationChannelsApi.updateChannel(id, config);
-        toast.success("通知渠道已更新");
-        await loadChannels();
-        setEditingChannel(null);
-      } catch (e) {
-        throw e;
-      }
+      await notificationChannelsApi.updateChannel(id, config);
+      toast.success("通知渠道已更新");
+      await loadChannels();
+      setEditingChannel(null);
     },
     [loadChannels],
   );

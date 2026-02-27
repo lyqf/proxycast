@@ -6,7 +6,6 @@
 import { useState, useEffect, useCallback } from "react";
 import styled from "styled-components";
 import { Moon, Sun, Monitor, Volume2, RotateCcw } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { getConfig, saveConfig, Config } from "@/hooks/useTauri";
 import { useOnboardingState } from "@/components/onboarding";
 import {

@@ -102,6 +102,7 @@ pub struct SessionConfigBuilder {
     id: String,
     max_turns: Option<u32>,
     system_prompt: Option<String>,
+    include_context_trace: Option<bool>,
 }
 
 impl SessionConfigBuilder {
@@ -110,6 +111,7 @@ impl SessionConfigBuilder {
             id: id.into(),
             max_turns: None,
             system_prompt: None,
+            include_context_trace: None,
         }
     }
 
@@ -123,6 +125,11 @@ impl SessionConfigBuilder {
         self
     }
 
+    pub fn include_context_trace(mut self, include: bool) -> Self {
+        self.include_context_trace = Some(include);
+        self
+    }
+
     pub fn build(self) -> SessionConfig {
         SessionConfig {
             id: self.id,
@@ -130,7 +137,7 @@ impl SessionConfigBuilder {
             max_turns: self.max_turns,
             retry_config: None,
             system_prompt: self.system_prompt,
-            include_context_trace: None,
+            include_context_trace: self.include_context_trace,
         }
     }
 }
